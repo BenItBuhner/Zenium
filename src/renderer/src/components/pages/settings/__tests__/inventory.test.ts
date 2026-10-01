@@ -94,7 +94,8 @@ const ELECTRON: HostCapabilities = {
   genericFontFamilies: true,
   caretBrowsing: true,
   placementAnswered: false,
-  agentDialogs: true
+  agentDialogs: true,
+  agentDialogPolicy: true
 }
 
 const SETTINGS_TAB = {

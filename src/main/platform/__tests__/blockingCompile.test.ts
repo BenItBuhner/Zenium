@@ -28,6 +28,7 @@ function targetIn(cacheDir: string, fingerprint = 'a:1:1'): GhosteryCacheTarget 
     bin: join(cacheDir, 'engine.bin'),
     meta: join(cacheDir, 'engine.json'),
     documents: join(cacheDir, 'documents.txt'),
+    documentsBin: join(cacheDir, 'documents.bin'),
     fingerprint,
     version: 'v1'
   }
@@ -35,6 +36,8 @@ function targetIn(cacheDir: string, fingerprint = 'a:1:1'): GhosteryCacheTarget 
 
 const tempOf = (path: string): string => `${path}.${process.pid}.tmp`
 const temps = (dir: string): string[] => readdirSync(dir).filter((name) => name.endsWith('.tmp'))
+/** Bytes standing in for a document filters' serialised form (opaque to the cache write). */
+const blob = (...bytes: number[]): Uint8Array => new Uint8Array(bytes)
 
 describe('the cache digest', () => {
   it('names a file by its byte length and SHA-1, and accepts nothing else for it', () => {
@@ -60,19 +63,24 @@ describe('the cache digest', () => {
 })
 
 describe('writeGhosteryCache', () => {
-  it('writes the three files whole or not at all, the metadata last and naming the other two', () => {
+  it('writes the four files whole or not at all, the metadata last and naming the other three', () => {
     const cacheDir = join(tempDir(), 'cache')
     const target = targetIn(cacheDir)
     const engine = new Uint8Array([7, 7, 7])
-    expect(writeGhosteryCache(target, engine, '||a.example^$all\n||b.example^$document')).toBe(true)
+    const serialised = blob(91, 49, 44, 91, 93, 93)
+    expect(
+      writeGhosteryCache(target, engine, '||a.example^$all\n||b.example^$document', serialised)
+    ).toBe(true)
     expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from(engine))
     expect(readFileSync(target.documents, 'utf8')).toBe('||a.example^$all\n||b.example^$document')
+    expect(Buffer.from(readFileSync(target.documentsBin))).toEqual(Buffer.from(serialised))
     expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual({
       format: GHOSTERY_CACHE_FORMAT,
       fingerprint: 'a:1:1',
       version: 'v1',
       engine: cacheDigest(engine),
-      documents: cacheDigest(readFileSync(target.documents))
+      documents: cacheDigest(readFileSync(target.documents)),
+      documentsBin: cacheDigest(serialised)
     })
     expect(temps(cacheDir)).toEqual([])
   })
@@ -82,47 +90,69 @@ describe('writeGhosteryCache', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const cacheDir = join(tempDir(), 'cache')
     const target = targetIn(cacheDir)
-    expect(writeGhosteryCache(target, new Uint8Array([1]), 'one')).toBe(true)
+    expect(writeGhosteryCache(target, new Uint8Array([1]), 'one', blob(1))).toBe(true)
     const firstMeta = readFileSync(target.meta, 'utf8')
 
     // `documents.txt`'s temp path taken: the engine's bytes landed (its rename came first), the
-    // documents and the metadata are the old ones – a loader of the old fingerprint finds the
-    // engine's digest off and recompiles rather than pairing new bytes with old filters.
+    // documents – lines and serialised form – and the metadata are the old ones – a loader of
+    // the old fingerprint finds the engine's digest off and recompiles rather than pairing new
+    // bytes with old filters.
     mkdirSync(tempOf(target.documents))
     expect(
-      writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([2]), 'two')
+      writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([2]), 'two', blob(2))
     ).toBe(false)
     expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from([2]))
     expect(readFileSync(target.documents, 'utf8')).toBe('one')
+    expect(Buffer.from(readFileSync(target.documentsBin))).toEqual(Buffer.from([1]))
     expect(readFileSync(target.meta, 'utf8')).toBe(firstMeta)
     expect(temps(cacheDir)).toEqual([`documents.txt.${process.pid}.tmp`])
     rmSync(tempOf(target.documents), { recursive: true })
 
-    // The metadata's temp path taken: both files are new, the metadata (last) is still the
-    // old one, naming the old files' digests – neither new file matches it.
+    // `documents.bin`'s temp path taken: the engine's bytes and the lines landed, the
+    // serialised form and the metadata are the old ones.
+    mkdirSync(tempOf(target.documentsBin))
+    expect(
+      writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([2]), 'two', blob(2))
+    ).toBe(false)
+    expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from([2]))
+    expect(readFileSync(target.documents, 'utf8')).toBe('two')
+    expect(Buffer.from(readFileSync(target.documentsBin))).toEqual(Buffer.from([1]))
+    expect(readFileSync(target.meta, 'utf8')).toBe(firstMeta)
+    expect(temps(cacheDir)).toEqual([`documents.bin.${process.pid}.tmp`])
+    rmSync(tempOf(target.documentsBin), { recursive: true })
+
+    // The metadata's temp path taken: the three files are new, the metadata (last) is still
+    // the old one, naming the old files' digests – no new file matches it.
     mkdirSync(tempOf(target.meta))
     expect(
-      writeGhosteryCache({ ...target, fingerprint: 'c:3:3' }, new Uint8Array([3]), 'three')
+      writeGhosteryCache({ ...target, fingerprint: 'c:3:3' }, new Uint8Array([3]), 'three', blob(3))
     ).toBe(false)
     expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from([3]))
     expect(readFileSync(target.documents, 'utf8')).toBe('three')
+    expect(Buffer.from(readFileSync(target.documentsBin))).toEqual(Buffer.from([3]))
     expect(readFileSync(target.meta, 'utf8')).toBe(firstMeta)
-    const old = JSON.parse(firstMeta) as { engine: unknown; documents: unknown }
+    const old = JSON.parse(firstMeta) as {
+      engine: unknown
+      documents: unknown
+      documentsBin: unknown
+    }
     expect(matchesCacheDigest(readFileSync(target.bin), old.engine)).toBe(false)
     expect(matchesCacheDigest(readFileSync(target.documents), old.documents)).toBe(false)
+    expect(matchesCacheDigest(readFileSync(target.documentsBin), old.documentsBin)).toBe(false)
     rmSync(tempOf(target.meta), { recursive: true })
 
     // `engine.bin`'s temp path taken: nothing is touched.
     mkdirSync(tempOf(target.bin))
     expect(
-      writeGhosteryCache({ ...target, fingerprint: 'd:4:4' }, new Uint8Array([4]), 'four')
+      writeGhosteryCache({ ...target, fingerprint: 'd:4:4' }, new Uint8Array([4]), 'four', blob(4))
     ).toBe(false)
     expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from([3]))
     expect(readFileSync(target.documents, 'utf8')).toBe('three')
+    expect(Buffer.from(readFileSync(target.documentsBin))).toEqual(Buffer.from([3]))
     expect(readFileSync(target.meta, 'utf8')).toBe(firstMeta)
     rmSync(tempOf(target.bin), { recursive: true })
 
-    // Three failures on the one cache path: logged once.
+    // Four failures on the one cache path: logged once.
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not written')
 
@@ -133,7 +163,7 @@ describe('writeGhosteryCache', () => {
       documents: join(cacheDir, 'blocker', 'documents.txt'),
       fingerprint: 'e:5:5'
     }
-    expect(writeGhosteryCache(other, new Uint8Array([5]), 'five')).toBe(false)
+    expect(writeGhosteryCache(other, new Uint8Array([5]), 'five', blob(5))).toBe(false)
     expect(temps(cacheDir)).toEqual([])
   })
 })

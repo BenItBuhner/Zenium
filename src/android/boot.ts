@@ -19,6 +19,7 @@ import {
 } from '@renderer/lib/back'
 import { THEME_PAINTED_EVENT } from '@renderer/hooks/useTheme'
 import { applyAccessibilityState } from '@renderer/lib/accessibilityState'
+import { setBandSeatHost } from '@renderer/lib/band/seat'
 import { applyPrivateLock, setPrivateLockHost } from '@renderer/lib/privateLock'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
@@ -337,11 +338,17 @@ function syncBackState(bridge: Bridge): void {
  * Pull-to-refresh: the host recognises the gesture on the page WebView and streams it to the
  * chrome's `lib/pull.ts`, which answers with the one value it works out – how far down the page
  * sits – for the host to move the page by. The Settings switch is mirrored to the host, which
- * then leaves such drags to the page like any other.
+ * then leaves such drags to the page like any other. The page-edge band writes its offset down
+ * the same channel (`lib/band/androidHost.ts`) and, beside it, the SEAT – how much of that
+ * offset the host lays the page out under at rest (`lib/band/seat.ts` → `TabHost.setBandSeat`),
+ * so a page under a standing band sits in its frame and scrolls to its last line.
  */
 function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
   setPullHost({
     setOffset: (tabId, offset) => bridge.send('view.setPullOffset', { tabId, offset })
+  })
+  setBandSeatHost({
+    setSeat: (tabId, seat) => bridge.send('view.setBandSeat', { tabId, seat })
   })
   let last: boolean | null = null
   platform.events.on('state', (state: UIState) => {

@@ -62,7 +62,7 @@ describe('the hover fade (§11: 120 ms on --zen-ease, one curve both ways)', () 
   it('is the row’s background transition to --v2-window-fill-hover', () => {
     const tab = rule('.zen-tab')
     expect(tab).toMatch(
-      /transition:\s*background 120ms var\(--zen-ease\),\s*opacity 120ms var\(--zen-ease\);/
+      /transition:\s*background var\(--zen-motion-state\) var\(--zen-ease\),\s*opacity var\(--zen-motion-state\) var\(--zen-ease\);/
     )
     expect(
       rule(

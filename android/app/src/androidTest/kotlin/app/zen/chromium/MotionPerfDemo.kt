@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.zip.GZIPInputStream
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -1002,19 +1003,31 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
                 closeOverview()
                 return
             }
-            // The long press, off the record: the ghost up, the finger still on the card.
+            // The long press, off the record: the ghost up, the finger still on the card. After the
+            // scroll the card's top rides under the overview's header (since #731 seated the shell
+            // higher, the card's centre too), so the press lands on the card's part below the
+            // header – its visible half – not on the header over it.
+            val headerBottom = domRect(".zen-overview header")?.bottom ?: 0
+            val pressTop = max(card.top, headerBottom)
+            val pressX = card.exactCenterX()
+            val pressY = (pressTop + card.bottom) / 2f
+            if (card.bottom - pressTop < DRAG_OUT_MIN_VISIBLE_PX) {
+                finding("overview-group-leave-drag-out: the card at $card shows only ${card.bottom - pressTop} px under the header (bottom $headerBottom); the drag-out scene is skipped")
+                closeOverview()
+                return
+            }
             val f = Finger()
-            f.press(card.exactCenterX(), card.exactCenterY())
+            f.press(pressX, pressY)
             val ghost = liftGhost()
             if (ghost == "none") {
-                finding("overview-group-leave-drag-out: no ghost came up on the press (${leaveGroupState(folderId)}); the drag-out scene is skipped")
+                finding("overview-group-leave-drag-out: no ghost came up on the press at ${pressX.roundToInt()}, ${pressY.roundToInt()} (the card at $card, the header's bottom $headerBottom; ${leaveGroupState(folderId)}); the drag-out scene is skipped")
                 f.up()
                 SystemClock.sleep(LEAVE_REST_MS)
                 closeOverview()
                 return
             }
-            val dx = loose.second.left + loose.second.width() * DRAG_OUT_EDGE - card.exactCenterX()
-            val dy = loose.second.exactCenterY() - card.exactCenterY()
+            val dx = loose.second.left + loose.second.width() * DRAG_OUT_EDGE - pressX
+            val dy = loose.second.exactCenterY() - pressY
             var peek = ""
             var glidePeek = ""
             scene("overview-group-leave-drag-out", JankBudget.Kind.SPRING, profile = true) {
@@ -1028,7 +1041,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
                 SystemClock.sleep(LEAVE_SETTLE_MS - DRAG_OUT_CARRY_MS - DRAG_OUT_REST_MS)
             }
             finding(
-                "overview-group-leave-drag-out: the ghost $ghost on the press, carried ${dx.roundToInt()}, ${dy.roundToInt()} px to the slot; ${cardsInGrid()} cards in the grid; " +
+                "overview-group-leave-drag-out: the ghost $ghost on the press at ${pressX.roundToInt()}, ${pressY.roundToInt()}, carried ${dx.roundToInt()}, ${dy.roundToInt()} px to the slot; ${cardsInGrid()} cards in the grid; " +
                     "the $DISSOLVE_GROUP_NAME group ${leaveGroupState(folderId)}; its card ${tabFolder(tabId)}; $LEAVE_PEEK_MS ms into the rest: $peek; $DRAG_OUT_GLIDE_PEEK_MS ms in: $glidePeek; ${leaveLine()} " +
                     "(a cell moving with the frame's shrink here is the dropped card's stand-in on its own glide into the slot it took, the tracker's, not the leave's hold: the rows below stand at their one offset meanwhile)"
             )
@@ -2021,6 +2034,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val DISSOLVE_URL = "http://dissolving.example/only"
         /** The grid's scroll before the drag-out, off the record: the group's box this far into the content (the shell was placed this much too low – seed 49). */
         private const val DRAG_OUT_SCROLL_PX = 200
+        /** The least of the card that must show under the overview's header for the press (device px): the finger lands on the card, not the header. */
+        private const val DRAG_OUT_MIN_VISIBLE_PX = 120
         /** The carry from the card's centre to the slot ([Finger.moveBy]'s duration). */
         private const val DRAG_OUT_CARRY_MS = 300L
         /** Where over the first loose card the finger rests: this far into it from its left edge – the slot before it. */

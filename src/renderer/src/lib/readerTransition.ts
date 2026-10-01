@@ -5,6 +5,7 @@ import { cmd, run } from './api'
 import { browserStore } from './browserStore'
 import { chromeUnderPages, SHOWN_WAIT_MS } from './cover'
 import { viewportStore } from './formFactor'
+import { MOTION_STATE_MS } from './motion/tokens'
 import { pageCovered, pageOffScreen, pageViewStore } from './pageView'
 import { activeTab } from './selectors'
 import { createStore } from './store'
@@ -85,8 +86,8 @@ export function readerCrossingHolds(
   return crossing !== null && crossing.phase !== 'landing'
 }
 
-/** The outgoing fade: the page's picture to the reader's surface (§11's 120 ms on `--zen-ease`). */
-export const CROSSING_OUT_MS = 120
+/** The outgoing fade: the page's picture to the reader's surface (§11's 120 ms on `--zen-ease`: the state token). */
+export const CROSSING_OUT_MS = MOTION_STATE_MS
 
 /**
  * How long the crossing waits for the core to reach the destination at all – the extraction

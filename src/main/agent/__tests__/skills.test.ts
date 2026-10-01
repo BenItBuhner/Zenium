@@ -105,6 +105,7 @@ const CONTRACT_V2_TOOLS = [
   'browser_read_page',
   'browser_evaluate',
   'browser_handle_dialog',
+  'browser_dialog_policy',
   'browser_prompts',
   'browser_respond_prompt',
   'browser_file_upload'
