@@ -33,6 +33,7 @@ import {
 } from '@renderer/lib/pull'
 import { uiStore } from '@renderer/lib/ui'
 import { createAndroidBandHost, type AndroidBandHost } from '../androidHost'
+import { setBandSeatHost } from '../seat'
 
 vi.mock('@renderer/lib/api', () => ({ cmd: vi.fn(), run: vi.fn() }))
 
@@ -95,15 +96,19 @@ function state(extra: Partial<BandOptions> = {}): BandOptions {
 
 describe('createAndroidBandHost – the BandSeam over the pull channel, and the model’s front', () => {
   let written: Array<[string, number]>
+  /** What the seat channel carried (`lib/band/seat.ts` → the bridge's `view.setBandSeat`). */
+  let seats: Array<[string, number]>
   let host: AndroidBandHost | null
 
   beforeEach(() => {
     written = []
+    seats = []
     host = null
     vi.useFakeTimers()
     vi.stubGlobal('requestAnimationFrame', () => 1)
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
     setPullHost({ setOffset: (tabId, offset) => written.push([tabId, offset]) })
+    setBandSeatHost({ setSeat: (tabId, seat) => seats.push([tabId, seat]) })
     viewportStore.set({ formFactor: 'phone' })
     browserStore.set({ state: stateWith('t1') })
     uiStore.set({ frameDialogsOpen: 0, frameDialogCover: 0 })
@@ -118,6 +123,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     abortPull()
     setPageHold(null)
     setPullHost(null)
+    setBandSeatHost(null)
     browserStore.set({ state: null })
     viewportStore.set({ formFactor: 'desktop' })
     resetBands()
@@ -182,6 +188,8 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.rest(56)
     expect(chromePageSeat()).toBe(56)
     expect(written).toEqual([])
+    // A chrome page never gets the WebView's seat: the seat channel is the document's alone.
+    expect(seats).toEqual([])
   })
 
   it('a two-line state seats at 76; a re-target on the open band seats at the lesser height for the travel and at the new height at rest (the desktop’s depart/rest)', () => {
@@ -291,26 +299,188 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     expect(offsets).toEqual([10, 30, 56, 30, 0])
   })
 
-  it('on a web page the seat is never written: the WebView is translated at rest through the pull channel (its placed rect never laid out under the band)', () => {
+  it("on a web page the WebView SEATS at rest: the band's offset travels the pull channel whole, the seat its own channel – written at the rest (56), 0 at the leave's depart before the frames bring the offset home; the chrome page's pair is never written", () => {
     host = createAndroidBandHost()
     showBand(state())
-    const seats: number[] = []
-    const offSeat = chromePageSeatStore.subscribe(() => seats.push(chromePageSeat()))
+    const chromeSeats: number[] = []
+    const offSeat = chromePageSeatStore.subscribe(() => chromeSeats.push(chromePageSeat()))
+    const order: string[] = []
+    setPullHost({
+      setOffset: (tabId, offset) => {
+        written.push([tabId, offset])
+        order.push(`pull ${tabId} ${offset}`)
+      }
+    })
+    setBandSeatHost({
+      setSeat: (tabId, seat) => {
+        seats.push([tabId, seat])
+        order.push(`seat ${tabId} ${seat}`)
+      }
+    })
+    // The entrance: depart from shut seats nothing (min(0, 56)); the frames translate; the rest
+    // seats the WebView at the band's height – Kotlin lays it out at top = 56, height = frame − 56,
+    // translation 56 − 56 = 0 (`TabHost.place`, `PageSeat.kt`).
     host.depart(56)
+    host.translate(24)
     host.translate(56)
+    expect(seats).toEqual([])
     host.rest(56)
     expect(heldPageOffset('t1')).toBe(56)
+    expect(seats).toEqual([['t1', 56]])
     expect(chromePageSeat()).toBe(0)
     expect(chromePageOffset()).toBe(0)
+    // A rest at the same height writes the seat once.
+    host.rest(56)
+    expect(seats).toEqual([['t1', 56]])
+    // The leave: depart toward 0 unseats FIRST (the view placed as reported, translated by the
+    // 56 it still has – the same picture), then the frames translate home.
     host.depart(0)
-    host.translate(0)
-    host.rest(0)
-    offSeat()
-    expect(seats).toEqual([])
-    expect(written).toEqual([
+    expect(seats).toEqual([
       ['t1', 56],
       ['t1', 0]
     ])
+    host.translate(30)
+    host.translate(0)
+    host.rest(0)
+    offSeat()
+    expect(chromeSeats).toEqual([])
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 0]
+    ])
+    expect(order).toEqual(['pull t1 24', 'pull t1 56', 'seat t1 56', 'seat t1 0', 'pull t1 30', 'pull t1 0'])
+    expect(layoutBand()).toBeUndefined()
+    expect(bandSeat()).toBe(0)
+  })
+
+  it("a re-target on the seated WebView: depart toward 76 keeps the seat at 56 through the travel (the view hangs the 20 it travels, clipped), the rest seats at 76; back toward 56 unseats to 56 at the depart (translated by the 20 still to travel) and the rest holds", () => {
+    host = createAndroidBandHost()
+    showBand(state())
+    host.depart(56)
+    host.translate(56)
+    host.rest(56)
+    expect(seats).toEqual([['t1', 56]])
+    host.depart(76)
+    expect(seats).toEqual([['t1', 56]])
+    host.translate(66)
+    host.translate(76)
+    expect(seats).toEqual([['t1', 56]])
+    host.rest(76)
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 76]
+    ])
+    host.depart(56)
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 76],
+      ['t1', 56]
+    ])
+    host.translate(66)
+    host.translate(56)
+    host.rest(56)
+    expect(seats).toHaveLength(3)
+    expect(written).toEqual([
+      ['t1', 56],
+      ['t1', 66],
+      ['t1', 76],
+      ['t1', 66],
+      ['t1', 56]
+    ])
+  })
+
+  it("a finger's drag on the seated WebView (no depart) unseats it at its first frame below the seat, before that frame's offset is written; a release short of half returns and re-seats at rest", () => {
+    host = createAndroidBandHost()
+    showBand(state())
+    host.depart(56)
+    host.translate(56)
+    host.rest(56)
+    const order: string[] = []
+    setPullHost({
+      setOffset: (tabId, offset) => {
+        written.push([tabId, offset])
+        order.push(`pull ${offset}`)
+      }
+    })
+    setBandSeatHost({
+      setSeat: (tabId, seat) => {
+        seats.push([tabId, seat])
+        order.push(`seat ${seat}`)
+      }
+    })
+    // The first frame at the height keeps the seat (Kotlin drops the repeated offset); the first
+    // below it unseats – seat 0 ahead of the offset, so no frame has the view translated 50 − 56
+    // above its frame.
+    host.translate(56)
+    expect(order).toEqual(['pull 56'])
+    host.translate(50)
+    expect(order).toEqual(['pull 56', 'seat 0', 'pull 50'])
+    host.translate(40)
+    expect(order).toEqual(['pull 56', 'seat 0', 'pull 50', 'pull 40'])
+    // Released short of half: the return is a travel toward 56 (depart keeps 0), and the rest
+    // seats again.
+    host.depart(56)
+    host.translate(48)
+    host.translate(56)
+    host.rest(56)
+    expect(order).toEqual(['pull 56', 'seat 0', 'pull 50', 'pull 40', 'pull 48', 'pull 56', 'seat 56'])
+  })
+
+  it('a pull that takes the seated page over has the seat written 0 before its first frame: the pull owns the whole displacement (its frames travel the pull channel as before)', () => {
+    host = createAndroidBandHost()
+    showBand(state())
+    host.depart(56)
+    host.translate(56)
+    host.rest(56)
+    expect(seats).toEqual([['t1', 56]])
+    dispatchPullEvent('t1', 'start')
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 0]
+    ])
+    // The band's leave moves nothing while the pull has the page, and seats nothing.
+    host.depart(0)
+    host.translate(30)
+    host.translate(0)
+    host.rest(0)
+    expect(seats).toHaveLength(2)
+    expect(written).toEqual([['t1', 56]])
+    abortPull()
+    // The state's return: its entrance translates, its rest seats again.
+    host.depart(56)
+    host.translate(28)
+    host.translate(56)
+    host.rest(56)
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 0],
+      ['t1', 56]
+    ])
+  })
+
+  it('release puts a seated WebView home: seat 0 first, then its offset', () => {
+    host = createAndroidBandHost()
+    showBand(state())
+    host.depart(56)
+    host.translate(56)
+    host.rest(56)
+    const order: string[] = []
+    setPullHost({
+      setOffset: (tabId, offset) => {
+        written.push([tabId, offset])
+        order.push(`pull ${offset}`)
+      }
+    })
+    setBandSeatHost({
+      setSeat: (tabId, seat) => {
+        seats.push([tabId, seat])
+        order.push(`seat ${seat}`)
+      }
+    })
+    host.release()
+    expect(order).toEqual(['seat 0', 'pull 0'])
+    expect(heldPageOffset('t1')).toBe(0)
+    host = null
   })
 
   it("the band standing as the front page changes kind: the new tab page's layer comes home (seat 0, offset 0) and the web page's WebView takes the offset (a navigation in the same tab), and back – seated again on Settings", () => {
@@ -331,12 +501,18 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     expect(chromePageSeat()).toBe(0)
     expect(written).toEqual([['ntp', 56]])
     expect(heldPageOffset('ntp')).toBe(56)
-    // And a Settings page typed into it: the WebView comes home, the layer takes the band –
-    // seated at once, the band being at rest.
+    // The band rests: the WebView arriving is seated at once (its seat after its offset).
+    expect(seats).toEqual([['ntp', 56]])
+    // And a Settings page typed into it: the WebView comes home – unseated first, then its
+    // offset – and the layer takes the band, seated at once, the band being at rest.
     const settings = stateWith('ntp')
     ;(settings.tabs as Record<string, { url: string }>).ntp.url = 'zen://settings/privacy'
     browserStore.set({ state: settings })
     expect(written).toEqual([
+      ['ntp', 56],
+      ['ntp', 0]
+    ])
+    expect(seats).toEqual([
       ['ntp', 56],
       ['ntp', 0]
     ])
@@ -362,8 +538,13 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.rest(56)
     expect(written).toEqual([['t1', 56]])
     expect(chromePageSeat()).toBe(0)
+    expect(seats).toEqual([['t1', 56]])
     browserStore.set({ state: stateWith('settings') })
     expect(written).toEqual([
+      ['t1', 56],
+      ['t1', 0]
+    ])
+    expect(seats).toEqual([
       ['t1', 56],
       ['t1', 0]
     ])
@@ -374,6 +555,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     expect(chromePageOffset()).toBe(56)
     expect(chromePageSeat()).toBe(56)
     expect(written).toHaveLength(2)
+    expect(seats).toHaveLength(2)
     browserStore.set({ state: stateWith('t2') })
     expect(chromePageOffset()).toBe(0)
     expect(chromePageSeat()).toBe(0)
@@ -382,9 +564,15 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
       ['t1', 0],
       ['t2', 56]
     ])
+    // The WebView arriving under the resting band is seated where it rests.
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 0],
+      ['t2', 56]
+    ])
   })
 
-  it('leaving a seated chrome page for a web page, the layer is put home – seat 0, offset 0 – BEFORE the WebView is written to (the layout reporter never sees a seat with a WebView in front)', () => {
+  it('leaving a seated chrome page for a web page, the layer is put home – seat 0 FIRST, then offset 0 – BEFORE the WebView is written to (its offset, then its seat): the one synchronous subscriber, in that order', () => {
     browserStore.set({ state: stateWith('settings') })
     host = createAndroidBandHost()
     showBand(state())
@@ -403,12 +591,24 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
         order.push(`pull ${tabId} ${offset}`)
       }
     })
+    setBandSeatHost({
+      setSeat: (tabId, seat) => {
+        seats.push([tabId, seat])
+        order.push(`seat ${tabId} ${seat}`)
+      }
+    })
     browserStore.set({ state: stateWith('t2') })
-    offSeat()
-    offOffset()
-    expect(order).toEqual(['offset 0', 'seat 0', 'pull t2 56'])
+    expect(order).toEqual(['seat 0', 'offset 0', 'pull t2 56', 'seat t2 56'])
     expect(chromePageSeat()).toBe(0)
     expect(heldPageOffset('t2')).toBe(56)
+    // And back: the WebView unseated first, then home; the layer takes the offset, then its seat.
+    order.length = 0
+    browserStore.set({ state: stateWith('settings') })
+    offSeat()
+    offOffset()
+    expect(order).toEqual(['seat t2 0', 'pull t2 0', 'offset 56', 'seat 56'])
+    expect(heldPageOffset('t2')).toBe(0)
+    expect(chromePageSeat()).toBe(56)
   })
 
   it('a chrome page arriving under a band mid-travel takes the offset translated (seat 0); the rest then seats it', () => {
@@ -594,11 +794,23 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     ])
     expect(heldPageOffset('t1')).toBe(0)
     expect(heldPageOffset('t2')).toBe(56)
+    // Each WebView's seat with it: the one leaving unseated, the one arriving seated at the rest.
+    expect(seats).toEqual([
+      ['t1', 56],
+      ['t1', 0],
+      ['t2', 56]
+    ])
     // The phone's new tab page has no view under it to move: the old page comes home through the
     // channel and the chrome's own layer takes the band's offset (`PageBandLayer`), seated – the
     // band rests – and nothing is written to the channel for it.
     browserStore.set({ state: stateWith('ntp') })
     expect(written).toEqual([
+      ['t1', 56],
+      ['t1', 0],
+      ['t2', 56],
+      ['t2', 0]
+    ])
+    expect(seats).toEqual([
       ['t1', 56],
       ['t1', 0],
       ['t2', 56],

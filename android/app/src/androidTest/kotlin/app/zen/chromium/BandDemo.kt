@@ -16,6 +16,8 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -69,8 +71,17 @@ import kotlin.math.roundToInt
  *     0 (read under the finger mid-swipe); the host's WebView unmoved throughout; a swipe up on
  *     the new tab page puts the band away (`band-swipe-new-tab`, the layer under the finger);
  *     the radios cycled bring the state back there, seated again, and on a web page after it the
- *     WebView takes the offset again. (Until this layer stood, this scene pinned the band
- *     WAITING on the new tab page.)
+ *     WebView takes the offset again – seated at rest. (Until this layer stood, this scene pinned
+ *     the band WAITING on the new tab page.)
+ *  6c. THE WEBVIEW SEATS (the Lead's rule on #758 extended to documents, W6-S28-c): on a LONG
+ *     web page (`/long`) with the offline state's band standing, at rest the WebView is seated
+ *     (translationY 0, height the frame less the band) and the page scrolls to its last line
+ *     above the bottom edge – the host lays the view out at top = seat, height = frame − seat
+ *     (`TabHost.setBandSeat`, the seat channel beside the pull channel) and translates the
+ *     offset less the seat (`PageSeat.kt`); the still `design-web-page-seated-light`; mid-swipe
+ *     the view is TRANSLATED at seat 0 (`band-swipe-web-page`, a short swipe released before
+ *     half), and seated again at the rest. The page's displacement this driver reads everywhere
+ *     ([offsetCss]) is seat + translation: the one picture, whichever carries it.
  *  7. A PULL ON A HELD PAGE (§3.4 Android): a pull-to-refresh begun while the band stands takes
  *     the page over where it sits – the band leaves, the page never jumps home first
  *     (`band-pull-takeover`, the host's offset sampled through the drag), the pull comes home
@@ -122,6 +133,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         val second = article.replace("lighthouse keeper", "harbourmaster")
         val routes = mapOf(
             "/plain" to (HTML to PLAIN_PAGE.toByteArray()),
+            "/long" to (HTML to LONG_PAGE.toByteArray()),
             "/article" to (HTML to article.toByteArray()),
             "/second" to (HTML to second.toByteArray()),
             "/app/" to (HTML to APP_PAGE.toByteArray()),
@@ -193,6 +205,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             sheetWaits()
             replacement()
             chromePages()
+            webPageSeats()
             pullTakeover()
             barUnderBand()
             stateEnds()
@@ -600,9 +613,165 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         navigate("$SITE_A/plain")
         val onWeb = awaitBand(OFFLINE_TITLE, 6_000)
         SystemClock.sleep(900)
-        finding("  back on a web page: band=${bandTitle()}; host offset ${offsetCss()}; ${layerProbe()}")
+        val web = viewGeometry()
+        finding("  back on a web page: band=${bandTitle()}; host offset ${offsetCss()}; $web; ${layerProbe()}")
         check("back on a web page the state's band holds and the host's WebView takes the offset again (the layer gone with the chrome's page)", onWeb && abs(offsetCss() - ONE_LINE) <= TOLERANCE && layerProbe().optInt("layers") == 0)
+        check("back on a web page the WebView arriving under the resting band is SEATED (seat ${web.seatPx} px = ${ONE_LINE.roundToInt()} CSS, translationY ${web.translationY}), as the layer was", onWeb && web.seatedAt(ONE_LINE))
         beat()
+    }
+
+    // --- 6c. the WebView seats under a standing band ----------------------------------------------------------------------
+
+    /**
+     * The Lead's rule on #758, extended to documents (W6-S28-c): the WebView under a standing
+     * band SEATS at rest as the chrome pages' layer does – `TabHost.place` lays it out at
+     * top = seat, height = frame − seat (`BarHidePlacement.of`'s `seatPx`), and `TabWebView`
+     * translates the pull channel's offset less the seat (`PageSeat.kt`): translationY 0 at the
+     * rest, the view's bottom at its frame's bottom, so a long page scrolls to its last line
+     * above the frame's bottom edge instead of leaving it under the band. Translated at rest
+     * instead (#734/#735's picture), the view kept the frame's full height and its last band of
+     * content stood under the frame's bottom, unreachable by any scroll. Read off the host's view
+     * on the main thread ([viewGeometry]: translationY, top, height, the seat, the chrome's
+     * reported frame) and off the page ([LONG_PAGE_SCROLL_JS]: scrolled to its end, where its
+     * last line sits against the frame's bottom in the page's own viewport). Mid-swipe the view
+     * is TRANSLATED at seat 0 – a finger's drag unseats at its first frame below the seat, the
+     * band's host writing seat 0 ahead of the offset – and seated again at the rest.
+     */
+    private fun webPageSeats() {
+        finding("\nthe WebView seats under a standing band (the Lead's rule on #758, for documents): a long web page under the offline state")
+        armFrameClock()
+        sampler.start()
+        navigate("$SITE_A/long")
+        val up = awaitBand(OFFLINE_TITLE, 6_000)
+        SystemClock.sleep(900)
+        val arrival = sampler.stop()
+        finding("  the long page under the band: band=${bandTitle()}; ${describeTab()}; the WebView through the navigation: ${describeSamples(arrival)}; chrome frames ${describeFrames(frameClock())}")
+        check("the offline state's band stands on the long web page", up)
+        if (!up) return
+        val rest = viewGeometry()
+        val band = bandProbe()
+        val layer = layerProbe()
+        val bandBottomPx = layer.optDouble("bandBottom", -1e6) * density
+        finding("  at rest: $rest; band root top ${band.optInt("top", -1)} height ${band.optInt("height", -1)} CSS (bottom ${layer.optInt("bandBottom", -1)} CSS = ${"%.1f".format(bandBottomPx)} px); page offset ${offsetCss()}")
+        val frame = rest.frame
+        check(
+            "the seated WebView's laid-out height is the frame's less the band's (${rest.height} px against ${frame?.height() ?: -1} − ${rest.seatPx}; ± 1 px)",
+            frame != null && abs(rest.height - (frame.height() - rest.seatPx)) <= 1
+        )
+        check(
+            "the seated WebView's top is the band's bottom (${rest.top} px against the band's ${"%.1f".format(bandBottomPx)} px and the frame's ${frame?.top ?: -1} + seat ${rest.seatPx}; ± 1.5 px: the frame's top is truncated to a device px and the seat rounded to one)",
+            frame != null && abs(rest.top - bandBottomPx) <= 1.5f && rest.top == frame.top + rest.seatPx
+        )
+        check("the seat is the band's height (${rest.seatPx} px = ${ONE_LINE.roundToInt()} CSS × $density, ± 1 px)", abs(rest.seatPx - ONE_LINE * density) <= 1f)
+        // The page scrolled to its end (instant), its last line read against the frame's bottom
+        // edge in the page's own viewport: the frame's bottom is the view's bottom once seated.
+        longPageScroll()
+        SystemClock.sleep(400)
+        val scrolled = longPageScroll()
+        val after = viewGeometry()
+        val frameBottomInPage = if (frame != null) (frame.bottom - (after.top + after.translationY)) / density else -1f
+        val lastBottom = scrolled.optDouble("lastBottom", 1e6)
+        finding("  scrolled to its end: $scrolled; the frame's bottom edge in the page's viewport ${"%.1f".format(frameBottomInPage)} CSS; the view after the scroll: $after")
+        check(
+            "at rest the WebView is seated (translationY 0, height the frame less the band) and the page scrolls to its last line above the bottom edge " +
+                "(translationY ${rest.translationY} px, height ${rest.height} of frame ${frame?.height() ?: -1} less seat ${rest.seatPx}; " +
+                "the last line '${scrolled.optString("lastText")}' bottom $lastBottom CSS against the frame's bottom edge ${"%.1f".format(frameBottomInPage)} CSS in the page's viewport; " +
+                "scrollTop ${scrolled.optInt("scrollTop")} of ${scrolled.optInt("scrollHeight")} in ${scrolled.optInt("innerHeight")})",
+            frame != null && abs(rest.translationY) <= 1f && abs(rest.height - (frame.height() - rest.seatPx)) <= 1 &&
+                scrolled.optBoolean("overflows") && scrolled.optBoolean("atBottom") && frameBottomInPage > 0f && lastBottom <= frameBottomInPage - 1f
+        )
+        snap("design-web-page-seated-light")
+        beat()
+
+        // A short swipe up on the band, held mid-way: the view TRANSLATED at seat 0 – the drag's
+        // first frame below the seat unseats it (seat 0 written ahead of that frame's offset), so
+        // the page keeps covering the frame on its way; released before half, the band springs
+        // back and the rest seats the view again. The travel is about a third of this band's
+        // height (NUDGE + a tenth: some 40 px on the 98-px band, which the band follows 1:1 past
+        // the slop to about 36 px) – the first run's NUDGE + three tenths took it past half
+        // (55 of 98) and dismissed it, as a swipe past half must.
+        val title = fingerOnText(OFFLINE_TITLE) ?: return
+        var mid = viewGeometry()
+        val back = scene("band-swipe-web-page", JankBudget.Kind.SPRING, took = { bandTitle() == OFFLINE_TITLE && viewGeometry().seatedAt(ONE_LINE) }) {
+            Finger().apply {
+                down(title.x, title.y)
+                moveBy(0f, -NUDGE, 80)
+                moveBy(0f, -(ONE_LINE * density) * 0.1f, 240)
+                hold(200)
+                mid = viewGeometry()
+                snap("web-page-swipe-mid")
+                hold(120)
+                up()
+            }
+        }
+        val swipe = sampler.stop()
+        val settled = viewGeometry()
+        finding("  the short swipe on the long page: ${describeSamples(swipe)}; under the finger mid-swipe: $mid; at rest after: $settled")
+        check(
+            "the travel reading: mid-swipe the WebView is TRANSLATED at seat 0 (translationY ${mid.translationY} px of ${ONE_LINE * density}, seat ${mid.seatPx}) – depart translates, rest seats",
+            mid.seatPx == 0 && mid.translationY > TOLERANCE * density && mid.translationY < ONE_LINE * density - 1f
+        )
+        check("a swipe up released before half the height springs the band back and the rest SEATS the WebView again (seat ${settled.seatPx} px, translationY ${settled.translationY})", back)
+        if (!back) touchFault("a short swipe on the band over the long page did not leave the band standing")
+        beat()
+        if (bandTitle() != OFFLINE_TITLE) {
+            // The swipe took the state's band off after all: the scenes after this one read the
+            // band standing on a web page, so the radios bring the state back (its return is the
+            // state's own entrance, as in 6b) rather than leaving them without their precondition.
+            radios(true)
+            poll(15_000, step = 100) { findNode { it == BACK_ONLINE_TOAST } != null }
+            SystemClock.sleep(1_500)
+            radios(false)
+            val restored = awaitBand(OFFLINE_TITLE, 20_000)
+            finding("  the band put away by the swipe – the radios cycled to bring the state back for the scenes after: restored=$restored; ${viewGeometry()}")
+        }
+        // The short page again for the pull and the bar (their scenes read the page where it was).
+        navigate("$SITE_A/plain")
+        awaitBand(OFFLINE_TITLE, 6_000)
+        SystemClock.sleep(600)
+    }
+
+    /**
+     * Where the host's view for the demo tab stands, read on the main thread: its translation,
+     * its laid-out top and height (the container's device px), the band's seat it is laid out
+     * under (`TabWebView.bandSeatPx`) and the frame the chrome last reported for it
+     * (`TabHost.reportedFrameOf`). `seatedAt(h)`: the desktop seam's REST – the seat the band's
+     * height, no translation.
+     */
+    private data class ViewGeometry(val translationY: Float, val top: Int, val height: Int, val seatPx: Int, val frame: Rect?, val density: Float) {
+        fun seatedAt(h: Float): Boolean = abs(seatPx - h * density) <= 1f && abs(translationY) <= 1f
+        override fun toString(): String = "view translationY $translationY top $top height $height seat $seatPx px; reported frame $frame"
+    }
+
+    private fun viewGeometry(): ViewGeometry {
+        var out = ViewGeometry(0f, 0, 0, 0, null, density)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(TAB)
+            if (view != null) out = ViewGeometry(view.translationY, view.top, view.height, view.bandSeatPx, host.tabs.reportedFrameOf(TAB), density)
+        }
+        return out
+    }
+
+    /** The long page scrolled to its end and its geometry read ([LONG_PAGE_SCROLL_JS]); `{}` when the page did not answer. */
+    private fun longPageScroll(): JSONObject = runCatching { JSONObject(jsonString(pageJs(LONG_PAGE_SCROLL_JS))) }.getOrDefault(JSONObject())
+
+    /** Evaluate in the demo tab's WebView; the raw JSON-encoded result ("" when it never answered). */
+    private fun pageJs(code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(TAB)
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(5, TimeUnit.SECONDS)
+        return result
     }
 
     // --- 7. a pull on the held page ------------------------------------------------------------------------------------------
@@ -950,12 +1119,18 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
 
     private fun chromeTheme(): String = jsonString(chromeJs("(function(){return document.documentElement.getAttribute('data-theme')||''})()"))
 
-    /** The page's translation below the frame's top, CSS px, from the host's view (the one source of truth for where the page is). */
+    /**
+     * The page's displacement below the frame's top, CSS px, from the host's view (the one
+     * source of truth for where the page is): the band's seat the view is laid out under plus
+     * its translation (`PageSeat.kt`: seated at rest the seat carries the offset and the
+     * translation is 0; through a travel, a drag or a pull the translation carries it). The one
+     * picture, whichever carries it – what every check here reads as the page's offset.
+     */
     private fun offsetCss(): Float {
         var offset = 0f
         instrumentation.runOnMainSync {
             val view = host.tabs.get(TAB)
-            if (view != null) offset = view.translationY / density
+            if (view != null) offset = (view.bandSeatPx + view.translationY) / density
         }
         return (offset * 10).roundToInt() / 10f
     }
@@ -963,9 +1138,10 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
     // --- the host sampler and the chrome's frame clock -------------------------------------------------------------------------------
 
     /**
-     * The page's offset read on the main thread every [SAMPLE_MS] from [start] to [stop]: the
-     * motion the host drew, as it drew it. Started by [scene] before its block, stopped by the
-     * act after it (the samples run a little past the block, into the settle).
+     * The page's offset ([offsetCss]'s reading: seat + translation) read on the main thread
+     * every [SAMPLE_MS] from [start] to [stop]: the motion the host drew, as it drew it.
+     * Started by [scene] before its block, stopped by the act after it (the samples run a little
+     * past the block, into the settle).
      */
     private inner class OffsetSampler {
         private val handler = Handler(Looper.getMainLooper())
@@ -975,7 +1151,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             override fun run() {
                 if (!on) return
                 val view = host.tabs.get(TAB)
-                samples.add(SystemClock.uptimeMillis() to (view?.translationY ?: 0f) / density)
+                samples.add(SystemClock.uptimeMillis() to (if (view == null) 0f else (view.bandSeatPx + view.translationY) / density))
                 handler.postDelayed(this, SAMPLE_MS)
             }
         }
@@ -1399,6 +1575,34 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             "<title>Harbour notices</title><style>body{margin:0;padding:24px 20px;font:17px/1.5 system-ui,sans-serif;color:#1f2328;background:#fff}" +
             "@media (prefers-color-scheme: dark){body{color:#e6e6e6;background:#121212}}</style></head>" +
             "<body><h1>Harbour notices</h1><p>The harbour office is closed on Sunday.</p></body></html>"
+
+        /**
+         * A LONG page for the seat's verdict (scene 6c): forty notices, well past any phone's
+         * frame, ending in the one line the check scrolls to (`#last`). No article (the reader
+         * offer must not arise on it), no manifest.
+         */
+        private val LONG_PAGE = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+            "<title>Harbour notices, the year</title><style>body{margin:0;padding:24px 20px;font:17px/1.5 system-ui,sans-serif;color:#1f2328;background:#fff}" +
+            "p{margin:0 0 14px}#last{font-weight:600}" +
+            "@media (prefers-color-scheme: dark){body{color:#e6e6e6;background:#121212}}</style></head>" +
+            "<body><h1>Harbour notices</h1>" +
+            (1..40).joinToString("") { "<p>Notice $it: the east quay is closed for dredging on day $it.</p>" } +
+            "<p id=\"last\">Last line: the harbour office is closed on Sunday.</p></body></html>"
+
+        /**
+         * The long page SCROLLED TO ITS END and read in the same evaluation (in the page's own
+         * viewport, CSS px): `scrollTop`, `scrollHeight`, `innerHeight`, whether it `overflows`
+         * and is `atBottom`; the last line's edges (`lastTop`, `lastBottom`, its `lastText`).
+         * Seated, the view's bottom is the frame's bottom and the last line's bottom sits inside
+         * the viewport; translated at rest (the old picture) the view ran a band past the frame's
+         * bottom and the last line's bottom, at the viewport's, stood under the frame's edge.
+         */
+        private const val LONG_PAGE_SCROLL_JS =
+            "(function(){var s=document.scrollingElement||document.documentElement;s.scrollTop=s.scrollHeight;" +
+                "var last=document.getElementById('last');var o={innerHeight:window.innerHeight,scrollTop:Math.round(s.scrollTop),scrollHeight:s.scrollHeight};" +
+                "o.overflows=s.scrollHeight>window.innerHeight+1;o.atBottom=s.scrollTop+window.innerHeight>=s.scrollHeight-1;" +
+                "if(last){var r=last.getBoundingClientRect();o.lastTop=Math.round(r.top*10)/10;o.lastBottom=Math.round(r.bottom*10)/10;o.lastText=(last.textContent||'').trim()}" +
+                "return JSON.stringify(o)})()"
 
         /** The PWA demo's Sketch Studio: a page with a manifest (PwaDemo's words, so the install sheet is the same app's). */
         private val APP_PAGE = """
