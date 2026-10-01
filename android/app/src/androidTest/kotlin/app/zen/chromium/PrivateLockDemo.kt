@@ -349,8 +349,8 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             expect("nothing of the page and no card control reaches the accessibility tree", labels.none { it.contains(SECRET_TITLE, ignoreCase = true) || it.contains(HOST) || it == "Close Private tab" })
             finding("  Private pane: cover $paneCover, grid inert $inert, cards ${cards()} masked $masked; a11y labels (${labels.size}): ${labels.take(30)}")
             shot("06-cover-over-private-pane")
-            tapSegment("tabs")
-            expect("a finger on Tabs shows the regular pane", awaitPane("tabs"))
+            pickView("tabs")
+            expect("a finger on the menu's Tabs (N) row shows the regular view", awaitPane("tabs"))
             SystemClock.sleep(1_500)
             val regularCards = cards()
             val guardOnTabs = guardNow()
@@ -1426,13 +1426,16 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
         return (0 until array.length()).map { array.getString(it) }
     }
 
-    /** A real touch on the segment's tab `id` (`tabs` or `private`). */
-    private fun tapSegment(id: String) {
-        val r = chromeRect("[data-testid=\"overview-pane-$id\"]") ?: run {
-            finding("  no segment tab for $id on screen")
-            return
+    /**
+     * A real touch on the overview's menu row that switches to the view `id` (`tabs` or
+     * `private`): the BAR's ⋯ opens the overview's menu (the tab overview cleanup spec's §4),
+     * its "Tabs (N)" row from the private view, "Private Tabs (N)" from the regular one.
+     */
+    private fun pickView(id: String) {
+        if (!switchOverviewView(id)) {
+            finding("  no ${if (id == "private") "Private Tabs (N)" else "Tabs (N)"} row in the overview's menu: ${overviewMenuRows()}")
+            back()
         }
-        Finger().tap(r.exactCenterX(), r.exactCenterY())
     }
 
     /** The on-screen box of the first chrome element `selector` matches (device px); null when none does. */

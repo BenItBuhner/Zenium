@@ -6,15 +6,17 @@ import type { ArchivedTabSummary, Space, Tab, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 
 /*
- * The switcher's Inactive tabs (matrix TAB-20; v2 draft §9.3, §9.11, §9.17, §9.19, §9.23,
- * §9.24, §9.34, §10.3): the entry is the segment row's trailing control – an icon button with
- * the count badge, there only while the archive holds something and never on the private pane,
- * never a fourth segment – and opens the list sheet on the frame's dialog host: one row per
- * archived tab, most recently used first, with its close; a tap restores the tab and the
- * overview leaves on it; the footer's Restore all and Close all act on the whole list, Close
- * all asking first on a stacked prompt without an icon; the list follows the core's
- * `inactiveTabs.changed`, down to the empty sentence. Rendered for real in happy-dom, the frame
- * loop cranked by hand.
+ * The switcher's Inactive tabs (matrix TAB-20; v2 draft §9.11, §9.17, §9.23, §9.24, §10.3; tab
+ * overview cleanup spec §4 and the root's ruling §9: Inactive Tabs is a ⋯ row ONLY): the entry
+ * is the bar's ⋯ menu's "Inactive Tabs (N)" row – the core's template carries it while the
+ * archive holds something and never from the private view
+ * (`src/core/__tests__/overviewMenuTemplate.test.ts`) – and the overview draws no button of its
+ * own for it. The picked row's `overview.command` opens the list sheet on the frame's dialog
+ * host: one row per archived tab, most recently used first, with its close; a tap restores the
+ * tab and the overview leaves on it; the footer's Restore all and Close all act on the whole
+ * list, Close all asking first on a stacked prompt without an icon; the list follows the
+ * core's `inactiveTabs.changed`, down to the empty sentence. Rendered for real in happy-dom,
+ * the frame loop cranked by hand.
  */
 
 const SPACE = 'space'
@@ -50,6 +52,8 @@ const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
 const { COVERED_TIMEOUT_MS } = await import('@renderer/lib/pageView')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
+const { dispatchOverviewCommand } = await import('@renderer/lib/overviewCommands')
+const { pickOverviewPane } = await import('@renderer/lib/privateTabs')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -323,9 +327,9 @@ async function present(): Promise<void> {
   await land()
 }
 
-/** Tap the entry and let the sheet read the archive and come up. */
+/** The ⋯ menu's Inactive Tabs (N) row picked: the sheet reads the archive and comes up. */
 async function openSheet(): Promise<void> {
-  act(() => entryButton()!.click())
+  act(() => dispatchOverviewCommand('inactive-tabs'))
   await settle()
   await present()
 }
@@ -338,31 +342,16 @@ const archive = (): ArchivedTabSummary[] => [
 
 // --- the entry ---------------------------------------------------------------------------------
 
-describe('the segment row’s entry', () => {
-  it('is not there while the archive is empty, as Chrome’s card is not', () => {
-    show(two(0))
-    expect(entryButton()).toBeNull()
-    // The segment itself is untouched: the two panes, no fourth.
-    expect(document.querySelectorAll('[role="tablist"] [role="tab"]')).toHaveLength(2)
-  })
-
-  it('is the segment row’s trailing icon button with the count badge (§9.3, §9.19), named for a reader and for the harness, not a segment (§9.34)', () => {
+describe('the entry', () => {
+  it('is the ⋯ menu’s row alone (§4; root §9): the overview draws no Inactive button, and the archive’s count is the core’s to show', () => {
     show(two(3))
-    const button = entryButton()!
-    expect(button.getAttribute('aria-label')).toBe('Inactive tabs, 3')
-    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(button.getAttribute('aria-expanded')).toBe('false')
-    expect(button.classList.contains('zen-v2-icon-button')).toBe(true)
-    expect(button.querySelector('.zen-v2-badge')?.textContent).toBe('3')
-    // Beside the segment in one row, after it; the tablist still holds its two tabs.
-    const tablist = document.querySelector<HTMLElement>('[role="tablist"]')!
-    expect(button.parentElement).toBe(tablist.parentElement)
-    expect(tablist.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(2)
-    expect(button.getAttribute('role')).toBeNull()
+    expect(entryButton()).toBeNull()
+    expect(document.querySelector('[aria-label^="Inactive tabs"]')).toBeNull()
+    // No segment row either (§1): nothing but the title in the header.
+    expect(document.querySelectorAll('[role="tablist"]')).toHaveLength(0)
   })
 
-  it('has no place on the private pane: a private tab is never archived', () => {
+  it('the private view never shows the archive (a private tab is never archived): the row is the core’s to withhold, and the regular view is one command away', async () => {
     const state = two(3, {
       capabilities: {
         windowControls: false,
@@ -379,11 +368,17 @@ describe('the segment row’s entry', () => {
       tabs: { ...state.tabs, p: priv },
       spaces: [{ ...state.spaces[0], tabIds: [...state.spaces[0].tabIds, 'p'] }]
     })
-    expect(entryButton()).not.toBeNull()
-    act(() => document.querySelector<HTMLElement>('[data-testid="overview-pane-private"]')!.click())
+    const view = (): string | null =>
+      document
+        .querySelector<HTMLElement>('[data-testid="overview-title"]')
+        ?.getAttribute('data-view') ?? null
+    act(() => pickOverviewPane('private'))
+    await settle()
+    expect(view()).toBe('private')
     expect(entryButton()).toBeNull()
-    act(() => document.querySelector<HTMLElement>('[data-testid="overview-pane-tabs"]')!.click())
-    expect(entryButton()).not.toBeNull()
+    act(() => dispatchOverviewCommand('switch-view'))
+    await settle()
+    expect(view()).toBe('tabs')
   })
 })
 
@@ -395,7 +390,6 @@ describe('the Inactive tabs sheet', () => {
     archived = archive()
     await openSheet()
     expect(of('inactiveTabs.list')).toHaveLength(1)
-    expect(entryButton()!.getAttribute('aria-expanded')).toBe('true')
     expect(dialogTitles()).toEqual(['Inactive tabs'])
     expect(rowLabels()).toEqual([
       `X marks, x.example · ${time(NOW - 3 * 60 * 60 * 1000)}`,

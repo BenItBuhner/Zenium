@@ -6,13 +6,14 @@ import type { Folder, Tab } from '@shared/types'
 
 /*
  * A group card's actions within a reader's reach (A11Y-10): the card's header is a button whose
- * tap folds the group and whose hold opens the group's sheet (Rename, Collapse / Expand,
- * Ungroup, Close Group, Delete Group). The hold is a gesture: Chromium's Android bridge exposes
- * no `ACTION_LONG_CLICK` and no custom action for a web node (ARIA has no vocabulary for one),
- * so TalkBack's actions menu on the header lists Collapse / Expand – the `aria-expanded` – and
- * nothing of the sheet's. Under touch exploration the card therefore draws the sheet's other
- * rows as controls by the same names (`groupCardControls`), next after the header and out of
- * sight; without it nothing is drawn, so a keyboard's Tab never stops on a control it cannot see.
+ * tap folds the group and whose hold (or ⋯) opens the group's sheet (tab overview cleanup spec
+ * §2: Rename, Colour – the sheet's palette – New Tab in Group, Ungroup, Close Group, Delete
+ * Group). The hold is a gesture: Chromium's Android bridge exposes no `ACTION_LONG_CLICK` and
+ * no custom action for a web node (ARIA has no vocabulary for one), so TalkBack's actions menu
+ * on the header lists Collapse / Expand – the `aria-expanded` – and nothing of the sheet's.
+ * Under touch exploration the card therefore draws the sheet's rows as controls by the same
+ * names (`groupCardControls`), next after the header and out of sight; without it nothing is
+ * drawn, so a keyboard's Tab never stops on a control it cannot see.
  */
 
 const invoke = vi.fn(async () => null)
@@ -20,6 +21,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { GroupCard } = await import('../GroupCard')
+const { OVERVIEW_LABELS } = await import('@shared/overviewMenu')
 const { groupActions, groupCardControls } = await import('../groupActions')
 const { DEFAULT_FOLDER_ICON } = await import('@renderer/lib/groups')
 const { applyAccessibilityState, resetAccessibilityState } =
@@ -72,6 +74,7 @@ const tab = (id: string): Tab =>
 
 let root: Root | null = null
 let host: HTMLElement | null = null
+const onNewTab = vi.fn<(folder: Folder) => void>()
 const onCloseGroup = vi.fn<(folder: Folder) => void>()
 const onDelete = vi.fn<(folder: Folder) => void>()
 
@@ -93,6 +96,7 @@ function card(
       tabs,
       card: (t: Tab) => createElement('div', { key: t.id }, t.title),
       onMenu: () => undefined,
+      onNewTab,
       onCloseGroup,
       onDelete,
       columns: 2,
@@ -117,6 +121,7 @@ const click = (b: Element): void => {
 
 beforeEach(() => {
   invoke.mockClear()
+  onNewTab.mockClear()
   onCloseGroup.mockClear()
   onDelete.mockClear()
 })
@@ -131,37 +136,59 @@ afterEach(() => {
 })
 
 describe('the group card under touch exploration (A11Y-10)', () => {
-  it('without touch exploration the header is the card’s one control – nothing a keyboard could Tab to unseen', () => {
+  it('without touch exploration the open card’s controls are the header and its visible ⋯ – nothing a keyboard could Tab to unseen; folded, the header alone', () => {
     const el = card()
     expect(controls(el)).toBeNull()
-    expect(el.querySelectorAll('button').length).toBe(0)
+    // The open group's ⋯ (the cleanup spec §2) is a real, visible button beside the header,
+    // named for the sheet it opens; it is the card's only button.
+    const buttons = [...el.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([OVERVIEW_LABELS.groupOptions])
+    expect(buttons[0].dataset.testid).toBe('group-card-options')
+    expect(buttons[0].classList.contains('sr-only')).toBe(false)
     expect(header(el).getAttribute('role')).toBe('button')
     expect(header(el).getAttribute('aria-expanded')).toBe('true')
+    act(() => root?.unmount())
+    root = null
+    // Folded, the card draws no ⋯: the header is the one control, the whole card its tap.
+    const folded = card({ collapsed: true })
+    expect(folded.querySelectorAll('button').length).toBe(0)
+    expect(header(folded).getAttribute('aria-expanded')).toBe('false')
+    const tap = folded.querySelector<HTMLElement>('[data-testid="group-card-tap"]')!
+    expect(tap.getAttribute('aria-hidden')).toBe('true')
+    expect(tap.hasAttribute('role')).toBe(false)
   })
 
-  it('under touch exploration the sheet’s rows stand as real buttons next after the header, by the same names, out of sight but in the tree', () => {
+  it('under touch exploration the sheet’s rows stand as real buttons next after the header and its ⋯, by the same names, out of sight but in the tree', () => {
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
     const el = card()
     expect(controls(el)).not.toBeNull()
-    // Reading order: the header, then its actions, then the member cards.
-    expect(header(el).nextElementSibling).toBe(controls(el))
-    expect(names(el)).toEqual(['Rename', 'Ungroup', 'Close Group (3 Tabs)', 'Delete Group'])
-    // The same names as the hold sheet's rows, from the one builder: every row but the fold,
-    // which the header is itself (its tap, and Collapse / Expand in TalkBack's menu off
-    // `aria-expanded`).
-    const sheetRows = groupActions(folder(), 3, { closeGroup: onCloseGroup, deleteGroup: onDelete })
-    expect(sheetRows.map((a) => a.label)).toEqual([
+    // Reading order: the header, its ⋯, then its actions, then the member cards.
+    const options = header(el).nextElementSibling as HTMLElement
+    expect(options.dataset.testid).toBe('group-card-options')
+    expect(options.nextElementSibling).toBe(controls(el))
+    expect(names(el)).toEqual([
       'Rename',
-      'Collapse',
+      'New Tab in Group',
       'Ungroup',
       'Close Group (3 Tabs)',
       'Delete Group'
     ])
-    expect(
-      groupCardControls(folder(), 3, { closeGroup: onCloseGroup, deleteGroup: onDelete }).map(
-        (a) => a.label
-      )
-    ).toEqual(sheetRows.filter((a) => a.id !== 'collapse').map((a) => a.label))
+    // The same names as the sheet's rows, from the one builder: every row (§2's order, Colour
+    // being the sheet's palette, not a row); the fold is no row – the header is itself (its
+    // tap, and Collapse / Expand in TalkBack's menu off `aria-expanded`).
+    const on = { newTabInGroup: onNewTab, closeGroup: onCloseGroup, deleteGroup: onDelete }
+    const sheetRows = groupActions(folder(), 3, on)
+    expect(sheetRows.map((a) => a.label)).toEqual([
+      'Rename',
+      'New Tab in Group',
+      'Ungroup',
+      'Close Group (3 Tabs)',
+      'Delete Group'
+    ])
+    expect(sheetRows.map((a) => a.id)).toEqual(['rename', 'new-tab', 'ungroup', 'close', 'delete'])
+    expect(groupCardControls(folder(), 3, on).map((a) => a.label)).toEqual(
+      sheetRows.map((a) => a.label)
+    )
     for (const b of buttons(el)) {
       expect(b.getAttribute('type')).toBe('button')
       // Visually hidden, not hidden from the tree: the screen-reader-only box, no `display:
@@ -178,16 +205,18 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     // The danger row keeps its mark for a reader of the source, not its ink: it is unseen.
     expect(buttons(el).map((b) => b.dataset.groupAction)).toEqual([
       'rename',
+      'new-tab',
       'ungroup',
       'close',
       'delete'
     ])
   })
 
-  it('the count keeps its unit: one tab, "Close Group (1 Tab)"; folded, the same four (the fold is the header’s)', () => {
+  it('the count keeps its unit: one tab, "Close Group (1 Tab)"; folded, the same five (the fold is the header’s)', () => {
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
     expect(names(card({ tabs: 1 }))).toEqual([
       'Rename',
+      'New Tab in Group',
       'Ungroup',
       'Close Group (1 Tab)',
       'Delete Group'
@@ -196,19 +225,31 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     root = null
     const folded = card({ collapsed: true })
     expect(header(folded).getAttribute('aria-expanded')).toBe('false')
-    expect(names(folded)).toEqual(['Rename', 'Ungroup', 'Close Group (3 Tabs)', 'Delete Group'])
+    expect(names(folded)).toEqual([
+      'Rename',
+      'New Tab in Group',
+      'Ungroup',
+      'Close Group (3 Tabs)',
+      'Delete Group'
+    ])
   })
 
   it('follows the state live while the card stands: TalkBack coming on draws them, going off takes them away', () => {
     const el = card()
     expect(controls(el)).toBeNull()
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
-    expect(names(el)).toEqual(['Rename', 'Ungroup', 'Close Group (3 Tabs)', 'Delete Group'])
+    expect(names(el)).toEqual([
+      'Rename',
+      'New Tab in Group',
+      'Ungroup',
+      'Close Group (3 Tabs)',
+      'Delete Group'
+    ])
     act(() => applyAccessibilityState({ touchExploration: false, fontScale: 1 }))
     expect(controls(el)).toBeNull()
   })
 
-  it('each control does what its row does: Rename edits the name in place, Ungroup asks the core, Close Group and Delete Group go to the overview', () => {
+  it('each control does what its row does: Rename edits the name in place, Ungroup asks the core, New Tab in Group, Close Group and Delete Group go to the overview', () => {
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
     const el = card()
     const button = (name: string): HTMLButtonElement =>
@@ -217,7 +258,16 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     expect(uiStore.get().renamingFolderId).toBe('g')
     // The header shows the name's field now; the controls stand on.
     expect(el.querySelector('input[aria-label="Group name"]')).not.toBeNull()
-    expect(names(el)).toEqual(['Rename', 'Ungroup', 'Close Group (3 Tabs)', 'Delete Group'])
+    expect(names(el)).toEqual([
+      'Rename',
+      'New Tab in Group',
+      'Ungroup',
+      'Close Group (3 Tabs)',
+      'Delete Group'
+    ])
+    click(button('New Tab in Group'))
+    expect(onNewTab).toHaveBeenCalledTimes(1)
+    expect(onNewTab.mock.calls[0][0].id).toBe('g')
     click(button('Ungroup'))
     expect(invoke).toHaveBeenCalledWith('folder.delete', { folderId: 'g', unpack: true })
     click(button('Close Group (3 Tabs)'))

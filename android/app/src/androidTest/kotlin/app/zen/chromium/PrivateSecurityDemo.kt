@@ -306,32 +306,31 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             closeSheets()
         }
 
-        // 4. TAB-03: the Private pane with nothing in it – §9.17's one sentence on the phone
-        //    panels' note, its one follow-up 16 beneath, never a card (§9.34).
-        scene("4. The empty Private pane (TAB-03)") {
+        // 4. TAB-03 under the tab overview cleanup spec (§3, §4): with no private tab open the
+        //    overview's menu – the BAR's ⋯ while the overview stands – offers no "Private Tabs
+        //    (N)" row (the row only while private tabs exist), so the private view is not a pick
+        //    away; the overview draws no segment row. New Private Tab is the menu's way in.
+        scene("4. No private view to pick while none is open (TAB-03, cleanup spec §4)") {
             expect("set-up: no private tab is open", !anyPrivateTab())
             expect("the overview opens from the regular tab", openOverview())
-            expect("the overview opens on the Tabs pane", awaitPane("tabs"))
-            tapSegment("private")
-            expect("a finger on Private shows the Private pane", awaitPane("private"))
-            SystemClock.sleep(1_500)
-            val empty = readEmpty()
-            finding("  empty pane: $empty")
-            expect("the pane is §9.17's sentence on the phone panels' note, never a card", empty.optBoolean("note") && !empty.optBoolean("card", true))
-            expect("the sentence is the pane's fact, No private tabs", empty.optString("sentence") == EMPTY_TITLE)
-            expect("the sentence stands alone – no title, glyph or description beside it", empty.optInt("paragraphs") == 1 && empty.optInt("headings", 99) == 0 && empty.optInt("glyphs", 99) == 0)
-            expect("the sentence is set at §9.17's 15/400", empty.optString("font").startsWith("15px/400/"))
-            expect("the sentence is centred in the pane's 32 gutter", empty.optDouble("offCentre", 99.0) <= 2.0 && nearly(empty.optDouble("gutter", 0.0), 32.0))
-            expect("the sentence's first line stands 48 under the segment, as the Groups pane's", nearly(empty.optDouble("underSegment", -1.0), 48.0, 1.5))
-            expect("the pane's one follow-up is New private tab, a secondary button", empty.optInt("buttons") == 1 && empty.optString("button") == "New private tab" && !empty.optBoolean("primary", true) && empty.optBoolean("secondary"))
-            expect("the follow-up stands 16 below the sentence, 40 tall", nearly(empty.optDouble("gap", -1.0), 16.0) && nearly(empty.optDouble("buttonHeight", -1.0), 40.0))
-            expect("the sentence and the follow-up are in the accessibility tree", findByLabel(EMPTY_TITLE) != null && findByLabel("New private tab") != null)
-            shot("11-pane-empty-light")
+            expect("the overview opens on the Tabs view", awaitPane("tabs"))
+            tapMenuButton()
+            val up = awaitTrue(6_000) { overviewMenuRows().isNotEmpty() }
+            SystemClock.sleep(1_200)
+            val rows = overviewMenuRows()
+            finding("  the overview's menu: $rows")
+            expect("the bar's ⋯ opens the overview's menu (Select Tabs and Search Tabs among its rows)", up && rows.contains("Select Tabs") && rows.contains("Search Tabs"))
+            expect("no Private Tabs row with none open: the private view is not offered (§4)", rows.none { it.startsWith("Private Tabs (") })
+            expect("New Private Tab is the way in, the second row", rows.getOrNull(1) == "New Private Tab")
+            expect("no segment row stands in the overview", jsString("String(document.querySelectorAll('.zen-overview [role=\"tab\"]').length)") == "0")
+            expect("the view stayed regular", pane() == "tabs")
+            shot("11-menu-no-private-row-light")
             setScheme("dark")
-            shot("12-pane-empty-dark")
+            SystemClock.sleep(800)
+            shot("12-menu-no-private-row-dark")
             setScheme("light")
-            tapSegment("tabs")
-            awaitPane("tabs")
+            back()
+            expect("back puts the menu away unanswered and leaves the overview standing (the motion spec's §9 item 6)", awaitTrue(6_000) { overviewMenuRows().isEmpty() } && overviewOpen())
             back()
             expect("back leaves the overview", awaitOverviewGone())
         }
@@ -465,14 +464,14 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             setScheme("dark")
             shot("18-pane-grid-dark")
             setScheme("light")
-            tapSegment("tabs")
-            expect("a finger on Tabs shows the regular cards", awaitPane("tabs") && poll(3_000) { cards().containsAll(setOf(SITE_TAB, NOTES_TAB)) })
+            pickView("tabs")
+            expect("a finger on the menu's Tabs (N) row shows the regular cards", awaitPane("tabs") && poll(3_000) { cards().containsAll(setOf(SITE_TAB, NOTES_TAB)) })
             back()
             expect("back leaves the overview", awaitOverviewGone())
         }
 
-        // 8. TAB-03 / #250: the lock on, Home and back from a regular tab, then the pane's own
-        //    entry – the segment tapped – shows the cover from its first frame, never the cards.
+        // 8. TAB-03 / #250: the lock on, Home and back from a regular tab, then the view's own
+        //    entry – the menu's Private Tabs (N) row – shows the cover from its first frame, never the cards.
         //    The covered pane is left standing for scene 9's press.
         scene("8. The lock cover on the pane's own entry (TAB-03, #250)", keepOverview = true) {
             coreInvoke("private.setLockOnLeave", """{"enabled":true}""")
@@ -496,8 +495,8 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             expect("the overview opens on the Tabs pane", awaitPane("tabs"))
             SystemClock.sleep(800)
             expect("the frame watch is armed in the chrome's document", jsString(PANE_WATCH_JS) == "armed")
-            tapSegment("private")
-            expect("a finger on Private shows the Private pane", awaitPane("private"))
+            pickView("private")
+            expect("a finger on the menu's Private Tabs (N) row shows the private view", awaitPane("private"))
             expect("the cover is over the pane", poll(4_000) { paneCoverUp() })
             SystemClock.sleep(1_500)
             val watch = readPaneWatch()
@@ -687,33 +686,6 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
     // --- the overview, through the chrome's DOM --------------------------------------------------
 
-    /**
-     * The empty Private pane as §9.17 has it: the phone panels' note (`.zen-phone-empty`, the
-     * pane's own child) with its one sentence – its type, its centring in the note's gutter, its
-     * first line's distance under the segment – and the pane's one button, its kind and its
-     * distance below the sentence. Whether a card still stands in the pane is read as well.
-     */
-    private fun readEmpty(): JSONObject {
-        val raw = jsString(
-            "(function(){var pane=document.querySelector('.zen-overview-pane [data-testid=\"overview-private-empty\"]');if(!pane)return '';" +
-                "var n=pane.querySelector(':scope > .zen-phone-empty');var p=n&&n.querySelector(':scope > p');" +
-                "var bs=pane.querySelectorAll('button');var b=bs[0];" +
-                "var seg=document.querySelector('.zen-overview .zen-v2-segment[role=\"tablist\"]');" +
-                "var pr=pane.getBoundingClientRect();var tr=p?p.getBoundingClientRect():null;var br=b?b.getBoundingClientRect():null;var sr=seg?seg.getBoundingClientRect():null;" +
-                "var cs=n?getComputedStyle(n):null;var ps=p?getComputedStyle(p):null;" +
-                "return JSON.stringify({note:!!n,card:!!pane.querySelector('.zen-private-explainer,[data-surface=\"page\"]')," +
-                "sentence:p?p.textContent.trim():'',paragraphs:n?n.querySelectorAll('p').length:0," +
-                "headings:pane.querySelectorAll('h1,h2,h3').length,glyphs:pane.querySelectorAll('svg').length," +
-                "font:ps?ps.fontSize+'/'+ps.fontWeight+'/'+ps.lineHeight:''," +
-                "offCentre:tr?Math.round(Math.abs((tr.left-pr.left)-(pr.right-tr.right))*10)/10:99,gutter:cs?parseFloat(cs.paddingLeft):0," +
-                "underSegment:tr&&sr?Math.round((tr.top-sr.bottom)*10)/10:-1," +
-                "buttons:bs.length,button:b?b.textContent.trim():'',primary:b?b.hasAttribute('data-primary'):false," +
-                "secondary:b?b.classList.contains('zen-phone-empty-action')&&b.classList.contains('zen-v2-button'):false," +
-                "gap:tr&&br?Math.round((br.top-tr.bottom)*10)/10:-1,buttonHeight:br?Math.round(br.height*10)/10:-1})})()"
-        )
-        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
-    }
-
     /** The frame watch's counts (`PANE_WATCH_JS`), as the chrome's document holds them. */
     private fun readPaneWatch(): JSONObject {
         val raw = jsString("JSON.stringify(window.__paneWatch||{})")
@@ -801,13 +773,16 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         return runCatching { JSONArray(raw) }.getOrNull().toStringList()
     }
 
-    /** A real touch on the segment's tab `id` (`tabs` or `private`). */
-    private fun tapSegment(id: String) {
-        val r = chromeRect("[data-testid=\"overview-pane-$id\"]") ?: run {
-            finding("  no segment tab for $id on screen")
-            return
+    /**
+     * A real touch on the overview's menu row that switches to the view `id` (`tabs` or
+     * `private`): the BAR's ⋯ opens the overview's menu (the cleanup spec's §4), its "Tabs (N)"
+     * row from the private view, "Private Tabs (N)" from the regular one.
+     */
+    private fun pickView(id: String) {
+        if (!switchOverviewView(id)) {
+            finding("  no ${if (id == "private") "Private Tabs (N)" else "Tabs (N)"} row in the overview's menu: ${overviewMenuRows()}")
+            back()
         }
-        Finger().tap(r.exactCenterX(), r.exactCenterY())
     }
 
     /** The on-screen box of the first chrome element `selector` matches (device px); null when none does. */
@@ -1206,7 +1181,6 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
         // The chrome's words, pinned by the vitests as well.
         const val PRIVATE_TITLE = "You're browsing privately"
-        const val EMPTY_TITLE = "No private tabs"
         const val NOT_SECURE_DETAIL = "Anyone on the way can read what you send to this site. Don't enter passwords or card details here."
 
         // The chrome's hooks.

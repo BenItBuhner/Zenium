@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { FOLDER_COLOR_ORDER } from '@shared/defaults'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
 
 /*
  * The group editor bubble's actions and swatch row on a saved group (TAB-16's desktop half;
@@ -17,7 +18,9 @@ import { FOLDER_COLOR_ORDER } from '@shared/defaults'
  * waits for Open; Delete goes through the "Delete <folder>?" prompt when the folder holds anything
  * and deletes an empty folder outright. The colour row is §9.14's swatch form: the nine colours
  * in Chrome's order as a radio group of 28 px round targets touching (the 20 px discs 8 apart
- * on a 28 pitch, the nine discs 244 wide), the picked one ringed.
+ * on a 28 pitch, the nine discs 244 wide), the picked one ringed. On the touch layout (the
+ * tablet; TABLET-22) the nouns read Group and Close goes the undoable way, the group row menu's
+ * – the desktop's bubble byte for byte as before.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -31,6 +34,8 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
+const { viewportStore } = await import('@renderer/lib/formFactor')
+const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
 const { GroupEditorLayer } = await import('../GroupEditorBubble')
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -94,9 +99,23 @@ function state(tabs: Tab[], folders: Folder[]): UIState {
 let container: HTMLDivElement
 let root: Root
 
-/** The bubble up for folder `g` over `tabs`: the page's picture taken, the panel placed. */
-async function bubble(tabs: Tab[], f: Folder): Promise<HTMLElement> {
+/**
+ * The bubble up for folder `g` over `tabs`: the page's picture taken, the panel placed. The
+ * layout is set after the state: the viewport store re-derives it from this document (a desktop)
+ * on every state push, so the touch layout under test must be the last word.
+ */
+async function bubble(
+  tabs: Tab[],
+  f: Folder,
+  layout: 'desktop' | 'tablet' = 'desktop'
+): Promise<HTMLElement> {
   browserStore.set({ state: state(tabs, [f]) })
+  viewportStore.set({
+    ...viewportStore.get(),
+    formFactor: layout,
+    coarse: layout === 'tablet',
+    hover: layout === 'desktop'
+  })
   act(() => root.render(<GroupEditorLayer />))
   act(() => uiStore.set({ groupEditor: { folderId: 'g', keyboard: false } }))
   await act(async () => {
@@ -157,11 +176,15 @@ describe('the bubble’s actions', () => {
     expect(rule('.zen-v2-row.zen-group-editor-action[data-danger]')).toContain(
       'color: var(--v2-danger)'
     )
-    // Close keeps the folder: Chrome's Close group through the core, the bubble away.
+    // Close keeps the folder: Chrome's Close group through the core, the bubble away. The
+    // desktop's close is the core's alone – no undoable intent, no toast (TABLET-22's route is
+    // the touch layout's).
     click(close)
     expect(run).toHaveBeenCalledWith('folder.close', { folderId: 'g' })
     expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
     expect(uiStore.get().groupEditor).toBeNull()
+    expect(cmd).not.toHaveBeenCalledWith('session.recentlyClosed', expect.anything())
+    expect(uiStore.get().toasts).toEqual([])
   })
 
   it('for a saved folder: Open folder with its count in the menu’s noun (N tabs), New tab in folder (the core opens the folder first, then adds) and Delete – no Unpack or Close; Open brings the pages back', async () => {
@@ -295,5 +318,91 @@ describe('the colour row (§9.14’s swatch form)', () => {
     )
     expect(ring).toContain('0 0 0 2px var(--v2-panel)')
     expect(ring).toContain('0 0 0 4px var(--v2-accent)')
+  })
+})
+
+describe('on the touch layout (TABLET-22: the tablet shows the bubble once after a group is made from its tab menu)', () => {
+  beforeEach(() => {
+    uiStore.set({ toasts: [] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false, hover: true })
+    uiStore.set({ toasts: [] })
+  })
+
+  const labelsOf = (el: HTMLElement): string[] =>
+    actions(el).map((r) => r.querySelector('.zen-v2-label')!.textContent!)
+
+  it('says Group where the desktop says Folder (§6): the title, the field’s placeholder, the actions’ name and every row, open and saved alike; the counts keep the bubble’s register', async () => {
+    let el = await bubble([tab('home', null), tab('a', 'g'), tab('b', 'g')], folder(), 'tablet')
+    expect(el.querySelector('.zen-bm-title')!.textContent).toBe('Edit group')
+    expect(el.querySelector<HTMLInputElement>('.zen-v2-field')!.placeholder).toBe('Name this group')
+    expect(el.querySelector('.zen-group-editor-actions')!.getAttribute('aria-label')).toBe(
+      'Group actions'
+    )
+    expect(labelsOf(el)).toEqual([
+      'New tab in group',
+      'Unpack group',
+      'Close group',
+      'Delete group'
+    ])
+    expect(actions(el)[2]!.querySelector('.zen-group-editor-count')!.textContent).toBe('2 tabs')
+    expect(actions(el)[3]!.hasAttribute('data-danger')).toBe(true)
+    expect(el.textContent).not.toMatch(/folder/i)
+    el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }), 'tablet')
+    expect(labelsOf(el)).toEqual(['Open group', 'New tab in group', 'Delete group'])
+    expect(actions(el)[0]!.querySelector('.zen-group-editor-count')!.textContent).toBe('3 tabs')
+    expect(el.textContent).not.toMatch(/folder/i)
+  })
+
+  it('Close group takes the group row menu’s route (folder.closeUndoable’s, #721): the core’s folder.close at once, the bubble away, and once the core has filed the tabs a toast in the group’s words whose Undo brings them back newest first', async () => {
+    const el = await bubble([tab('home', null), tab('a', 'g'), tab('b', 'g')], folder(), 'tablet')
+    // The core's recently closed list, as it reads once the two tabs are filed.
+    const filed = [
+      {
+        id: 'closed:b',
+        kind: 'tab',
+        title: 'b',
+        url: 'https://b.example/',
+        closedAt: 0,
+        tabCount: 1
+      },
+      {
+        id: 'closed:a',
+        kind: 'tab',
+        title: 'a',
+        url: 'https://a.example/',
+        closedAt: 0,
+        tabCount: 1
+      }
+    ]
+    cmd.mockImplementation(async (name) => (name === 'session.recentlyClosed' ? filed : null))
+    // The intent's settle wait starts at the click: the clock is faked from here.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const close = actions(el).find((r) => r.dataset.action === 'close')!
+    click(close)
+    for (const e of filed) e.closedAt = Date.now()
+    expect(run).toHaveBeenCalledWith('folder.close', { folderId: 'g' })
+    expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
+    expect(uiStore.get().groupEditor).toBeNull()
+    // Nothing is up until the core has filed the tabs.
+    expect(uiStore.get().toasts).toEqual([])
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    })
+    const toasts = uiStore.get().toasts
+    expect(toasts.map((t) => [t.message, t.action?.label, t.duration])).toEqual([
+      ['Research tab group closed and saved', 'Undo', TOAST_UNDO_MS]
+    ])
+    cmd.mockClear()
+    await act(async () => {
+      toasts[0]!.action!.onPick()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    const restored = cmd.mock.calls.filter(([n]) => n === 'session.restoreClosed').map(([, a]) => a)
+    expect(restored).toEqual([{ id: 'closed:b' }, { id: 'closed:a' }])
+    expect(cmd).toHaveBeenCalledWith('tab.activate', { tabId: 'home' })
   })
 })

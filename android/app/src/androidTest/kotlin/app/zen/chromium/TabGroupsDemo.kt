@@ -7,41 +7,41 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Drives the PHONE side of tab groups (TAB-16 the Groups pane and saved groups, TAB-15 the link
- * menu's "Open Link in New Tab in Group"; design language v2 §9.13, §9.23, §9.27, §9.29, §11.4)
- * on the shared recipe's phone AVD, every press in a sheet flow a real touch and every outcome
+ * Drives the PHONE side of tab groups (TAB-16 groups and saved groups in the overview's grid –
+ * the Groups pane is gone, `docs/tab-overview-cleanup-spec.md` §2, §9 – TAB-15 the link menu's
+ * "Open Link in New Tab in Group"; design language v2 §9.13, §9.23, §9.27, §9.29, §11.4) on
+ * the shared recipe's phone AVD, every press in a sheet flow a real touch and every outcome
  * read off the chrome's DOM or the core's state:
  *
- *  1. the overview's Groups segment: the pane lists Research under OPEN with "2 tabs", the
- *     header counts "1 group", the row's glyph is a dot of the group's colour, the row 64 tall;
- *  2. the row's hold: the group's sheet – the colour swatches (blue checked) and Show in Tabs,
- *     Rename, Close Group (2 Tabs) in the plain ink, Delete Group in the danger ink; a touch on
- *     the green swatch recolours the group at once, the sheet staying up;
- *  3. Rename from the sheet: the row's title slot becomes the field; typing and Enter rename the
- *     group in the core and on the row;
- *  4. the Tabs pane's group card folded by a touch on its header (the card's height spring,
- *     traced: `overview-group-fold`), then the Groups row's touch: the Tabs pane comes back with
- *     the group's card unfolded and in view;
+ *  1. the group's card in the grid, in its place: Research's header with the dot of the group's
+ *     colour, its name and the count "2" as the aside, unfolded; no Groups pane, no segment row;
+ *  2. the header's hold: the group's sheet – the colour swatches (blue checked) and Rename, New
+ *     Tab in Group, Ungroup, Close Group (2 Tabs) in the plain ink, Delete Group in the danger
+ *     ink (§2's ⋯ rows); a touch on the green swatch recolours the group at once, the sheet
+ *     staying up;
+ *  3. Rename from the sheet: the header's name slot becomes the field; typing and Enter rename
+ *     the group in the core and on the card;
+ *  4. the card folded by a touch on its header (the card's height spring, traced:
+ *     `overview-group-fold`), then the folded card's touch: it unfolds in place, in view;
  *  5. the link menu (TAB-15): Alpha's card picked, its link held – "Open Link in New Tab in
  *     Group" stands right under "Open Link in New Tab" (Chrome 152's pair, the phone's order
  *     since #492's ruling); the touch on it opens the page in the group right behind Alpha,
  *     Alpha staying active, Beta behind the new tab;
- *  6. Close Group (3 Tabs) from the row's sheet: the tabs go (one toast, "Reading tab group
- *     closed and saved", with Undo – TAB-16's words on both touch hosts), the group stays listed
- *     under SAVED with the ring glyph and "3 tabs", the core keeping the three pages in order;
- *  7. the saved row's sheet: Open (3 Tabs), Rename, Delete Group, no Close; Open brings the
- *     three pages back as the group's tabs in their order, and the Tabs pane shows the card;
+ *  6. Close Group (3 Tabs) from the card's sheet: the tabs go (one toast, "Reading tab group
+ *     closed and saved", with Undo – TAB-16's words on both touch hosts), the group stays as a
+ *     SAVED card at the grid's end before the New Tab card, the ring glyph and the count "3",
+ *     the core keeping the three pages in order;
+ *  7. the saved card's sheet (its hold): Open (3 Tabs), Rename, Delete Group, no Close; Open
+ *     brings the three pages back as the group's tabs in their order, the card open in the grid;
  *  8. Delete Group: the §9.23 prompt – "Its 3 tabs close with it; Recently Closed keeps their
  *     pages." (Cancel keeps the group; Delete in the danger ink deletes it) – the group's record
  *     goes, its tabs close with it to Recently Closed, and NO toast follows: the ask was the
  *     guard (TAB-13 / TAB-16, the Design Lead's option C: Undo for Close, a confirmation for
- *     Delete, never both); the pane at none paints §9.17's one sentence – read off the painted
- *     boxes, not the DOM alone: the note inside the pane's box with height, its first line 48
- *     under the segment, the finger's point on the sentence hitting it.
+ *     Delete, never both); the grid at no group holds the loose cards and the New Tab card
+ *     alone, no group card and no saved card, the title's count the tabs that are left.
  *
  * Findings in `tab-groups-findings.txt`, stills `tab-groups-NN-<state>.png`, the traced scene
  * in `frames.jsonl`. Driven by `android-tab-groups-demo.yml`'s phone act. See [GroupsDemoBase]
@@ -51,7 +51,7 @@ import kotlin.math.roundToInt
 class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     override val tag = "TabGroupsDemo"
     override val findingsFile = "tab-groups-findings.txt"
-    override val title = "Zenium Android tab groups: the Groups pane, saved groups, the link menu"
+    override val title = "Zenium Android tab groups: the group card, saved groups, the link menu"
 
     /** The tab the link menu opened, once it has. */
     private var linked: String? = null
@@ -71,7 +71,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     }
 
     override fun demo() {
-        groupsPane()
+        groupCard()
         rowSheetAndColour()
         rename()
         foldAndReveal()
@@ -83,33 +83,30 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         tail()
     }
 
-    // --- 1. the Groups pane ------------------------------------------------------------------------
+    // --- 1. the group's card ---------------------------------------------------------------------
 
-    private fun groupsPane() {
-        section("1. The overview's Groups segment: the pane")
+    private fun groupCard() {
+        section("1. The group's card in the grid (tab overview cleanup spec §2)")
         openOverview()
-        still("tabs-pane")
-        pickPane("groups")
-        check("the Groups pane comes up", awaitDom(GROUPS_PANE, SHEET_WAIT), "pane ${inDom(GROUPS_PANE)}")
-        check("the header counts one group", awaitJs("(document.querySelector('$COUNT')||{}).textContent==='1 group'"), "count '${textOf(COUNT)}'")
-        check("Research is listed under Open with two tabs", awaitJs(rowUnder("open", "Research", "2 tabs")), "rows ${textsOf("$GROUPS_PANE .zen-list-title")} / ${textsOf("$GROUPS_PANE .zen-list-subtitle")}")
-        check("no Saved section yet", !inDom(SAVED_SECTION))
-        val glyph = glyphColour() + (if (inDom("$GROUPS_PANE .zen-group-row-glyph[data-saved]")) " ring" else " dot")
-        check("the row's glyph is a dot of the group's colour (the ${chromeScheme()} set)", glyph.endsWith(" dot") && glyph.startsWith(blueRgb()), "glyph '$glyph', expected ${blueRgb()}")
-        check("the row is 64 tall (a two-line row)", domRect(ROW)?.let { abs(it.height() - 64) <= 1 } == true, "row ${domRect(ROW)}")
+        check("the group's card stands in the grid, in its place, unfolded", awaitDom(GROUP_CARD, SHEET_WAIT) && !inDom("$GROUP_CARD[data-collapsed]") && attrOf(GROUP_HEADER, "aria-expanded") == "true", "card ${domRect(GROUP_CARD)}, expanded '${attrOf(GROUP_HEADER, "aria-expanded")}'")
+        check("its header reads Research with the count 2 as the aside", cardName() == "Research" && textOf(CARD_COUNT) == "2", "name '${cardName()}', count '${textOf(CARD_COUNT)}'")
+        check("the Groups pane and the segment row are gone (§2, §9)", !inDom(GROUPS_PANE) && !inDom(SEGMENT), "pane ${inDom(GROUPS_PANE)}, segment ${inDom(SEGMENT)}")
+        val glyph = glyphColour() + (if (inDom("$GROUP_HEADER .zen-group-row-glyph[data-saved]")) " ring" else " dot")
+        check("the header's glyph is a dot of the group's colour (the ${chromeScheme()} set)", glyph.endsWith(" dot") && glyph.startsWith(blueRgb()), "glyph '$glyph', expected ${blueRgb()}")
+        check("the title counts the space's tabs", titleCount() == coreTabCount(), "title '${textOf(COUNT)}', core ${coreTabCount()}")
         SystemClock.sleep(800)
-        still("groups-pane")
+        still("group-card")
     }
 
     // --- 2. the row's sheet and the colour ---------------------------------------------------------
 
     private fun rowSheetAndColour() {
-        section("2. The row's hold: the group's sheet; a swatch recolours")
+        section("2. The header's hold: the group's sheet; a swatch recolours")
         openRowSheet()
         val items = sheetItems()
         check(
-            "the sheet lists Show in Tabs, Rename, Close Group (2 Tabs), Delete Group",
-            items == listOf("Show in Tabs", "Rename", "Close Group (2 Tabs)", "Delete Group"),
+            "the sheet lists Rename, New Tab in Group, Ungroup, Close Group (2 Tabs), Delete Group (§2's ⋯ rows; Colour is the palette)",
+            items == listOf("Rename", "New Tab in Group", "Ungroup", "Close Group (2 Tabs)", "Delete Group"),
             "items $items"
         )
         check("the sheet is titled with the group's name", textOf(SHEET_TITLE) == "Research", "title '${textOf(SHEET_TITLE)}'")
@@ -125,22 +122,22 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         still("group-sheet-green")
         dismissSheet()
         val glyph = glyphColour()
-        check("the row's glyph follows the colour", glyph == greenRgb(), "glyph '$glyph', expected ${greenRgb()}")
+        check("the header's glyph follows the colour", glyph == greenRgb(), "glyph '$glyph', expected ${greenRgb()}")
     }
 
     // --- 3. rename ---------------------------------------------------------------------------------
 
     private fun rename() {
-        section("3. Rename from the sheet: the row's field, typed into")
+        section("3. Rename from the sheet: the header's field, typed into")
         openRowSheet()
-        val editing = touchUntil("Rename in the sheet", { sheetRow("Rename") }, { inDom(RENAME_ROW) }, waitMs = SHEET_WAIT)
-        check("Rename turns the row's title slot into the field", editing && inDom("$RENAME_ROW input"), "field ${inDom("$RENAME_ROW input")}")
+        val editing = touchUntil("Rename in the sheet", { sheetRow("Rename") }, { inDom(RENAME_FIELD) }, waitMs = SHEET_WAIT)
+        check("Rename turns the header's name slot into the field", editing && inDom(RENAME_FIELD), "field ${inDom(RENAME_FIELD)}")
         check("the field has the focus", awaitJs("document.activeElement&&document.activeElement.getAttribute('aria-label')==='Group name'"), "active ${jsText("document.activeElement&&document.activeElement.tagName")}")
         SystemClock.sleep(800)
         still("rename-field")
         typeAndEnter("Reading")
         check("Enter saves the new name in the core", awaitCore { folderName(it) == "Reading" }, "name ${folderName()}")
-        check("the field leaves and the row reads the new name", awaitDomGone(RENAME_ROW) && awaitJs(rowUnder("open", "Reading", "2 tabs")), "titles ${textsOf("$GROUPS_PANE .zen-list-title")}")
+        check("the field leaves and the header reads the new name", awaitDomGone(RENAME_FIELD) && awaitUntil(4_000) { cardName() == "Reading" } && textOf(CARD_COUNT) == "2", "name '${cardName()}', count '${textOf(CARD_COUNT)}'")
         if (imeShown()) {
             back()
             awaitIme(false)
@@ -152,9 +149,8 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     // --- 4. the fold and the reveal ----------------------------------------------------------------
 
     private fun foldAndReveal() {
-        section("4. The Tabs pane's card folded (the height spring, traced); the row's touch shows it unfolded")
-        pickPane("tabs")
-        check("the group's card is on the Tabs pane, unfolded", awaitDom(GROUP_CARD, SHEET_WAIT) && !inDom("$GROUP_CARD[data-collapsed]"), "card ${domRect(GROUP_CARD)}")
+        section("4. The card folded (the height spring, traced); the folded card's touch unfolds it in place")
+        check("the group's card stands in the grid, unfolded", awaitDom(GROUP_CARD, SHEET_WAIT) && !inDom("$GROUP_CARD[data-collapsed]"), "card ${domRect(GROUP_CARD)}")
         val header = steadyRect { domRect(GROUP_HEADER) }
         val before = domRect(GROUP_CARD)
         val point = screen(header)?.let { touchPoint(it) }
@@ -177,12 +173,10 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         SystemClock.sleep(800)
         still("card-folded")
 
-        pickPane("groups")
-        awaitDom(GROUPS_PANE, SHEET_WAIT)
-        val shown = touchUntil("the group's row", { domRect("$ROW .zen-list-main") }, { paneIs("tabs") }, waitMs = SHEET_WAIT)
-        check("the row's touch brings the Tabs pane", shown, "pane ${selectedPane()}")
-        check("the group is unfolded", awaitCore { !folderCollapsed(it) }, "collapsed ${folderCollapsed()}")
-        check("the card stands unfolded and in view", awaitJs(CARD_IN_VIEW, true, 6_000), "card ${domRect(GROUP_CARD)}, grid ${domRect(GRID)}")
+        // Folded, the card is the affordance: its touch unfolds it in place (§2, the FLIP spring).
+        val shown = touchUntil("the folded card", { steadyRect { domRect(GROUP_HEADER) } }, { !folderCollapsed() }, waitMs = SHEET_WAIT)
+        check("the folded card's touch unfolds the group in the core", shown, "collapsed ${folderCollapsed()}")
+        check("the card stands unfolded and in view, in its place", awaitJs(CARD_IN_VIEW, true, 6_000), "card ${domRect(GROUP_CARD)}, grid ${domRect(GRID)}")
         SystemClock.sleep(1_000)
         still("revealed")
     }
@@ -230,10 +224,9 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     // --- 6. Close Group -> saved -----------------------------------------------------------------
 
     private fun closeToSaved() {
-        section("6. Close Group (3 Tabs) from the row's sheet: the group stays, saved")
+        section("6. Close Group (3 Tabs) from the card's sheet: the group stays, saved")
         openOverview()
-        pickPane("groups")
-        check("the row now counts three tabs", awaitJs(rowUnder("open", "Reading", "3 tabs"), true, SHEET_WAIT), "subtitles ${textsOf("$GROUPS_PANE .zen-list-subtitle")}")
+        check("the card now counts three tabs", awaitDom(GROUP_CARD, SHEET_WAIT) && awaitUntil(SHEET_WAIT) { textOf(CARD_COUNT) == "3" } && cardName() == "Reading", "name '${cardName()}', count '${textOf(CARD_COUNT)}'")
         openRowSheet()
         check("the sheet's Close Group counts three", sheetRow("Close Group (3 Tabs)") != null, "items ${sheetItems()}")
         val closed = touchUntil("Close Group (3 Tabs)", { sheetRow("Close Group (3 Tabs)") }, { !tabExists(ALPHA) && !tabExists(BETA) }, waitMs = 8_000)
@@ -247,9 +240,10 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
             awaitCore { savedUrls(it) == listOf(ALPHA_URL, LINKED_URL, BETA_URL) },
             "saved ${savedUrls().map { it.removePrefix(ORIGIN) }}"
         )
-        check("the row moves under Saved with the ring glyph and three tabs", awaitJs(rowUnder("saved", "Reading", "3 tabs"), true, 6_000) && inDom("$SAVED_SECTION .zen-group-row-glyph[data-saved]"), "saved rows ${textsOf("$SAVED_SECTION .zen-list-title")}")
-        check("no Open section is left", !inDom(OPEN_SECTION), "open ${textsOf("$OPEN_SECTION .zen-list-title")}")
-        check("the header still counts one group", textOf(COUNT) == "1 group", "count '${textOf(COUNT)}'")
+        check("the group stands as a saved card with the ring glyph and the count 3 (TAB-16, §2)", awaitDom(SAVED_CARD, 6_000) && inDom("$SAVED_CARD .zen-group-row-glyph[data-saved]") && awaitUntil(4_000) { savedName() == "Reading" && textOf(SAVED_COUNT) == "3" }, "saved '${savedName()}', count '${textOf(SAVED_COUNT)}'")
+        check("at the grid's end, before the New Tab card", savedCardBeforeNewTab(), "cells ${cellKeys()}")
+        check("no open card of it is left", awaitDomGone(GROUP_CARD, 4_000), "card ${domRect(GROUP_CARD)}")
+        check("the title's count dropped to the tabs that are left", awaitUntil(4_000) { titleCount() == coreTabCount() }, "title '${textOf(COUNT)}', core ${coreTabCount()}")
         SystemClock.sleep(800)
         still("saved")
         awaitToastGone()
@@ -258,7 +252,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     // --- 7. Open the saved group -----------------------------------------------------------------
 
     private fun openSaved() {
-        section("7. The saved row's sheet; Open brings the pages back as the group")
+        section("7. The saved card's sheet; Open brings the pages back as the group")
         openRowSheet(saved = true)
         val items = sheetItems()
         check("the saved group's sheet lists Open (3 Tabs), Rename, Delete Group and no Close", items == listOf("Open (3 Tabs)", "Rename", "Delete Group"), "items $items")
@@ -268,7 +262,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         check("Open brings three tabs back into the group", opened, "group ${groupTabs()}")
         check("in their order: Alpha, the linked page, Beta", groupTabs().map { it.second } == listOf(ALPHA_URL, LINKED_URL, BETA_URL), "urls ${groupTabs().map { it.second.removePrefix(ORIGIN) }}")
         check("the kept pages are gone from the record (the group is open again)", awaitCore { savedUrls(it).isEmpty() }, "saved ${savedUrls()}")
-        check("the Tabs pane shows the card, unfolded and in view", awaitUntil(8_000) { paneIs("tabs") } && awaitJs(CARD_IN_VIEW, true, 8_000), "pane ${selectedPane()}, card ${domRect(GROUP_CARD)}")
+        check("the grid shows the group's card again, unfolded and in view, the saved card gone", awaitJs(CARD_IN_VIEW, true, 8_000) && awaitDomGone(SAVED_CARD, 4_000), "card ${domRect(GROUP_CARD)}, saved ${domRect(SAVED_CARD)}")
         SystemClock.sleep(1_500)
         still("reopened")
     }
@@ -277,8 +271,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
 
     private fun deleteGroup() {
         section("8. Delete Group: the prompt, Cancel, then Delete – no toast after the ask")
-        pickPane("groups")
-        awaitDom(GROUPS_PANE, SHEET_WAIT)
+        awaitDom(GROUP_CARD, SHEET_WAIT)
         openRowSheet()
         val asked = touchUntil("Delete Group in the sheet", { sheetRow("Delete Group") }, { inDom(DELETE_PROMPT) }, waitMs = SHEET_WAIT)
         check("Delete Group asks first (the group holds tabs)", asked, "prompt ${inDom(DELETE_PROMPT)}")
@@ -307,30 +300,13 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         // window is longer than a close's settle wait (`CLOSE_SETTLE_MS`, 1.5 s) and the filing.
         val toastAfter = toastWithin(3_000)
         check("no toast follows the Delete", toastAfter == null, "toast '${toastAfter ?: ""}'")
-        // The empty room off the painted boxes, not the DOM alone (the first-line review's ask): the
-        // §9.17 note stands inside the pane's box with height, its sentence's line 48 under the
-        // segment, and the point at the sentence's centre hits the sentence – nothing over it,
-        // nothing clipping it.
-        val painted = awaitDom(GROUPS_EMPTY, 6_000) && awaitUntil(2_000) { (domRect(EMPTY_LINE)?.height() ?: 0f) > 0f }
-        val paneBox = domRect(GROUPS_PANE)
-        val note = domRect(GROUPS_EMPTY)
-        val line = domRect(EMPTY_LINE)
-        val segment = domRect(SEGMENT)
-        val sentence = textOf(EMPTY_LINE)
-        val hit = jsBoolean(
-            "(function(){var p=document.querySelector(${JSONObject.quote(EMPTY_LINE)});if(!p)return false;var b=p.getBoundingClientRect();" +
-                "var e=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return !!e&&(e===p||p.contains(e))})()"
-        )
-        check(
-            "the pane at none paints the §9.17 sentence inside its box, 48 under the segment",
-            painted && paneBox != null && note != null && line != null && segment != null &&
-                note.height() > 0f && line.height() > 0f && paneBox.contains(note) && paneBox.contains(line) &&
-                abs(line.top - segment.bottom - 48f) <= 1.5f && hit &&
-                sentence == "Hold a tab’s card and drop it on another to group them",
-            "pane $paneBox, note $note, line $line, segment $segment, hit $hit, text '$sentence'"
-        )
-        finding("  (the empty room: pane $paneBox, note $note, sentence $line, segment $segment)")
-        check("the header counts no group", textOf(COUNT) == "0 groups", "count '${textOf(COUNT)}'")
+        // The grid at no group: the group's card and the saved card are gone with the group,
+        // the loose cards and the New Tab card alone are left (the Groups pane's §9.17 note went
+        // with the pane, §2, §9), and the title counts what is left.
+        check("the grid holds no group card and no saved card", awaitDomGone(GROUP_CARD, 6_000) && !inDom(SAVED_CARD) && cellKeys().none { it.startsWith("group:") || it.startsWith("saved:") }, "cells ${cellKeys()}")
+        check("the New Tab card ends the grid", cellKeys().lastOrNull() == "new-tab", "cells ${cellKeys()}")
+        check("the title counts the tabs that are left", awaitUntil(4_000) { titleCount() == coreTabCount() }, "title '${textOf(COUNT)}', core ${coreTabCount()}")
+        finding("  (the grid at no group: cells ${cellKeys()}, grid ${domRect(GRID)})")
         SystemClock.sleep(600)
         still("deleted-empty")
         // The three pages are Recently Closed's to bring back – each an entry of its own on the
@@ -377,7 +353,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
             }
             if (overviewOpen()) {
                 SystemClock.sleep(2_000)
-                calibrate("[aria-label=\"Spaces\"]", "Spaces")
+                overviewTitleLabel()?.let { calibrate(OVERVIEW_TITLE_SELECTOR, it) }
                 return
             }
         }
@@ -390,24 +366,32 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     private fun overviewOpen(): Boolean =
         jsString("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
 
-    private fun selectedPane(): String = attrOf("[data-testid^=\"overview-pane-\"][aria-selected=\"true\"]", "data-pane")
+    /** The grid's cells in their order (`data-cell`): the tabs', the groups' (`group:<id>`, `saved:<id>`), the New Tab card's last. */
+    private fun cellKeys(): List<String> = jsArray("Array.prototype.map.call(document.querySelectorAll('$GRID [data-cell]'),function(c){return c.getAttribute('data-cell')})").strings()
 
-    private fun paneIs(pane: String): Boolean = selectedPane() == pane
-
-    /** A touch on the segment's `pane` button until the pane is the one picked. */
-    private fun pickPane(pane: String) {
-        if (paneIs(pane)) return
-        val picked = touchUntil("the $pane segment", { domRect("[data-testid=\"overview-pane-$pane\"]") }, { paneIs(pane) }, waitMs = SHEET_WAIT)
-        if (!picked) error("the $pane pane never came up")
-        SystemClock.sleep(600)
+    /** The saved group's card stands before the New Tab card, with no tab card after it (§2). */
+    private fun savedCardBeforeNewTab(): Boolean {
+        val keys = cellKeys()
+        val saved = keys.indexOfFirst { it.startsWith("saved:") }
+        val newTab = keys.indexOf("new-tab")
+        return saved >= 0 && newTab > saved && keys.subList(saved + 1, newTab).all { it.startsWith("saved:") }
     }
 
-    /** Hold the group's row (under Open, or under Saved) until its sheet is up. */
+    private fun cardName(): String = textOf("$GROUP_HEADER > span.truncate")
+    private fun savedName(): String = textOf("$SAVED_CARD .zen-group-header > span.truncate")
+
+    /** The title's count ("N tabs", `[data-testid=overview-count]`) as its number; -1 while none. */
+    private fun titleCount(): Int = Regex("\\d+").find(textOf(COUNT))?.value?.toIntOrNull() ?: -1
+
+    /** The space's tabs as the core counts them. */
+    private fun coreTabCount(): Int = trackOrder().size
+
+    /** Hold the group's card header (the open card's, or the saved card's) until its sheet is up. */
     private fun openRowSheet(saved: Boolean = false) {
-        val row = if (saved) "$SAVED_SECTION .zen-phone-row" else "$OPEN_SECTION .zen-phone-row"
+        val header = if (saved) "$SAVED_CARD .zen-group-header" else GROUP_HEADER
         for (attempt in 1..3) {
-            val box = steadyRect { domRect("$row .zen-list-main") } ?: error("no group row to hold")
-            hold(box, "the group's row")
+            val box = steadyRect { domRect(header) } ?: error("no group card header to hold")
+            hold(box, "the group card's header")
             if (awaitDom(SHEET_ITEM, SHEET_WAIT)) {
                 SystemClock.sleep(600)
                 return
@@ -436,33 +420,24 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     )
 
     /**
-     * The first Groups row's glyph colour: the theme's pick of the §9.14 pair, `--zen-group-rgb`'s
+     * The group card header's glyph colour: the theme's pick of the §9.14 pair, `--zen-group-rgb`'s
      * channels as the glyph computes them, read back as `rgb(r, g, b)` – the form a computed
      * background takes, so it compares to `blueRgb()` / `greenRgb()`.
      */
     private fun glyphColour(): String =
-        jsText("(function(){var g=document.querySelector('$GROUPS_PANE .zen-group-row-glyph');if(!g)return '';var c=getComputedStyle(g).getPropertyValue('--zen-group-rgb').trim();return c?'rgb('+c.split(/\\s+/).join(', ')+')':''})()")
+        jsText("(function(){var g=document.querySelector('$GROUP_HEADER .zen-group-row-glyph');if(!g)return '';var c=getComputedStyle(g).getPropertyValue('--zen-group-rgb').trim();return c?'rgb('+c.split(/\\s+/).join(', ')+')':''})()")
 
     private fun card(tabId: String) = ".zen-overview-grid [data-tab-id=\"$tabId\"]"
-
-    /** The pane section `kind` (open / saved) holds a row titled `title` whose subtitle starts with `subtitle`. */
-    private fun rowUnder(kind: String, title: String, subtitle: String): String =
-        "(function(){var rows=document.querySelectorAll('[data-testid=\"overview-groups-$kind\"] .zen-phone-row');" +
-            "return Array.prototype.some.call(rows,function(r){var t=r.querySelector('.zen-list-title'),s=r.querySelector('.zen-list-subtitle');" +
-            "return !!t&&t.textContent.trim()===${JSONObject.quote(title)}&&!!s&&s.textContent.trim().indexOf(${JSONObject.quote(subtitle)})===0})})()"
 
     private companion object {
         private const val OPEN_ATTEMPTS = 4
         private const val FOLD_MS = 1_400L
+        /** The Groups pane and the segment row of before the tab overview cleanup spec (§2, §9) – pinned gone. */
         private const val GROUPS_PANE = "[data-testid=\"overview-groups\"]"
-        private const val OPEN_SECTION = "[data-testid=\"overview-groups-open\"]"
-        private const val SAVED_SECTION = "[data-testid=\"overview-groups-saved\"]"
-        /** The pane's §9.17 note at none (`PhoneEmptyNote` in the pane's flow) and its one sentence. */
-        private const val GROUPS_EMPTY = "$GROUPS_PANE > .zen-phone-empty"
-        private const val EMPTY_LINE = "$GROUPS_EMPTY > p"
-        private const val SEGMENT = "[role=\"tablist\"].zen-v2-segment"
-        private const val ROW = "$GROUPS_PANE .zen-phone-row"
-        private const val RENAME_ROW = "[data-testid=\"overview-group-rename\"]"
+        private const val SEGMENT = ".zen-overview [role=\"tab\"]"
+        /** The rename field in the card's header (`GroupRename`, named Group name). */
+        private const val RENAME_FIELD = ".zen-overview-grid .zen-group-header input[aria-label=\"Group name\"]"
+        /** The title's count span ("N tabs"; the title is the space switcher, §1). */
         private const val COUNT = "[data-testid=\"overview-count\"]"
         private const val SHEET = ".zen-sheet"
         private const val SHEET_ITEM = ".zen-sheet .zen-sheet-item"
@@ -474,6 +449,10 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         private const val GRID = ".zen-overview-grid"
         private const val GROUP_CARD = ".zen-overview-grid [data-cell=\"group:$FOLDER\"]"
         private const val GROUP_HEADER = "$GROUP_CARD > .zen-group-header"
+        private const val CARD_COUNT = "$GROUP_HEADER [data-testid=\"group-card-count\"]"
+        /** The saved group's card at the grid's end (`SavedGroupCard`, the cell `saved:<id>`) and its count. */
+        private const val SAVED_CARD = ".zen-overview-grid .zen-group-saved[data-saved]"
+        private const val SAVED_COUNT = "$SAVED_CARD [data-testid=\"group-card-count\"]"
         /** The group's card stands within the grid's viewport, its header row whole. */
         private const val CARD_IN_VIEW = "(function(){var c=document.querySelector('$GROUP_CARD'),g=document.querySelector('$GRID');if(!c||!g)return false;" +
             "var cr=c.getBoundingClientRect(),gr=g.getBoundingClientRect();return !c.hasAttribute('data-collapsed')&&cr.top>=gr.top-1&&cr.top+44<=gr.bottom+1})()"

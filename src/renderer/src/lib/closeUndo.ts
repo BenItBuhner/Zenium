@@ -6,14 +6,16 @@ import type {
   EventName,
   Events,
   Settings,
-  Tab
+  Tab,
+  UIState
 } from '@shared/types'
 import { isDefaultGroupName } from '@shared/groupNames'
 import { TOAST_UNDO_MS } from '@shared/toastCard'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { isEmptyTabUrl } from '@shared/url'
-import { cmd, onEvent } from './api'
-import { activeTab } from './selectors'
+import { cmd, onEvent, run } from './api'
+import { tabsOnPane } from './privateTabs'
+import { activeTab, regularOf } from './selectors'
 import { browserStore, pushToast, type MessageAction } from './ui'
 
 /**
@@ -333,4 +335,28 @@ export const closeUndo: CloseUndo = createCloseUndo({
 /** Close `request.tabs` through `request.close` with Undo on the toast (see the module note). */
 export function closeWithUndo(request: CloseRequest): void {
   closeUndo.close(request)
+}
+
+/**
+ * Close a group's tabs with Undo on the toast (TAB-16; the core's `folder.closeUndoable` event
+ * from the tablet's group row menu, the tablet's group editor bubble's Close row on the touch
+ * layout, TABLET-22): the group's live members as the phone's overview reads them for its own
+ * Close Group (the space's regular tabs in the group, a private one none of them), the close
+ * the core's `folder.close` – the group stays, saved with their pages – and the toast the
+ * group's words.
+ */
+export function closeGroupUndoable(folderId: string): void {
+  const state: UIState | null = browserStore.get().state
+  const folder = state?.folders[folderId]
+  if (!state || !folder) return
+  const space = state.spaces.find((s) => s.id === folder.spaceId)
+  if (!space) return
+  const tabs = tabsOnPane(regularOf(state, space), 'tabs').filter((t) => t.folderId === folderId)
+  closeWithUndo({
+    tabs,
+    settings: state.settings,
+    activeTabId: activeTab(state)?.id ?? null,
+    close: () => run('folder.close', { folderId }),
+    group: folder
+  })
 }

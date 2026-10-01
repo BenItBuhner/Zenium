@@ -1640,7 +1640,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     /**
      * The overview's grid with Roll's tab in it: its card's favicon slot wears the picture. The grid
      * is waited for ON SCREEN the way the overview drivers wait ([FirstTapDemo], [ThumbsDemo]: the
-     * header's Spaces button in the tree, then the emulator's seconds for its software GPU to paint
+     * overview's landmark in the tree, then the emulator's seconds for its software GPU to paint
      * and settle the grid) – the first run shot 1.5 s after the tap, when the store already said
      * open and the chrome already held the card's glyph, and the still showed the page.
      */
@@ -1652,8 +1652,8 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         Finger().tap(point.x, point.y)
         val open = awaitTrue(8_000) { overviewOpen() }
         expect("the Tabs button opens the overview (the stage store's phase leaves `closed`)", open)
-        val onScreen = waitFor("Spaces", 8_000) != null
-        expect("the overview's grid is on screen (the header's Spaces button in the tree)", onScreen)
+        val onScreen = awaitOverview(8_000) != null
+        expect("the overview's grid is on screen (the overview's landmark in the tree)", onScreen)
         SystemClock.sleep(3_500)
         val glyphs = chromeJs(ROLL_GLYPHS_JS).toIntOrNull() ?: -1
         expect("the overview draws Roll's picture in the game tab's card ($glyphs `lucide-roll` glyphs in the chrome)", glyphs > 0)
