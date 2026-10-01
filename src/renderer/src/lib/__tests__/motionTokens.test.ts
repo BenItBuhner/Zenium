@@ -1,0 +1,114 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+import { SPRING_GENTLE as SHARED_GENTLE, SPRING_SNAPPY as SHARED_SNAPPY } from '@shared/spring'
+import { TOAST_SHOW_MS, TOAST_UNDO_MS as SHARED_UNDO } from '@shared/toastCard'
+import {
+  BAND_CLOCK_MS,
+  LIFT_OPACITY,
+  LIFT_SCALE,
+  LIFT_SHADOW_LEVEL,
+  MOTION_CAP_MS,
+  MOTION_MESSAGE_MS,
+  MOTION_POP_MS,
+  MOTION_STATE_MS,
+  PRESS_SCALE,
+  SPRING_GENTLE,
+  SPRING_SNAPPY,
+  SPRING_STEP_CLAMP_MS,
+  TOAST_DURATION,
+  TOAST_UNDO_MS,
+  ZEN_EASE
+} from '../motion/tokens'
+import { SPRING_STEP_CLAMP_MS as SPRING_CLAMP } from '../motion/spring'
+
+/*
+ * The motion tokens (motion-and-interaction-spec §1, W8-M1): the module exports exactly the
+ * table, the springs are the shared ones at the table's k / c, and the one curve is main.css's
+ * `--zen-ease`. A number that drifts from the spec fails here before a surface can inherit it.
+ */
+
+const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.meta.url)), 'utf8')
+
+describe('motion tokens (§1)', () => {
+  it('the four durations and the cap', () => {
+    expect(MOTION_STATE_MS).toBe(120)
+    expect(MOTION_POP_MS).toBe(180)
+    expect(MOTION_MESSAGE_MS).toBe(200)
+    expect(MOTION_CAP_MS).toBe(300)
+  })
+
+  it('the two springs are the shared ones, at the table’s k and c', () => {
+    expect(SPRING_SNAPPY).toBe(SHARED_SNAPPY)
+    expect(SPRING_GENTLE).toBe(SHARED_GENTLE)
+    expect(SPRING_SNAPPY).toMatchObject({ stiffness: 420, damping: 40, mass: 1 })
+    expect(SPRING_GENTLE).toMatchObject({ stiffness: 300, damping: 31, mass: 1 })
+    // ζ = c / (2 √(k m)): snappy ≈ .98 (no visible overshoot), gentle ≈ .9 (a hair of it).
+    const zeta = (s: { stiffness: number; damping: number; mass: number }): number =>
+      s.damping / (2 * Math.sqrt(s.stiffness * s.mass))
+    expect(zeta(SPRING_SNAPPY)).toBeCloseTo(0.976, 2)
+    expect(zeta(SPRING_GENTLE)).toBeCloseTo(0.895, 2)
+  })
+
+  it('the stepped motion clamp is the spring module’s one figure', () => {
+    expect(SPRING_STEP_CLAMP_MS).toBe(64)
+    expect(SPRING_STEP_CLAMP_MS).toBe(SPRING_CLAMP)
+  })
+
+  it('the clocks: the toast card’s owned values re-exported, the band’s 10 s', () => {
+    expect(TOAST_UNDO_MS).toBe(8000)
+    expect(TOAST_UNDO_MS).toBe(SHARED_UNDO)
+    // The shipped plain toast is v2 §9.33's 2.8 s (§1's table says 4 s; the gap is the lead's).
+    expect(TOAST_DURATION).toBe(TOAST_SHOW_MS)
+    expect(TOAST_DURATION).toBe(2800)
+    expect(BAND_CLOCK_MS).toBe(10_000)
+  })
+
+  it('`lib/ui.ts` hands out the same TOAST_DURATION', async () => {
+    const ui = await import('../ui')
+    expect(ui.TOAST_DURATION).toBe(TOAST_DURATION)
+  })
+
+  it('the curve is main.css’s --zen-ease', () => {
+    const declared = [...css.matchAll(/--zen-ease:\s*([^;]+);/g)].map((m) => m[1].trim())
+    expect(declared.length).toBeGreaterThan(0)
+    for (const value of declared) expect(value).toBe(ZEN_EASE)
+  })
+
+  it('press and lift', () => {
+    expect(PRESS_SCALE).toBe(0.98)
+    expect(LIFT_SCALE).toBe(1.02)
+    expect(LIFT_OPACITY).toBe(0.9)
+    expect(LIFT_SHADOW_LEVEL).toBe(2)
+    // The tab drag's ghost is the lift's stylesheet form (main.css `.zen-tab-ghost-row`).
+    const ghost = css.match(/\.zen-tab-ghost-row\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(ghost).toContain(`transform: scale(${LIFT_SCALE})`)
+    expect(ghost).toContain(`opacity: ${LIFT_OPACITY}`)
+    expect(ghost).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
+    expect(ghost).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+  })
+
+  it('exports exactly §1’s names', async () => {
+    const tokens = await import('../motion/tokens')
+    expect(Object.keys(tokens).sort()).toEqual(
+      [
+        'BAND_CLOCK_MS',
+        'LIFT_OPACITY',
+        'LIFT_SCALE',
+        'LIFT_SHADOW_LEVEL',
+        'MOTION_CAP_MS',
+        'MOTION_MESSAGE_MS',
+        'MOTION_POP_MS',
+        'MOTION_STATE_MS',
+        'PRESS_SCALE',
+        'SPRING_GENTLE',
+        'SPRING_SNAPPY',
+        'SPRING_STEP_CLAMP_MS',
+        'TOAST_DURATION',
+        'TOAST_SHOW_MS',
+        'TOAST_UNDO_MS',
+        'ZEN_EASE'
+      ].sort()
+    )
+  })
+})

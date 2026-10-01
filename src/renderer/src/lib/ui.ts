@@ -29,8 +29,8 @@ import type {
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
-import { TOAST_SHOW_MS } from '@shared/toastCard'
 import { isEmptyTabUrl } from '@shared/url'
+import { TOAST_DURATION } from './motion/tokens'
 import { isZoomed } from '@renderer/components/zoom/bubble'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
@@ -836,8 +836,13 @@ export const uiStore = createStore<UiState>(
 // Messages: toasts at the bottom, banners at the top
 // ---------------------------------------------------------------------------
 
-/** A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin: `@shared/toastCard`); one with an action needs time to be acted on. */
-export const TOAST_DURATION = TOAST_SHOW_MS
+/**
+ * A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin:
+ * `@shared/toastCard`, handed out by the motion tokens – `lib/motion/tokens.ts`, W8-M1 – and
+ * re-exported here for the callers that read it from the store module); one with an action
+ * needs time to be acted on.
+ */
+export { TOAST_DURATION }
 export const TOAST_ACTION_DURATION = 5000
 /** Banners beyond this many push the oldest out. */
 export const MAX_BANNERS = 3
