@@ -18,13 +18,16 @@ import { useSwipeDismiss } from '../messages/useSwipeDismiss'
 /**
  * What the host does with the page while the band moves (`BandSeam` less the content's paint,
  * which is the band's own): the desktop translates the content view's bounds by `offset` per
- * frame, seats the band at `depart` and lays the page out once at `rest` (§3.4); Android moves
- * its WebView by the pull channel and needs neither of the other two.
+ * frame, seats the band at `depart`, hears a hand take hold at `dragStart` (the frames from
+ * there are a drag's, whatever travel was announced) and lays the page out once at `rest`
+ * (§3.4); Android's host moves its WebView by the pull channel under the same words
+ * (`lib/band/androidHost.ts`).
  */
 export interface BandHost {
   translate(offset: number): void
   rest(height: number): void
   depart?(to: number): void
+  dragStart?(): void
 }
 
 /** A swipe up on the band dismisses it; nothing else moves it. */
@@ -79,6 +82,7 @@ export function PageEdgeBand({ host }: Props): JSX.Element | null {
     motion.current ??= new BandMotion({
       translate: (offset) => hostRef.current.translate(offset),
       depart: (to) => hostRef.current.depart?.(to),
+      dragStart: () => hostRef.current.dragStart?.(),
       rest: (height) => {
         hostRef.current.rest(height)
         if (height === 0) setShowing(null)
