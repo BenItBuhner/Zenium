@@ -1,0 +1,76 @@
+import { Info } from 'lucide-react'
+import {
+  bandStore,
+  dismissBand,
+  showBand,
+  type BandDismissReason,
+  type BandOptions
+} from '@renderer/lib/band'
+import type { BannerDismissReason } from '@renderer/lib/ui'
+import type { BandDoor } from './post'
+import type { BandEndReason, BandRequest } from './tenants'
+
+/**
+ * The tenants' door onto the band's shared model (`lib/band.ts`, motion spec §3.2): a request
+ * becomes one `showBand`, its ends come back in the tenants' words. The model scopes bands per
+ * tab when asked; Android's four tenants ask for the window (`tabId: null`) and keep their own
+ * tab and navigation ends as today (the install prompt's core retires it, the reader offer's
+ * effect judges the page left) – one to one with the §9.33 banner they replace.
+ */
+
+/**
+ * The model's end in the tenants' vocabulary: Escape with focus in the band is the ×'s key
+ * (`close`, a refusal); a navigation's take-down is the chrome's doing (`program`), which no
+ * tenant counts as an answer.
+ */
+export function tenantReasonOf(reason: BandDismissReason): BandEndReason {
+  switch (reason) {
+    case 'escape':
+      return 'close'
+    case 'navigation':
+      return 'program'
+    default:
+      return reason
+  }
+}
+
+/** A request without a tenant's `key` stands under one of its own: the same key again replaces. */
+let anonymous = 0
+
+/**
+ * The model's `showBand` options for a tenant's request. A request's `secondary` (the
+ * default-browser band's "Not now", §4) has no seat in the model yet – it carries one action –
+ * and waits on the shared model for it; the × is the same end meanwhile.
+ */
+export function bandOptionsOf(request: BandRequest): BandOptions {
+  const options: BandOptions = {
+    key: request.key ?? `band-${++anonymous}`,
+    form: request.form,
+    tabId: null,
+    // Every tenant names its glyph (§3.1); a request without one gets the plain information mark.
+    icon: request.glyph ?? Info,
+    title: request.title,
+    duration: request.clock
+  }
+  if (request.detail !== undefined) options.detail = request.detail
+  if (request.action) {
+    const action = request.action
+    options.action = { label: action.label, onPick: () => action.pick() }
+  }
+  if (request.onEnd) {
+    const onEnd = request.onEnd
+    options.onDismiss = (reason) => onEnd(tenantReasonOf(reason))
+  }
+  return options
+}
+
+/** The door the touch shells register with `setBandDoor` while the band is mounted. */
+export function createModelDoor(): BandDoor {
+  return {
+    show: (request) => showBand(bandOptionsOf(request)),
+    dismiss: (id, reason: BannerDismissReason) => dismissBand(id, reason),
+    up: (id) => bandStore.get().entries.some((e) => e.id === id),
+    upByKey: (key) => bandStore.get().entries.some((e) => e.key === key),
+    subscribe: (listener) => bandStore.subscribe(listener)
+  }
+}
