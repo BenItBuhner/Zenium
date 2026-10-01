@@ -400,6 +400,13 @@ describe('the engine through the Zenium account', () => {
     await signIn(a)
     await setupAccount(a)
     const session = sessionOf('Desk (Linux)')
+    // The service is told first, then the store forgets: no device left holding a live session.
+    const order: string[] = []
+    const del = a.secrets.delete
+    a.secrets.delete = async (key) => {
+      order.push(`delete ${session.revoked ? 'after' : 'before'} the service's sign-out`)
+      await del(key)
+    }
     a.engine.signOutAccount()
     expect(a.engine.status()).toMatchObject({
       enabled: false,
@@ -407,7 +414,12 @@ describe('the engine through the Zenium account', () => {
       accountSignedOut: false
     })
     await vi.waitFor(() => expect(session.revoked).toBe(true))
-    expect(a.secrets.values.size).toBe(0)
+    await vi.waitFor(() => expect(a.secrets.values.size).toBe(0))
+    expect(order).toEqual([
+      "delete after the service's sign-out",
+      "delete after the service's sign-out"
+    ])
+    a.secrets.delete = del
 
     // Signed in and never set up: only the sign-in is forgotten.
     await signIn(a)
@@ -415,7 +427,16 @@ describe('the engine through the Zenium account', () => {
     a.engine.signOutAccount()
     expect(a.engine.status().account).toBeNull()
     await vi.waitFor(() => expect(second.revoked).toBe(true))
-    expect(a.secrets.values.size).toBe(0)
+    await vi.waitFor(() => expect(a.secrets.values.size).toBe(0))
+
+    // A service that cannot be reached: the token still leaves this device.
+    await signIn(a)
+    const third = sessionOf('Desk (Linux)')
+    server.offline = true
+    a.engine.signOutAccount()
+    await vi.waitFor(() => expect(a.secrets.values.size).toBe(0))
+    expect(third.revoked).toBe(false)
+    server.offline = false
   }, 30_000)
 
   it('turning off with the wipe removes this deviceâ€™s documents before the sign-out', async () => {

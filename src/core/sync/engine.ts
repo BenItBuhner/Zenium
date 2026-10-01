@@ -866,9 +866,12 @@ export class SyncEngine implements SyncHost {
   }
 
   /**
-   * Forget the account here and at the service, best effort: the refresh token is read into the
-   * session's memory, deleted from the store, and – once `after` settles (a wipe still writing
-   * through the session) – the service signs the device out. A store that fails keeps a dead token.
+   * Forget the account at the service and here, best effort: the refresh token is read into the
+   * session's memory; once `after` settles (a wipe still writing through the session) the
+   * service signs the device out (`devices:signOut`, so no device is left at the service
+   * holding a live session); then the token leaves the store, whatever the service answered –
+   * a sign-out the service never heard (offline) leaves a session the account's device list
+   * still shows, and the website's Sign out or the daily purge is the way to end it.
    */
   private forgetAccount(after: Promise<unknown> = Promise.resolve()): void {
     this.cancelAccountLink()
@@ -879,9 +882,9 @@ export class SyncEngine implements SyncHost {
     const secrets = this.browser.platform.secrets
     void (async () => {
       await session?.load()
-      await forgetAccountSecrets(secrets)
       await after
       await session?.signOut().catch(() => undefined)
+      await forgetAccountSecrets(secrets)
     })()
   }
 
