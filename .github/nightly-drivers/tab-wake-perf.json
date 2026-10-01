@@ -1,0 +1,16 @@
+{
+  "id": "tab-wake-perf",
+  "class": "TabWakePerfDemo",
+  "shard": "api33",
+  "mirrors": "android-tab-wake-perf.yml",
+  "dir": "tab-wake-perf",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_ARGS": "-e holdBackgroundWork true -e assert true",
+    "DEMO_HANDSHAKE_S": "420",
+    "DEMO_RECORD": "0"
+  },
+  "timeout": 900,
+  "estimate": 9,
+  "note": "W6-S26-b: waking a sleeping tab from the overview, profiled and asserted – the tab warm (the control), sleeping with the host's spare page view on (the fix) and sleeping with it off (the before-reading), each tapped, pulled back out and backed out while the page loads. The PASS / FAIL lines in tab-wake-findings.txt are the deterministic claims (every sleeping wake took the spare with TabHost.create at or under 2 ms on the UI thread; the spare dropped by a memory trim and with its renderer; one spare's PSS within 8 MB); every frame-time comparison is a FACT line – a reading printed with its ratio against max(the warm control's longest frame, the run's all-frames p95), never a pass – because on this lane's software GPU a ratio rule over two single frames failed one run in three and taught nothing. No recording in the nightly (the encoder is a load of its own on the software GPU). On the api33 shard for its headroom: every phone shard stands at the 60-minute line, and the asserted claims are the host's own work, so the WebView the shard runs does not move the verdict. The PR's own runs were the dispatch workflow's API 34 lane; on API 33 the back-out scenes read a committed back without the in-page predictive transition (PredictiveBack takes the plain OnBackPressedCallback path below API 34: the commit alone), a different gesture from those runs' numbers and still a same-run A/B of the three states."
+}

@@ -275,6 +275,11 @@ export default defineConfig(({ mode }) => {
     root: resolve('src/android'),
     base: './',
     resolve: { alias: aliases },
+    // The Zenium account deployment the phone's sync engine talks to
+    // (`core/sync/accountEndpoints.ts`): `dev` for the development one, anything else production.
+    define: {
+      __ZENIUM_ACCOUNTS_ENV__: JSON.stringify(process.env.ZENIUM_ACCOUNTS_ENV ?? 'prod')
+    },
     // The open-source licences list (`virtual:zenium-licences`, Settings › About), collected
     // from the installed tree at build time: the chrome's bundle carries the shared tree's
     // packages, Electron left out (the device's WebView is the engine). The inlined scripts

@@ -19,7 +19,10 @@ export default defineConfig({
     define: {
       // The Apple team id of the signing identity (release builds); it names the keychain access
       // group of Touch ID passkeys. Empty for unsigned builds.
-      __ZENIUM_APPLE_TEAM_ID__: JSON.stringify(process.env.APPLE_TEAM_ID ?? '')
+      __ZENIUM_APPLE_TEAM_ID__: JSON.stringify(process.env.APPLE_TEAM_ID ?? ''),
+      // The Zenium account deployment sync talks to (`core/sync/accountEndpoints.ts`): `dev` for
+      // the development one, anything else production.
+      __ZENIUM_ACCOUNTS_ENV__: JSON.stringify(process.env.ZENIUM_ACCOUNTS_ENV ?? 'prod')
     }
   },
   preload: {
