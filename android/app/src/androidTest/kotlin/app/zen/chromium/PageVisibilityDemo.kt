@@ -32,12 +32,14 @@ import java.net.URL
  * the switch back and one more read. Chrome's rule for the tab left behind, which the checks
  * hold the page to ([BackgroundTabRule]): the page reads `hidden` and hears one `visibilitychange`;
  * the engine pauses an audible or a muted `<video>` and resumes it on the return; an `<audio>`
- * plays on; frame callbacks stop; timers align to one-second wake-ups unless the page was audible
- * within the last 30 s (`kRecentAudioDelay`), which is why the cadence is a check for the muted
- * and the timers pages and a fact for the two with sound. Then the control, Home with the clip
- * with sound (unchanged by OS-39); then the OS-08 case, the site allowed `background-video`,
- * playing, switched away – held from the hide as it is held from Home's, the page visible to
- * itself and the clip playing on.
+ * plays on; frame callbacks stop. The interval's cadence is recorded as a fact for every kind:
+ * Chrome's scheduler aligns a hidden page's timers to one-second wake-ups unless the page was
+ * audible within the last 30 s (`kRecentAudioDelay`), and the `Page` that keeps that memory
+ * outlives a navigation in the same tab, so the two kinds without sound run first, on a tab that
+ * has never been audible, and the two with sound are measured inside that window. Then the
+ * control, Home with the clip with sound (unchanged by OS-39); then the OS-08 case, the site
+ * allowed `background-video`, playing, switched away – held from the hide as it is held from
+ * Home's, the page visible to itself and the clip playing on.
  *
  * A `check` that did not hold fails the run at its end; what is measured but not held to goes to
  * the notes as a `FACT`. Every touch injected has an assertion on what it did (the rule in
@@ -117,10 +119,10 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
     }
 
     override fun demo() {
-        switched("video", "1. a <video> with sound, playing: the tab switched away and back")
-        switched("muted", "2. the same clip MUTED, playing: the tab switched away and back")
-        switched("audio", "3. an <audio> track, playing: the tab switched away and back")
-        switched("timers", "4. timers only (no media): the tab switched away and back")
+        switched("timers", "1. timers only (no media), on a tab that has never been audible: the tab switched away and back")
+        switched("muted", "2. the clip MUTED, playing: the tab switched away and back")
+        switched("video", "3. the same clip with sound, playing: the tab switched away and back")
+        switched("audio", "4. an <audio> track, playing: the tab switched away and back")
         homeControl()
         allowedSwitched()
         note("\nend: ${describeTab(TAB)}; active ${activeCoreTab()?.optString("id")}; $TAB ${viewState(TAB)}")
@@ -156,7 +158,7 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         check("$kind: behind another tab requestAnimationFrame stops (${"%.1f".format(frameHz(a, b))} frames/s)", frameHz(a, b) < 1.0)
         val cadence = "the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms)"
         when (kind) {
-            "timers", "muted" -> check("$kind: behind another tab the timers align to one-second wake-ups ($cadence)", tickHz(a, b) <= 3.0)
+            "timers", "muted" -> fact(kind, "behind another tab $cadence – Chrome's scheduler aligns a hidden page's timers to one-second wake-ups when the page has not been audible for 30 s, and this tab never was")
             else -> fact(kind, "behind another tab $cadence – the page was audible up to the switch, and Chrome keeps a recently audible page un-throttled for 30 s")
         }
         if (kind == "video") shot("other-tab-in-front-light-phone")
