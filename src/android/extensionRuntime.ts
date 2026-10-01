@@ -133,7 +133,7 @@ import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
-import { RequestLedger, type NotedRequest } from './extensionRequestLedger'
+import { RequestLedger, requestUrlKey, type NotedRequest } from './extensionRequestLedger'
 import { scriptObservation, type RequestObservation } from './requestObserver'
 import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
@@ -447,6 +447,23 @@ const OUTERMOST_FRAME = {
   RequestDetails,
   'frameId' | 'parentFrameId' | 'frameType' | 'documentLifecycle'
 >
+
+/**
+ * A document's hop the navigation hook told before the hop's own request-stage decision reached
+ * the runtime, held for it (`documentHop`, compat round 27, R27-6).
+ */
+interface PendingHop {
+  tab: string
+  chromeTabId: number
+  from: string
+  to: string
+  timer: unknown
+}
+
+/** How long a held hop waits for its decision when no commit of the tab tells it first. */
+export const PENDING_HOP_MS = 1_000
+/** Hops held at most; the oldest is told as it stands when a newer one needs the room. */
+const PENDING_HOPS_CAP = 16
 
 /** The request headers Chrome withholds from a listener without `extraHeaders` (since 72). */
 const REQUEST_HEADERS_BEHIND_EXTRA: ReadonlySet<string> = new Set([
@@ -881,6 +898,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * chain's ids, the requests' initiators, the page-script observer's pairing (§7, 7.10).
    */
   private readonly ledger = new RequestLedger()
+  /**
+   * A document's hop the navigation hook reported before the hop's own request-stage decision
+   * reached the runtime, held for that decision ([documentHop], compat round 27, R27-6); keyed
+   * by tab and the hop's `from` ([requestUrlKey]).
+   */
+  private readonly pendingHops = new Map<string, PendingHop>()
   private subscribed = false
   private activeTabId: string | null = null
   /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
@@ -2754,6 +2777,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         error: 'net::ERR_BLOCKED_BY_CLIENT',
         fromCache: false
       })
+    // A document's hop the navigation hook told ahead of this decision ([documentHop]) is
+    // told now, after the request it belongs to.
+    if (event.mainFrame) this.finishHop(tab, event.url)
   }
 
   /**
@@ -2771,10 +2797,82 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * `onCompleted` never forms (the stated ceiling). Nothing while no `webRequest` listener
    * exists, and no hop while the response stage is not observed (the switch is the gate, as
    * for the stamped path).
+   *
+   * The notice and the hop's own request-stage decision cross the bridge on different legs: the
+   * decision as a Runnable the intercept thread posted to the main looper, the notice straight
+   * from the UI thread's `shouldOverrideUrlLoading`, which Chromium dispatches through the
+   * looper's native poll – served ahead of a queued Java message – so the notice can land
+   * first (compat round 27, R27-6: Redirect Path's hop 80 ms after its decision was logged and
+   * the ledger empty, where Chrome never tells a hop before its request). A hop whose `from`
+   * the ledger knows no open main-frame request for ([RequestLedger.knowsMainFrame]) is held
+   * ([holdHop]) and told, in Chrome's order, by the decision when it lands ([onRequest] →
+   * [finishHop]); one no decision follows is told as before at the tab's commit – the commit
+   * is posted after the decision, so a decision still to come has come by then – or after
+   * [PENDING_HOP_MS], whichever is first. A hop whose request the ledger does know, latest or
+   * not, is told at once (the pinned case of a newer navigation in flight: no pair).
    */
   private documentHop(tab: string, chromeTabId: number, from: string, to: string): void {
     if (!this.observing) return
     const now = this.now()
+    if (this.observingResponses && !this.ledger.knowsMainFrame(tab, from, now)) {
+      this.holdHop(tab, chromeTabId, from, to)
+      return
+    }
+    this.tellHop(tab, chromeTabId, from, to, now)
+  }
+
+  /** [documentHop]'s hold of a hop for its request-stage decision; the newest notice at one `from` wins. */
+  private holdHop(tab: string, chromeTabId: number, from: string, to: string): void {
+    const key = `${tab}|${requestUrlKey(from)}`
+    const previous = this.pendingHops.get(key)
+    if (previous) {
+      this.pendingHops.delete(key)
+      this.timers.clearTimeout(previous.timer)
+    }
+    while (this.pendingHops.size >= PENDING_HOPS_CAP) {
+      const oldest = this.pendingHops.keys().next().value
+      if (oldest === undefined) break
+      this.releaseHop(oldest)
+    }
+    if (this.debug)
+      console.info(
+        `[zen] extensions: redirect pair ${from} -> ${to} (tab ${tab}) held for its request's decision`
+      )
+    const timer = this.timers.setTimeout(() => this.releaseHop(key), PENDING_HOP_MS)
+    this.pendingHops.set(key, { tab, chromeTabId, from, to, timer })
+  }
+
+  /** A held hop told now ([tellHop]) – its decision landed, its tab committed, or its hold ran out. */
+  private releaseHop(key: string): void {
+    const hop = this.pendingHops.get(key)
+    if (!hop) return
+    this.pendingHops.delete(key)
+    this.timers.clearTimeout(hop.timer)
+    this.tellHop(hop.tab, hop.chromeTabId, hop.from, hop.to, this.now())
+  }
+
+  /** The hop held for this main-frame decision ([holdHop]), if one is, told now that the decision's `onBeforeRequest` went out. */
+  private finishHop(tab: string | null, url: string): void {
+    if (tab === null || this.pendingHops.size === 0) return
+    this.releaseHop(`${tab}|${requestUrlKey(url)}`)
+  }
+
+  /** Every hop held for the tab, told now (the tab committed a document) or dropped (the tab is gone). */
+  private settleHops(tab: string, tell: boolean): void {
+    if (this.pendingHops.size === 0) return
+    for (const [key, hop] of [...this.pendingHops]) {
+      if (hop.tab !== tab) continue
+      if (tell) this.releaseHop(key)
+      else {
+        this.pendingHops.delete(key)
+        this.timers.clearTimeout(hop.timer)
+      }
+    }
+  }
+
+  /** [documentHop]'s telling of a hop: `onBeforeRedirect` of the pair and the target's `onBeforeRequest`. */
+  private tellHop(tab: string, chromeTabId: number, from: string, to: string, now: number): void {
+    if (!this.observing) return
     let hop: NotedRequest | null = null
     if (this.observingResponses) hop = this.documentRedirected(tab, chromeTabId, from, to, now)
     else if (this.debug)
@@ -3189,6 +3287,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           else this.dnr.tabNavigated(chromeTabId)
           // The page-script observer's pending pairs were the old document's.
           this.ledger.documentChanged(tabId)
+          // A hop held for a decision ([documentHop]) that has not come by the commit – posted
+          // after any decision of the document's requests – is told as it stands.
+          this.settleHops(tabId, true)
         }
         updated({ status: 'loading', url: p.url })
         return
@@ -3242,6 +3343,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.router.unregisterTab(tabId)
         this.webNavigation.tabRemoved(tabId)
         this.ledger.tabRemoved(tabId)
+        this.settleHops(tabId, false)
         return
       default:
         return

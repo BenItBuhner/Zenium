@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ExtRequestEvent, ExtResponseEvent } from '../extensionRuntime'
+import { PENDING_HOP_MS, type ExtRequestEvent, type ExtResponseEvent } from '../extensionRuntime'
 import { RequestLedger, requestUrlKey } from '../extensionRequestLedger'
 import type { RequestObservation } from '../requestObserver'
 import {
@@ -622,6 +622,136 @@ describe('the response stage of a relayed media request (ext.response → webReq
     expect(names()).toHaveLength(all)
   })
 
+  it("the hook's `redirected` notice ahead of the hop's own decision (compat round 27, R27-6: the two cross the bridge on different legs) is held for the decision and told after it in Chrome's order under the decision's id – for a fresh tab and for one whose previous document is still remembered; a hop no decision follows is told as it stood at the tab's commit, or when its hold runs out; a destroyed tab drops its held hop; a hop whose request the ledger knows is told at once", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    await sniffer(h, 'bg1')
+    const page = (path: string): string => `https://shop.example${path}`
+    const document = (over: Partial<ExtRequestEvent>): ExtRequestEvent =>
+      requestEvent({ type: 'main_frame', mainFrame: true, initiator: null, ...over })
+    const names = (): string[] =>
+      h.kt
+        .to('bg1')
+        .filter((m) => m.t === 'event' && m.ns === 'webRequest')
+        .map((m) => String(m.name))
+    // A fresh tab: the notice lands first, with nothing in the ledger to pair it with. Nothing
+    // is told yet – Chrome never tells a hop before its request.
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/redirect?to=/page-a.html'),
+      to: page('/page-a.html?redirectpath=1')
+    })
+    expect(names()).toEqual([])
+    // The decision lands: the request, its hop and the target, in that order, one id.
+    h.runtime.onRequest(document({ requestId: '50', url: page('/redirect?to=/page-a.html') }))
+    expect(names()).toEqual(['onBeforeRequest', 'onBeforeRedirect', 'onBeforeRequest'])
+    expect(heard(h, 'bg1', 'onBeforeRequest')[0]).toMatchObject({
+      requestId: '50',
+      url: page('/redirect?to=/page-a.html'),
+      type: 'main_frame'
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')[0]).toMatchObject({
+      requestId: '50',
+      url: page('/redirect?to=/page-a.html'),
+      redirectUrl: page('/page-a.html?redirectpath=1'),
+      statusCode: 302
+    })
+    expect(heard(h, 'bg1', 'onBeforeRequest')[1]).toMatchObject({
+      requestId: '50',
+      url: page('/page-a.html?redirectpath=1'),
+      type: 'main_frame'
+    })
+    // Nothing is left waiting: the hold's timer running out tells nothing twice.
+    h.tick(PENDING_HOP_MS)
+    expect(names()).toHaveLength(3)
+    // A tab whose previous document is still remembered (a document's note never ends on the
+    // phone): the race presents as a latest main frame at ANOTHER URL, and is the same race.
+    h.runtime.onRequest(document({ requestId: '51', url: page('/previous') }))
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/next'),
+      to: page('/next-landed')
+    })
+    expect(names()).toHaveLength(4)
+    h.runtime.onRequest(document({ requestId: '52', url: page('/next') }))
+    expect(names().slice(4)).toEqual(['onBeforeRequest', 'onBeforeRedirect', 'onBeforeRequest'])
+    expect(heard(h, 'bg1', 'onBeforeRedirect')[1]).toMatchObject({
+      requestId: '52',
+      url: page('/next'),
+      redirectUrl: page('/next-landed')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      requestId: '52',
+      url: page('/next-landed')
+    })
+    // The hop's request the ledger does know – not the latest main frame, a newer navigation in
+    // flight (the pinned case) – is told at once, as before: no pair, the target as its own.
+    h.runtime.onRequest(document({ requestId: '53', url: page('/first') }))
+    h.runtime.onRequest(document({ requestId: '54', url: page('/second') }))
+    const hops = heard(h, 'bg1', 'onBeforeRedirect').length
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/first'),
+      to: page('/first-landed')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(hops)
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      url: page('/first-landed'),
+      type: 'main_frame'
+    })
+    // A hop no decision follows: the tab's commit tells it as it stood – no pair, the target
+    // told as its own, under an id of the runtime's.
+    const told = names().length
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/orphan'),
+      to: page('/orphan-landed')
+    })
+    expect(names()).toHaveLength(told)
+    h.runtime.onViewEvent('t1', 'navigated', {
+      url: page('/orphan-landed'),
+      inPage: false
+    } as never)
+    expect(names().slice(told)).toEqual(['onBeforeRequest'])
+    const orphan = heard(h, 'bg1', 'onBeforeRequest').at(-1)
+    expect(orphan).toMatchObject({ url: page('/orphan-landed'), type: 'main_frame' })
+    expect(['50', '51', '52', '53', '54']).not.toContain(orphan?.requestId)
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(hops)
+    // Without a commit the hold runs out and tells the same.
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/stray'),
+      to: page('/stray-landed')
+    })
+    h.tick(PENDING_HOP_MS - 1)
+    expect(names()).toHaveLength(told + 1)
+    h.tick(1)
+    expect(names().slice(told + 1)).toEqual(['onBeforeRequest'])
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      url: page('/stray-landed')
+    })
+    // An in-page navigation is no commit of a document: the hold stands.
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/held'),
+      to: page('/held-landed')
+    })
+    h.runtime.onViewEvent('t1', 'navigated', { url: page('/previous#x'), inPage: true } as never)
+    expect(names()).toHaveLength(told + 2)
+    h.runtime.onRequest(document({ requestId: '55', url: page('/held') }))
+    expect(names().slice(told + 2)).toEqual([
+      'onBeforeRequest',
+      'onBeforeRedirect',
+      'onBeforeRequest'
+    ])
+    // A destroyed tab drops its held hop: nothing told for it, then or later.
+    h.tabs.t2 = { ...h.tabs.t1, id: 't2' }
+    const settled = names().length
+    h.runtime.onViewEvent('t2', 'redirected', {
+      from: page('/gone'),
+      to: page('/gone-landed')
+    })
+    h.runtime.onViewEvent('t2', 'destroyed', {} as never)
+    h.tick(PENDING_HOP_MS)
+    h.runtime.onRequest(document({ tabId: 't2', requestId: '56', url: page('/gone') }))
+    expect(names().slice(settled)).toEqual(['onBeforeRequest'])
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(hops + 1)
+  })
+
   it("a 3xx without a Location (a 304) is one the relay closed too: onHeadersReceived, onResponseStarted and onCompleted at once, as the relay's observation of it ended", async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
@@ -927,5 +1057,23 @@ describe("the ledger's word for the trace of a redirect pair that found no match
     // A note the intercept made is never adopted.
     ledger.noted('t1', '9', 'https://a.test/plain', 'GET', 'main_frame', undefined, 1_400)
     expect(ledger.adopt('t1', '10', 'https://a.test/plain', 1_500)).toBeNull()
+  })
+
+  it('knows whether the tab has any open main-frame request at a URL, latest or not (compat round 27, R27-6: the hold of a hop whose decision has not come), by canonical form, a subresource at the URL not counting, an ended or expired note no longer', () => {
+    const ledger = new RequestLedger({ ttlMs: 10_000 })
+    expect(ledger.knowsMainFrame('t1', 'https://a.test/first', 1_000)).toBe(false)
+    ledger.noted('t1', '1', 'https://a.test/first', 'GET', 'main_frame', undefined, 1_000)
+    ledger.noted('t1', '2', 'https://a.test/second', 'GET', 'main_frame', undefined, 1_100)
+    ledger.noted('t1', '3', 'https://a.test/clip.mp4', 'GET', 'media', 'https://a.test', 1_200)
+    expect(ledger.knowsMainFrame('t1', 'https://a.test/first', 1_300)).toBe(true)
+    expect(ledger.knowsMainFrame('t1', 'HTTPS://A.Test/second#frag', 1_300)).toBe(true)
+    expect(ledger.knowsMainFrame('t1', 'https://a.test/clip.mp4', 1_300)).toBe(false)
+    expect(ledger.knowsMainFrame('t2', 'https://a.test/first', 1_300)).toBe(false)
+    expect(ledger.knowsMainFrame(null, 'https://a.test/first', 1_300)).toBe(false)
+    // Where openMainFrame pairs the latest alone, knowsMainFrame answers for any.
+    expect(ledger.openMainFrame('t1', 'https://a.test/first', 1_300)).toBeNull()
+    ledger.ended('2')
+    expect(ledger.knowsMainFrame('t1', 'https://a.test/second', 1_300)).toBe(false)
+    expect(ledger.knowsMainFrame('t1', 'https://a.test/first', 11_001)).toBe(false)
   })
 })

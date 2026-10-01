@@ -191,6 +191,22 @@ export class RequestLedger {
   }
 
   /**
+   * Whether the tab has ANY open main-frame request at `url` (by [requestUrlKey]), latest or
+   * not – the question a document's hop asks before [openMainFrame] (compat round 27, R27-6):
+   * none at all means the hop's request-stage decision has not reached the runtime (the
+   * navigation hook's notice and the intercept's decision cross the bridge on different legs,
+   * and the notice can land first), where one that is not the latest is the pinned case of a
+   * newer navigation in flight.
+   */
+  knowsMainFrame(tab: string | null, url: string, now: number): boolean {
+    const list = this.byTab.get(tab ?? NO_TAB)
+    if (!list) return false
+    this.prune(list, now)
+    const wanted = requestUrlKey(url)
+    return list.some((entry) => entry.type === 'main_frame' && requestUrlKey(entry.url) === wanted)
+  }
+
+  /**
    * An intercept's decision on a request the runtime already noted itself (the tab's latest
    * main-frame note, [NotedRequest.synthesized], at `url`): the note becomes that decision's,
    * `requestId` its own id for the response reports to pair by, and the entry is returned – its
