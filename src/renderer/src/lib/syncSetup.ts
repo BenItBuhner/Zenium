@@ -205,6 +205,36 @@ export const SYNC_COPY = {
   accountRefused: 'Your Zenium account did not accept the request.'
 } as const
 
+/**
+ * Settings › Account: the Zenium account on a page of its own – the sign-in by email, the sync
+ * it carries and its status, the other devices, Sign out. The sign-in rows and the device rows
+ * are Sync's (`accountSignInRows`, `deviceRows`); these are the page's own sentences.
+ */
+export const ACCOUNT_COPY = {
+  heading: 'Zenium account',
+  intro:
+    'Sign in to sync your bookmarks and settings across devices. Everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.',
+  introSignedIn:
+    'Your Spaces, folders, pinned tabs, bookmarks, passwords and settings stay the same on every device you sign in on.',
+  signedInAs: 'Signed in as',
+  unavailable: 'Not available on this device',
+  unavailableHint: 'This device cannot reach the Zenium account service.',
+  sync: 'Sync',
+  syncOff: 'Off',
+  syncOffHint: 'Turn on sync to keep this device’s data the same as your other devices’.',
+  turnOn: 'Turn on sync',
+  // Sync is set up another way on this device: a fact, with the way to the account under Sync.
+  syncElsewhereFolder: 'This device syncs through a folder, not your account.',
+  syncElsewhereServer: 'This device syncs through a WebDAV server, not your account.',
+  syncElsewhereHint: 'Turn off sync under Sync to sync through your account instead.',
+  settings: 'Sync settings',
+  settingsHint: 'What you sync, this device’s name and the other ways to sync.',
+  settingsAction: 'Open',
+  devices: 'Devices',
+  noDevicesOff: 'Turn on sync to see your other devices',
+  thisDevice: 'This device'
+} as const
+
 /** Settings › Sync › What you sync › Extensions (services pass 16, ID-44): the lead's label, verbatim. */
 export const EXTENSIONS_SCOPE_LABEL = 'Extensions'
 /** The Extensions row's hint (ID-44): the lead's words, verbatim. */

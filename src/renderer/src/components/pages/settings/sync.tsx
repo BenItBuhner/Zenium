@@ -286,20 +286,28 @@ function accountSetupRows(sync: SyncStatus): SettingsRow[] {
  * its place with the wait as its line, over Cancel sign-in. A sign-in that did not finish says
  * why under the row in the page's words, never the service's (§9.33).
  */
-function accountSignInRows(sync: SyncStatus, label: string): SettingsRow[] {
+export function accountSignInRows(
+  sync: SyncStatus,
+  label: string,
+  /**
+   * The stem of the rows' ids: Sync's are `sync-account-…` (the account among its transports),
+   * the Account page's `account-…` (the page is the account).
+   */
+  prefix = 'sync-account'
+): SettingsRow[] {
   const link = sync.accountLink
   if (link) {
     return [
       {
         kind: 'info',
-        id: 'sync-account-code',
+        id: `${prefix}-code`,
         label: link.userCode,
         description: SYNC_COPY.accountWaiting,
         keywords: [...ACCOUNT_KEYWORDS, 'code']
       },
       {
         kind: 'action',
-        id: 'sync-account-cancel',
+        id: `${prefix}-cancel`,
         label: SYNC_COPY.accountCancel,
         keywords: ACCOUNT_KEYWORDS,
         button: SYNC_COPY.accountCancelAction,
@@ -311,7 +319,7 @@ function accountSignInRows(sync: SyncStatus, label: string): SettingsRow[] {
   return [
     {
       kind: 'action',
-      id: 'sync-account-sign-in',
+      id: `${prefix}-sign-in`,
       label,
       description: failure ? accountLinkFailureLine(failure) : SYNC_COPY.accountSignInHint,
       tone: failure ? 'danger' : undefined,
@@ -333,7 +341,7 @@ function accountRow(email: string): SettingsRow {
   }
 }
 
-const ACCOUNT_KEYWORDS = ['zenium account', 'account', 'sign in', 'sign out'] as const
+export const ACCOUNT_KEYWORDS = ['zenium account', 'account', 'sign in', 'sign out'] as const
 
 /**
  * The server form as rows (§9.12's fields in rows on the desktop – the address stacked, since
@@ -500,21 +508,7 @@ function connectedGroups(
       trailing: <UserX className="zen-settings-trailing-glyph" aria-hidden="true" />
     })
   }
-  if (sync.pendingMerge) {
-    status.push({
-      kind: 'action',
-      id: 'sync-merge',
-      label: account ? SYNC_COPY.mergeRowAccount : SYNC_COPY.mergeRow,
-      description: SYNC_COPY.mergeRowHint,
-      keywords: ['merge', 'first sync', 'replace', 'combine'],
-      button: 'Choose…',
-      form: {
-        title: account ? SYNC_COPY.mergeTitleAccount : SYNC_COPY.mergeTitle,
-        description: account ? SYNC_COPY.mergeDescriptionAccount : SYNC_COPY.mergeDescription,
-        render: (close) => <SyncMergeForm close={close} />
-      }
-    })
-  }
+  if (sync.pendingMerge) status.push(mergeRow(account))
   // The error the engine keeps is the folder-lost sentence while the folder is lost, the
   // server's answer while the sign-in is refused, and the account's signed-out line while the
   // service has signed this device out: the row above says it, so the status line does not say
@@ -590,6 +584,26 @@ function connectedGroups(
     scopeGroup(sync, caps),
     { id: 'sync-off', heading: null, rows: [turnOffRow(account)] }
   ]
+}
+
+/**
+ * The merge question while the first sync waits on it: an action row whose sheet (the desktop's
+ * dialog) is the merge form, in the account's words when the data is the account's.
+ */
+export function mergeRow(account: boolean, prefix = 'sync'): SettingsRow {
+  return {
+    kind: 'action',
+    id: `${prefix}-merge`,
+    label: account ? SYNC_COPY.mergeRowAccount : SYNC_COPY.mergeRow,
+    description: SYNC_COPY.mergeRowHint,
+    keywords: ['merge', 'first sync', 'replace', 'combine'],
+    button: 'Choose…',
+    form: {
+      title: account ? SYNC_COPY.mergeTitleAccount : SYNC_COPY.mergeTitle,
+      description: account ? SYNC_COPY.mergeDescriptionAccount : SYNC_COPY.mergeDescription,
+      render: (close) => <SyncMergeForm close={close} />
+    }
+  }
 }
 
 /**
@@ -757,13 +771,13 @@ function deviceNameRow(sync: SyncStatus): SettingsRow {
  * one (`anyDeviceKind`, the #453 lead check's condition on §10.4): a list in which no device did
  * has no glyph column at all, the names at the gutter, rather than a column of stand-ins.
  */
-function deviceRows(devices: SyncStatus['devices']): SettingsRow[] {
+export function deviceRows(devices: SyncStatus['devices'], prefix = 'sync'): SettingsRow[] {
   const glyphs = anyDeviceKind(devices)
   return [...devices]
     .sort((a, b) => b.lastSeen - a.lastSeen)
     .map((device): SettingsRow => ({
       kind: 'info',
-      id: `sync-device:${device.id}`,
+      id: `${prefix}-device:${device.id}`,
       label: device.name,
       keywords: ['device', 'last seen', ...(device.kind ? [device.kind] : [])],
       leading: glyphs ? <DeviceGlyph kind={device.kind} /> : undefined,
