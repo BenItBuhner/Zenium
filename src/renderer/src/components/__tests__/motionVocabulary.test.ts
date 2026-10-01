@@ -84,11 +84,6 @@ const LEFT: Record<string, { count: number; why: string }> = {
     count: 1,
     why: 'a row’s 220 ms step between slots; the spring or the token for it is the lead’s call'
   },
-  // The ghost card's scale spring (k 520, c 34); its follow spring is `SPRING_FOLLOW` now.
-  'components/phone/useCardLift.ts': {
-    count: 1,
-    why: 'the lifted card’s scale spring; §1’s lift is a MOTION_STATE_MS rise – the lead’s call (Android’s card lift)'
-  },
   // Tailwind arbitrary values (`duration-[120ms]`) in class strings, which cannot read a TS
   // token: a `--zen-motion-state` custom property in main.css is the follow-up.
   'components/print/PreviewPane.tsx': {

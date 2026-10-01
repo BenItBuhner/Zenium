@@ -19,7 +19,7 @@ import {
   type DropTargetState
 } from '@renderer/lib/gestures/dropTarget'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
-import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { LIFT_SCALE, SPRING_FOLLOW } from '@renderer/lib/motion/tokens'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { createStore } from '@renderer/lib/store'
@@ -37,7 +37,9 @@ const AUTOSCROLL_SPEED = 14
 
 // The ghost tracks the finger on §1's follow spring (`SPRING_FOLLOW`, the tokens': a hair of
 // lag and weight, no rubbery drag). Let go, it glides home on the grid's own `SPRING_SNAPPY`
-// from the velocity it had (v2 §11.4).
+// from the velocity it had (v2 §11.4). Its scale is no spring: the lift is §1's rise – the
+// store steps the value (`LIFT_SCALE` in the hand, `TUCK_SCALE` over a target, 1 as it lands)
+// and `.zen-overview-ghost`'s transform transition eases each step over `MOTION_STATE_MS`.
 
 /** The card in the hand is drawn at the lift's scale (v2 §11.4, `LIFT_SCALE`); over a merge target it tucks in further. */
 const TUCK_SCALE = 0.84
@@ -71,7 +73,10 @@ export interface LiftState {
   target: LiftTarget | null
   /** Slot the card's stand-in is shown in while it is dragged (and lands in when dropped). */
   slot: LiftSlot | null
-  /** Scale of the ghost (1 on the grid, smaller in the hand, smaller still over a target). */
+  /**
+   * Scale the ghost is drawn at: `LIFT_SCALE` in the hand, `TUCK_SCALE` over a merge target, 1
+   * on the grid – a step each time, which the ghost's stylesheet eases over `MOTION_STATE_MS`.
+   */
   scale: number
 }
 
@@ -110,15 +115,16 @@ const ySpring = new SpringAnimation(
   },
   () => maybeSettled()
 )
-const scaleSpring = new SpringAnimation(
-  { stiffness: 520, damping: 34, mass: 1, restDelta: 0.001, restSpeed: 0.01 },
-  (scale) => liftStore.set({ scale }),
-  () => maybeSettled()
-)
+/**
+ * The frame that lifts the ghost: it mounts at scale 1 and takes `LIFT_SCALE` one frame later,
+ * so the stylesheet has a start to ease the rise from (a style an element mounts with is not
+ * transitioned). Null when none is pending.
+ */
+let riseFrame: number | null = null
 
 function maybeSettled(): void {
   if (liftStore.get().phase !== 'dropping') return
-  if (xSpring.running || ySpring.running || scaleSpring.running) return
+  if (xSpring.running || ySpring.running) return
   const done = onSettled
   onSettled = null
   landing = false
@@ -129,7 +135,8 @@ function maybeSettled(): void {
 function stopSprings(): void {
   xSpring.stop()
   ySpring.stop()
-  scaleSpring.stop()
+  if (riseFrame !== null) cancelAnimationFrame(riseFrame)
+  riseFrame = null
   landing = false
 }
 
@@ -140,11 +147,11 @@ function targetScale(phase: LiftPhase, target: LiftTarget | null): number {
   return 1
 }
 
-function retargetScale(): void {
+/** Step the ghost's scale to the situation's; the stylesheet eases the step. */
+function setScale(): void {
   const s = liftStore.get()
   const to = targetScale(s.phase, s.target)
-  if (scaleSpring.running) scaleSpring.retarget(to)
-  else scaleSpring.start(s.scale, 0, to)
+  if (s.scale !== to) liftStore.set({ scale: to })
 }
 
 /**
@@ -157,10 +164,12 @@ export function settleLift(to: Rect, then?: () => void): void {
   if (s.phase !== 'dropping' || !s.ghost) return
   onSettled = then ?? null
   landing = true
-  liftStore.set({ ghost: { ...s.ghost, width: to.width, height: to.height } })
+  if (riseFrame !== null) cancelAnimationFrame(riseFrame)
+  riseFrame = null
+  // The card settles back to the grid's size as it flies: the stylesheet eases the step.
+  liftStore.set({ ghost: { ...s.ghost, width: to.width, height: to.height }, scale: 1 })
   xSpring.start(s.ghost.x, xSpring.current.v, to.x, SPRING_SNAPPY)
   ySpring.start(s.ghost.y, ySpring.current.v, to.y, SPRING_SNAPPY)
-  scaleSpring.start(s.scale, 0, 1)
 }
 
 /**
@@ -325,10 +334,9 @@ class DragSession {
       for (const c of coalesced) this.velocity.add(c.timeStamp, c.clientX, c.clientY)
     else this.velocity.add(e.timeStamp, e.clientX, e.clientY)
     const s = liftStore.get()
-    if (s.phase === 'lifted' && Math.hypot(this.x - this.x0, this.y - this.y0) >= SLOP) {
+    // (The scale is the lift's in the hand whether or not the card is moving yet: no step here.)
+    if (s.phase === 'lifted' && Math.hypot(this.x - this.x0, this.y - this.y0) >= SLOP)
       liftStore.set({ phase: 'dragging' })
-      retargetScale()
-    }
     if (liftStore.get().phase !== 'dragging') return
     this.follow()
     this.hover(e.timeStamp, true)
@@ -386,7 +394,7 @@ class DragSession {
     if (s.phase !== 'dragging') return
     if (this.drop.target !== s.target) {
       liftStore.set({ target: this.drop.target })
-      retargetScale()
+      setScale()
       if (this.drop.target) vibrate(4)
     }
     if (!sameSlot(this.drop.slot, s.slot)) liftStore.set({ slot: this.drop.slot })
@@ -599,15 +607,23 @@ export function useCardLift({
     swallow.current = true
     liftedClick = true
     stopSprings()
+    // The rise (§1, `MOTION_STATE_MS`): the ghost comes up at the card's size and steps to the
+    // lift's a frame later, for the stylesheet to ease; under reduced motion it is up at once.
+    const reduced = reducedMotion()
     liftStore.set({
       tabId: tab.id,
       phase: 'lifted',
       ghost: rect,
       origin: rect,
       target: null,
-      slot: null
+      slot: null,
+      scale: reduced ? LIFT_SCALE : 1
     })
-    scaleSpring.start(1, 0, targetScale('lifted', null))
+    if (!reduced)
+      riseFrame = requestAnimationFrame(() => {
+        riseFrame = null
+        setScale()
+      })
     // From here the touch is the session's; this hook hears no more of it.
     touch.current = null
     session = new DragSession(t.id, tab.id, t, t.velocity, {

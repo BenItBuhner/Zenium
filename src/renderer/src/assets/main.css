@@ -4291,7 +4291,10 @@
   }
   /*
    * The card in the hand is positioned per frame at 90% opacity (v2 §11.4); its elevation is a
-   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow.
+   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is
+   * §1's rise, not a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a
+   * target, 1 as it lands) and the transform transition eases each step over `MOTION_STATE_MS`;
+   * under reduced motion the rule at the foot makes the step a cut.
    */
   .zen-overview-ghost {
     opacity: 0.9;
@@ -4299,6 +4302,7 @@
     transform-origin: center;
     transition:
       opacity 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
     will-change: transform, left, top;
   }

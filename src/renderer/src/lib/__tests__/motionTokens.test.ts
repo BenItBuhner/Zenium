@@ -107,6 +107,15 @@ describe('motion tokens (§1)', () => {
     expect(ghost).toContain(`opacity: ${LIFT_OPACITY}`)
     expect(ghost).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
     expect(ghost).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    // The overview's card in the hand (`.zen-overview-ghost`, stepped by `useCardLift`): the
+    // same rise, no scale spring (the lead's call on #734).
+    const card = css.match(/\.zen-overview-ghost\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(card).toContain(`opacity: ${LIFT_OPACITY}`)
+    expect(card).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
+    expect(card).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    const cardLift = read('../../components/phone/useCardLift.ts')
+    expect(cardLift).not.toMatch(/scaleSpring/)
+    expect(cardLift).toMatch(/scale: reduced \? LIFT_SCALE : 1/)
   })
 
   it('exports exactly §1’s names', async () => {
