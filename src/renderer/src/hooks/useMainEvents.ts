@@ -21,6 +21,7 @@ import { isPhone, isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
 import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
+import { autoOpenInstall, retireInstallOffer } from '@renderer/lib/installOffer'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { returnKeyboardMenuFocus, trackKeyboardMenuSource } from '@renderer/lib/menuKeys'
 import { afterPageShown } from '@renderer/lib/sharePanel'
@@ -498,8 +499,19 @@ export function useMainEvents(): void {
         retireInstallBanner(prompt.tabId)
         void openInstallSheet(prompt)
       }),
-      onEvent('webapp.banner', (banner) => presentInstallBanner(banner)),
-      onEvent('webapp.bannerHide', ({ tabId }) => retireInstallBanner(tabId)),
+      // The core's install offer (PWA-03): the phone's banner card, or – on a host with windows,
+      // which has no card – the pill's Install chip opening its popover of its own accord
+      // (`lib/installOffer.ts`, the Design Lead's ruling on W8-M3's item 3); each is the core's
+      // banner in its chrome's form, and each answers the core as the banner's card does. The
+      // take-down retires whichever is up for the tab.
+      onEvent('webapp.banner', (banner) => {
+        if (browserStore.get().state?.capabilities.windows) autoOpenInstall(banner)
+        else presentInstallBanner(banner)
+      }),
+      onEvent('webapp.bannerHide', ({ tabId }) => {
+        retireInstallBanner(tabId)
+        retireInstallOffer(tabId)
+      }),
       // NOT-20, with Chrome's "Open" (v2 §9.33: one action): the tab goes to the shortcut's URL;
       // on desktop an installed app opens in its own window instead (a plain shortcut's page
       // came up in the app window already, so its toast has no action).

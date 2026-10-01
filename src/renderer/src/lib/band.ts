@@ -238,8 +238,12 @@ let seq = 0
 /** The clocks: the one running (for the shown offer) and what each paused offer has left. */
 let running: { id: number; timer: ReturnType<typeof setTimeout>; due: number } | null = null
 const left = new Map<number, number>()
-/** A clock resumed gets at least this long: a message let go has a moment before it leaves. */
-const RESUME_FLOOR_MS = 1000
+/**
+ * A clock resumed gets at least this long: a message let go has a moment before it leaves. The
+ * desktop's install popover, which keeps the offer clock in its own host, resumes by the same
+ * rule (`install/InstallPopover.tsx`).
+ */
+export const BAND_CLOCK_RESUME_FLOOR_MS = 1000
 
 function pauseClock(): void {
   if (!running) return
@@ -259,7 +263,9 @@ function syncClock(): void {
   const wants = shown !== null && shown.duration !== null && !s.held && !s.covered
   if (running && (!wants || running.id !== shown.id)) pauseClock()
   if (!wants || running) return
-  const ms = left.has(shown.id) ? Math.max(left.get(shown.id)!, RESUME_FLOOR_MS) : shown.duration!
+  const ms = left.has(shown.id)
+    ? Math.max(left.get(shown.id)!, BAND_CLOCK_RESUME_FLOOR_MS)
+    : shown.duration!
   left.delete(shown.id)
   const id = shown.id
   running = {

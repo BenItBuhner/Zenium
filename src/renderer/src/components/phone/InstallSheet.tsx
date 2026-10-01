@@ -16,9 +16,9 @@ const NAME_FIELD_ID = 'zen-install-name'
 /**
  * "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. The
  * sheet is the install surface of a one-window host (`ChromeSurface`: the core sends an install
- * prompt only to a window with one up); a desktop's installs get their own dialog
- * (`install/InstallDialog.tsx`, the surface on hosts with windows), so on such a host this layer
- * registers nothing and shows nothing.
+ * prompt only to a window with one up); a desktop's installs get the pill's popover and the
+ * "Create shortcut" dialog (`install/InstallPopover.tsx`, the surface on hosts with windows), so
+ * on such a host this layer registers nothing and shows nothing.
  */
 export function InstallLayer({ state }: { state: UIState }): JSX.Element | null {
   const phone = !state.capabilities.windows
@@ -188,25 +188,25 @@ function shotWidth(shot: WebAppScreenshot, height: number): number | null {
 
 /**
  * The manifest's screenshots as a horizontal strip of bordered cards: fixed height, natural
- * width, one snap stop per shot and fading edges where more is hidden. The shots for this
- * chrome's shape are shown when the manifest marks any – `narrow` (phone-shaped) in the phone's
- * sheet, `wide` in the desktop's dialog, as Chrome picks them for its two install dialogs – and
- * the rest only otherwise.
+ * width, one snap stop per shot and fading edges where more is hidden. The phone-shaped shots
+ * (`narrow`) are shown when the manifest marks any, and the rest only otherwise. The strip is
+ * the phone sheet's alone: the desktop's install is Chrome's simple form
+ * (`install/InstallPopover.tsx`, the identity row and nothing of the manifest's `wide` shots –
+ * the Design Lead's gate on #754), so the shape it once picked for the desktop's detailed
+ * dialog went with that dialog.
  */
-export function ScreenshotStrip({
+function ScreenshotStrip({
   shots,
-  formFactor = 'narrow',
   height = SHOT_HEIGHT
 }: {
   shots: WebAppScreenshot[]
-  formFactor?: 'narrow' | 'wide'
   height?: number
 }): JSX.Element {
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 20 })
   const visible = useMemo(() => {
-    const shaped = shots.filter((s) => s.formFactor === formFactor)
+    const shaped = shots.filter((s) => s.formFactor === 'narrow')
     return shaped.length ? shaped : shots
-  }, [shots, formFactor])
+  }, [shots])
   return (
     <div ref={fadeRef} className="zen-install-shots" role="list" aria-label="Screenshots">
       {visible.map((shot) => (

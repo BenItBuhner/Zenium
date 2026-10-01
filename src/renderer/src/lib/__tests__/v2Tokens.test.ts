@@ -137,13 +137,13 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // overlays/ProtectionSection.tsx, overlays/protection/*): what they add under their own
   // `.zen-protection-*` names to the pane's vocabulary above them. The block sits between the
   // pane's and the Default Browser range, so it is cut out before the pane's, which ends there.
-  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * The frame\'s strip – "Restore pages?"'],
+  ['.zen-privacy + .zen-privacy.zen-protection {', "/*\n * The default-browser promo's icon"],
   // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
   // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
   // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
-  ['.zen-privacy {', '/*\n * The frame\'s strip – "Restore pages?"'],
+  ['.zen-privacy {', "/*\n * The default-browser promo's icon"],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
-  ['.zen-find-bar {', '/*\n * The frame\'s strip – "Restore pages?"'],
+  ['.zen-find-bar {', "/*\n * The default-browser promo's icon"],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
   // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
   // reduced-motion rules, so it is cut out before the Default Browser range that ends there.
@@ -151,12 +151,12 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The page-edge band (components/band/PageEdgeBand.tsx; motion spec §3.1): the page surface
   // with the frame's radius, the glyph's status and accent inks, the title and detail on the
   // scale, its §9.11 secondary action and the message close in the page family. Its block sits
-  // inside the strip's range below, so it is cut out first.
+  // inside the promo icon's range below, so it is cut out first.
   ['.zen-band {', '/*\n * The desktop URL bar on design language v2'],
-  // The frame's strip (content/CrashRestoreBanner.tsx; the default-browser strip that stood
-  // beside it moved to the page-edge band): the window-family band, its hairline and text, and
-  // the default-browser prompt's icon.
-  ['  .zen-frame-strips[data-under-overlay] {', '\n@media (prefers-reduced-motion: reduce) {'],
+  // The default-browser promo's mouse dialog icon (defaultbrowser/DefaultBrowserPrompt.tsx), on
+  // the block's rhythm. The frame's strips that stood here – "Make Zenium your default browser",
+  // "Restore pages?" – retired to the page-edge band (W8-M2, W8-M3).
+  ['  .zen-default-browser-prompt-icon {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
   // The tab overview's select-tabs mode (components/phone/TabOverview.tsx, OverviewCard.tsx,
@@ -188,9 +188,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // header with the title block and search field, the text column, the group headings, the
   // two-line rows' slots and reveal, the empty state.
   ['.zen-page {', '/*\n * Find in page, zoom and fullscreen'],
-  // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
-  // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
-  // field and screenshot strip above it, whose span would enclose it, so it is cut out first.
+  // The desktop's "Create shortcut" dialog (components/install/ShortcutDialog.tsx, MW-22): its
+  // scrolling body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name,
+  // origin and field above it, whose span would enclose it, so it is cut out first.
   ['.zen-install-dialog-body {', "/*\n   * The desktop's share popover"],
   // The desktop's share popover (components/share/SharePopover.tsx, MW-21): the preview, the QR
   // card, the targets' hairline, and its unlayered two-line modifier on the shared row (§9.34).
@@ -642,8 +642,8 @@ describe('token families (§9.29)', () => {
 
 /**
  * The desktop platform's surfaces (MW-16 media hub, MW-19 screen picker, MW-21 share popover,
- * MW-22 install dialog, MW-23 app title bar): their blocks in main.css, by the start marker of
- * their `V2_SURFACES` entry, and the renderer files they are drawn from.
+ * MW-22 install popover and shortcut dialog, MW-23 app title bar): their blocks in main.css, by
+ * the start marker of their `V2_SURFACES` entry, and the renderer files they are drawn from.
  */
 const DESKTOP_PLATFORM_BLOCKS = [
   '.zen-install-dialog-body {',
@@ -653,7 +653,9 @@ const DESKTOP_PLATFORM_BLOCKS = [
   '.zen-app-titlebar {'
 ]
 const DESKTOP_PLATFORM_FILES = [
-  'components/install/InstallDialog.tsx',
+  'components/install/InstallPopover.tsx',
+  'components/install/ShortcutDialog.tsx',
+  'lib/installOffer.ts',
   'components/share/SharePopover.tsx',
   'components/screenCapture/ScreenPicker.tsx',
   'components/media/MediaHubButton.tsx',
@@ -1180,7 +1182,8 @@ describe('the v2 primitives (§9.34)', () => {
       css.indexOf('.zen-sheet-title-block {')
     )
     // The promo's phone sheet takes the slot and no inline glyph; its mouse dialog draws the
-    // same icon over its block, as the desktop's `AskDialog` does (the one composition).
+    // same icon over its block (the one composition; the desktop's own dialog before the
+    // hand-off went with the Lead's ruling on the band's tenants, W8-M3).
     const prompt = readFileSync(
       fileURLToPath(
         new URL('../../components/defaultbrowser/DefaultBrowserPrompt.tsx', import.meta.url)
@@ -1189,7 +1192,7 @@ describe('the v2 primitives (§9.34)', () => {
     )
     expect(prompt).toMatch(/appIcon: <AppIconImage variant=\{appIconVariant\(appIcon\)\} \/>/)
     expect(prompt).not.toMatch(/lucide-react/)
-    expect(prompt.match(/className="zen-default-browser-prompt-icon"/g)).toHaveLength(2)
+    expect(prompt.match(/className="zen-default-browser-prompt-icon"/g)).toHaveLength(1)
     // The site-info sheet's `data-control` rule went with the primitives pass 3: no row on that
     // surface sets the mark, and the mark's geometry is `.zen-v2-row[data-control]`'s alone.
     expect(css).not.toMatch(/\.zen-siteinfo-row\[data-control\]/)
