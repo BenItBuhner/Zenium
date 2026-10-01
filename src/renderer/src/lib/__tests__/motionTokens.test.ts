@@ -96,6 +96,40 @@ describe('motion tokens (§1)', () => {
     for (const value of declared) expect(value).toBe(ZEN_EASE)
   })
 
+  it('the durations are main.css’s --zen-motion-* custom properties, beside --zen-ease', () => {
+    const durations = {
+      state: MOTION_STATE_MS,
+      pop: MOTION_POP_MS,
+      message: MOTION_MESSAGE_MS
+    }
+    // Every declaration in the stylesheet reads the token's value …
+    for (const [name, ms] of Object.entries(durations)) {
+      const declared = [...css.matchAll(new RegExp(`--zen-motion-${name}:\\s*([^;]+);`, 'g'))]
+      expect(
+        declared.map((m) => m[1].trim()),
+        name
+      ).toEqual([`${ms}ms`, `${ms}ms`])
+    }
+    // … once in each block that declares `--zen-ease`: the chrome's `:root` and the served
+    // documents' `.zen-error-document`, which restates the chrome's tokens for the pages that
+    // cannot link main.css.
+    const blocks = css.split('}').filter((block) => block.includes('--zen-ease:'))
+    expect(blocks).toHaveLength(2)
+    for (const block of blocks)
+      for (const [name, ms] of Object.entries(durations))
+        expect(block).toContain(`--zen-motion-${name}: ${ms}ms;`)
+    // The Tailwind seats – a class string cannot read a TS token – read the property, not digits.
+    for (const seat of [
+      '../../components/print/PreviewPane.tsx',
+      '../../components/security/BlockedPopupsPanel.tsx',
+      '../../components/siteControls/primitives.tsx'
+    ]) {
+      const text = read(seat)
+      expect(text, seat).toContain('duration-[var(--zen-motion-state)]')
+      expect(text, seat).not.toMatch(/duration-\[\d/)
+    }
+  })
+
   it('press and lift', () => {
     expect(PRESS_SCALE).toBe(0.98)
     expect(LIFT_SCALE).toBe(1.02)

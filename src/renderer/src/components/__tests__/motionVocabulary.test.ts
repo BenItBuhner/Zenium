@@ -40,9 +40,11 @@ import {
  *
  * Out of the walk: `__tests__`, `lib/motion/tokens.ts` (the owner) and `lib/motion/spring.ts`
  * (`SPRING_STEP_CLAMP_MS`'s owner, re-exported by the tokens). The stylesheet's own `120ms` /
- * `180ms` (main.css), Tailwind's `duration-*` classes and the dock's own lift spring
- * (`lib/gestures/dock.ts`'s `SPRING_LIFT`) are outside `components/**` and `lib/motion/**`: the
- * wave report's debt, not this pin's.
+ * `180ms` (main.css) and the dock's own lift spring (`lib/gestures/dock.ts`'s `SPRING_LIFT`) are
+ * outside `components/**` and `lib/motion/**`: the wave report's debt, not this pin's. A
+ * Tailwind `duration-[…]` class in a component is in the walk, and reads the stylesheet's
+ * `--zen-motion-state` (main.css, held equal to the token by `lib/__tests__/motionTokens.test.ts`),
+ * never digits.
  *
  * The rule, then – what a file under the walk must do to pass: every duration it moves by is a
  * token read from `lib/motion/tokens.ts` (or a `*_MS` of a value that is none of the four);
@@ -88,30 +90,14 @@ const S_IN_STRING = /(^|[\s,(])\d*\.?\d+s(?![\w-])/
 
 /**
  * The literals left, by file (relative to `src/renderer/src`), each with its count and its
- * reason, in two groups: the follow-ups (motions whose length is written where no TS token can
- * be read – the wave report's debt), and the waits that are not motions, which stay as they are
- * by name (the lead's ruling on #734). A new literal anywhere else fails here; one struck from
- * its file fails here until its count is lowered.
+ * reason: the waits that are not motions, which stay as they are by name (the lead's ruling on
+ * #734). A new literal anywhere else fails here; one struck from its file fails here until its
+ * count is lowered.
  */
 const LEFT: Record<string, { count: number; why: string }> = {
-  // --- Follow-ups. Tailwind arbitrary values (`duration-[120ms]`) in class strings, which
-  // cannot read a TS token: a `--zen-motion-state` custom property in main.css is the
-  // follow-up – not #734's, by the lead's ruling; the wave report lists the three.
-  'components/print/PreviewPane.tsx': {
-    count: 1,
-    why: 'a Tailwind `duration-[120ms]`; the `--zen-motion-state` stylesheet token is the follow-up'
-  },
-  'components/security/BlockedPopupsPanel.tsx': {
-    count: 1,
-    why: 'a Tailwind `duration-[120ms]`; the `--zen-motion-state` stylesheet token is the follow-up'
-  },
-  'components/siteControls/primitives.tsx': {
-    count: 1,
-    why: 'a Tailwind `duration-[120ms]`; the `--zen-motion-state` stylesheet token is the follow-up'
-  },
-  // --- Not motions, kept by name. The scanner reads a wait under a second as a motion's pacing
-  // and a `*_MS` equal to a token's value as the token under another name; these are neither –
-  // a debounce, a grace, a dwell – and are not converted (the lead's ruling on #734).
+  // Not motions, kept by name. The scanner reads a wait under a second as a motion's pacing and
+  // a `*_MS` equal to a token's value as the token under another name; these are neither – a
+  // debounce, a grace, a dwell – and are not converted (the lead's ruling on #734).
   'components/phone/PhoneHistoryPanel.tsx': {
     count: 1,
     why: 'an 80 ms keystroke debounce before the history is queried: a wait, not a motion'
