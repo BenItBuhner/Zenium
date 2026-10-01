@@ -1,6 +1,6 @@
 {
   "id": "settings-tab-preview",
-  "order": 80,
+  "order": 121,
   "classes": ["SettingsTabPreviewDemo", "SettingsTabPreviewRestoreDemo"],
   "shard": "phone-e",
   "mirrors": "android-settings-tab-preview-demo.yml",
