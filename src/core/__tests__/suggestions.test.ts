@@ -712,6 +712,23 @@ describe('SuggestionService: rows and limits', () => {
     state.settings.toolbarLayout = 'horizontal'
     expect(await title()).toBe('Expand Sidebar')
   })
+
+  it('on a tablet the sidebar command reads the setting alone: toolbarLayout is synced from the desktop and the tablet shell never reads it', async () => {
+    const { suggestions, state, win } = setup()
+    win.formFactor = 'tablet'
+    const title = async (): Promise<string | undefined> =>
+      (await suggestions.suggest('sidebar', null, win)).find((r) => r.targetId === 'sidebar.toggle')
+        ?.title
+    // A desktop on Horizontal tabs (or a Collapsed sidebar) synced the layout over; the tablet's
+    // sidebar is expanded all the same, so the act would collapse it.
+    state.settings.sidebarExpanded = true
+    state.settings.toolbarLayout = 'horizontal'
+    expect(await title()).toBe('Collapse Sidebar')
+    state.settings.toolbarLayout = 'collapsed'
+    expect(await title()).toBe('Collapse Sidebar')
+    state.settings.sidebarExpanded = false
+    expect(await title()).toBe('Expand Sidebar')
+  })
 })
 
 /*

@@ -516,8 +516,13 @@ export class SuggestionService {
     return searchCommands(query, {
       capabilities: state.capabilities,
       formFactor: win.formFactor,
-      // The sidebar as drawn: a layout that fixes the rail shows it collapsed whatever the setting.
-      sidebarExpanded: state.settings.sidebarExpanded && !forcesRail(state.settings.toolbarLayout)
+      // The sidebar as drawn: on the desktop a layout that fixes the rail shows it collapsed
+      // whatever the setting. `toolbarLayout` is a synced setting the tablet shell never reads,
+      // so a tablet synced from a desktop on Horizontal tabs or a Collapsed sidebar keeps the
+      // setting's word for its own, expanded sidebar.
+      sidebarExpanded:
+        state.settings.sidebarExpanded &&
+        (win.formFactor !== 'desktop' || !forcesRail(state.settings.toolbarLayout))
     }).map((cmd, i) => ({
       id: `cmd:${cmd.id}`,
       kind: 'command' as const,
