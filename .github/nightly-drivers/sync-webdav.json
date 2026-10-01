@@ -1,9 +1,9 @@
 {
   "id": "sync-webdav",
   "class": "SyncWebDavDemo",
-  "shard": "phone-g",
+  "shard": "phone-h",
   "mirrors": "android-sync-webdav-demo.yml",
   "dir": "sync-webdav-demo",
   "estimate": 10,
-  "note": "ID-32's Android half: the WebDAV transport over sync.fetch / secrets.* against a WebDAV server on the device's loopback, driven through Settings › Sync under a finger (the Sync through picker, the server form's sheets typed and saved by touch, Test connection, Turn on sync, Sync now, the App password row after a refusal, Turn off sync); 9 scenes, each a light and a dark still (18), plus the core's probe checks off camera. 472 s on the recipe's emulator (run 36386841231): the typing under the software GPU and the scrypt of Turn on sync are the time; on phone-g, the shard with the room, since phone-a would sit at 67.5 of its 68 with it."
+  "note": "ID-32's Android half: the WebDAV transport over sync.fetch / secrets.* against a WebDAV server on the device's loopback, driven through Settings › Sync under a finger (the Sync through picker, the server form's sheets typed and saved by touch, Test connection, Turn on sync, Sync now, the App password row after a refusal, Turn off sync); 9 scenes, each a light and a dark still (18), plus the core's probe checks off camera. 472 s on the recipe's emulator (run 36386841231): the typing under the software GPU and the scrypt of Turn on sync are the time; on phone-g, the shard with the room, since phone-a would sit at 67.5 of its 68 with it. Moved from phone-g (65 of its 68 minutes with it, past the headroom line) to phone-h when that shard opened (W6-S24c-b), with site-data-ui and reader-ui: the largest driver of phone-g and the one nothing ties there (no order, so it runs last on phone-h as it did on phone-g; search-choice is phone-g's last again, as its note wants). The same image, no setup step of its own."
 }

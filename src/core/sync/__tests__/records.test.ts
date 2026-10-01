@@ -8,6 +8,10 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionDeclineStands,
+  extensionRecordData,
+  extensionRecordReadable,
+  extensionStoreOf,
   frozenRecords,
   fullScope,
   hashData,
@@ -17,9 +21,11 @@ import {
   modData,
   newestByRecord,
   paymentMethodData,
+  pendingExtensionRequests,
   readAddressData,
   readBookmarkData,
   readCredentialData,
+  readExtensionData,
   readFolderAgentMark,
   readModData,
   readPaymentMethodData,
@@ -30,11 +36,13 @@ import {
   settingsKeyGroup,
   settingsKeyTime,
   stableStringify,
+  syncedExtensionData,
   vaultRecordReadable,
   winningRemote,
   wireFavicon,
   withoutDeviceLocalSettings,
   type BookmarkData,
+  type ExtensionSyncSource,
   type MetaMap,
   type OrderData,
   type RecordMeta,
@@ -2637,5 +2645,717 @@ describe('mod records (services pass 15, ID-43)', () => {
     // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
     const naive = diffLocal(on.meta, collectLocal(src, off), 2000)
     expect(naive.records.find((r) => r.id === 'mod_a')?.deleted).toBe(true)
+  })
+})
+
+describe('extension records (services pass 16, ID-44)', () => {
+  const ID_A = 'abcdefghijklmnopabcdefghijklmnop'
+  const ID_B = 'ppppoooonnnnmmmmllllkkkkjjjjiiii'
+  const ID_C = 'cccccccccccccccccccccccccccccccc'
+  const ID_D = 'dddddddddddddddddddddddddddddddd'
+  const ID_E = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  /**
+   * A source as `syncSources()` / `list()` project it. The install's time is 0 – none held –
+   * unless a test says (round 5): the three-field bytes of before, and of the fixture.
+   */
+  const ext = (
+    id: string,
+    source: ExtensionSyncSource['source'],
+    enabled: boolean,
+    toolbarPinned: boolean,
+    extra: Partial<ExtensionSyncSource> = {}
+  ): ExtensionSyncSource => ({ id, source, enabled, toolbarPinned, installedAt: 0, ...extra })
+
+  it('collectLocal emits one record per store extension under its id – store, enabled, toolbarPinned – and never one for a crx, zip or unpacked install', () => {
+    const src = {
+      ...sources(),
+      extensions: [
+        ext(ID_A, 'chrome-web-store', true, true),
+        ext(ID_B, 'edge-add-ons', false, false),
+        ext(ID_C, 'crx', true, true),
+        ext(ID_D, 'zip', true, false),
+        ext(ID_E, 'unpacked', true, true)
+      ]
+    }
+    const out = collectLocal(src, defaultScope())
+    expect(out.get(ID_A)).toEqual({
+      type: 'extension',
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: true }
+    })
+    expect(Object.keys(out.get(ID_A)!.data as object)).toEqual([
+      'store',
+      'enabled',
+      'toolbarPinned'
+    ])
+    expect(out.get(ID_B)).toEqual({
+      type: 'extension',
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: false }
+    })
+    for (const id of [ID_C, ID_D, ID_E]) expect(out.has(id)).toBe(false)
+    expect([...out.values()].filter((r) => r.type === 'extension')).toHaveLength(2)
+    // The payload carries nothing else of the extension: no id, no version, no `updatedAt`, no
+    // grant – and no `installedAt` from a host that holds none (0), the one time that travels
+    // when held (round 5; the pin below).
+    for (const key of [
+      'id',
+      'version',
+      'name',
+      'installedAt',
+      'updatedAt',
+      'allowFileAccess',
+      'allowPrivate',
+      'allowUserScripts',
+      'pinned'
+    ])
+      expect(out.get(ID_A)!.data).not.toHaveProperty(key)
+    expect(extensionStoreOf('chrome-web-store')).toBe('chrome-web-store')
+    expect(extensionStoreOf('edge-add-ons')).toBe('edge-add-ons')
+    expect(extensionStoreOf('crx')).toBeNull()
+    expect(extensionStoreOf('zip')).toBeNull()
+    expect(extensionStoreOf('unpacked')).toBeNull()
+  })
+
+  it('the pin is `toolbarPinned` (registry.ts:35, Chrome’s "Pin to toolbar") and never `pinned` (:30, the update-check skip)', () => {
+    // `ExtensionInfo` carries both; the record reads the toolbar one alone.
+    const info = {
+      ...ext(ID_A, 'chrome-web-store', true, false),
+      pinned: true
+    } as ExtensionSyncSource & {
+      pinned: boolean
+    }
+    const out = collectLocal({ ...sources(), extensions: [info] }, defaultScope())
+    expect(out.get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false
+    })
+    const pinnedToToolbar = { ...ext(ID_A, 'chrome-web-store', true, true), pinned: false }
+    expect(
+      collectLocal({ ...sources(), extensions: [pinnedToToolbar] }, defaultScope()).get(ID_A)!.data
+    ).toEqual({ store: 'chrome-web-store', enabled: true, toolbarPinned: true })
+    // Each switch is part of the hash: the pin or the enabled state flipped is an edit.
+    const base = extensionRecordData(ext(ID_A, 'chrome-web-store', true, true), 'chrome-web-store')
+    expect(hashData(base)).not.toBe(
+      hashData(extensionRecordData(ext(ID_A, 'chrome-web-store', true, false), 'chrome-web-store'))
+    )
+    expect(hashData(base)).not.toBe(
+      hashData(extensionRecordData(ext(ID_A, 'chrome-web-store', false, true), 'chrome-web-store'))
+    )
+  })
+
+  it('a synced landing that waits for the user’s approval here (pendingApproval) is not this device’s state to publish; an id that is no extension id is skipped', () => {
+    const src = {
+      ...sources(),
+      extensions: [
+        ext(ID_A, 'chrome-web-store', false, true, { pendingApproval: true }),
+        ext('not-an-extension-id', 'chrome-web-store', true, true),
+        ext(ID_B, 'edge-add-ons', true, false)
+      ]
+    }
+    const out = collectLocal(src, defaultScope())
+    expect(out.has(ID_A)).toBe(false)
+    expect(out.has('not-an-extension-id')).toBe(false)
+    expect(out.get(ID_B)?.type).toBe('extension')
+    // Approved (the flag gone, the switch on): the record is the peer's bytes again.
+    const approved = { ...src, extensions: [ext(ID_A, 'chrome-web-store', true, true)] }
+    expect(collectLocal(approved, defaultScope()).get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true
+    })
+  })
+
+  it('the Extensions toggle (default on, Chrome’s Extensions type) gates the type both ways; a source or a scope from before the type publishes none', () => {
+    expect(defaultScope().extensions).toBe(true)
+    expect(fullScope().extensions).toBe(true)
+    const src = { ...sources(), extensions: [ext(ID_A, 'chrome-web-store', true, true)] }
+    const off = { ...defaultScope(), extensions: false }
+    expect([...collectLocal(src, off).values()].some((r) => r.type === 'extension')).toBe(false)
+    expect(
+      [...collectLocal(sources(), defaultScope()).values()].some((r) => r.type === 'extension')
+    ).toBe(false)
+    const { extensions: _absent, ...olderScope } = defaultScope()
+    void _absent
+    expect(
+      [...collectLocal(src, olderScope as SyncScope).values()].some((r) => r.type === 'extension')
+    ).toBe(false)
+    const record: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 1,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: true }
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, defaultScope())).toBe(true)
+    expect(inScope(record, olderScope as SyncScope)).toBeFalsy()
+  })
+
+  it('readExtensionData – the apply side’s reader – round-trips the payload byte for byte, ignores an unknown store or garbage, and refuses a bad id', () => {
+    const sent = extensionRecordData(ext(ID_A, 'edge-add-ons', false, true), 'edge-add-ons')
+    const read = readExtensionData(ID_A, sent)!
+    expect(read).toEqual({ store: 'edge-add-ons', enabled: false, toolbarPinned: true })
+    expect(Object.keys(read)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    expect(JSON.stringify(readExtensionData(ID_A, read))).toBe(JSON.stringify(read))
+    expect(hashData(read)).toBe(hashData(sent))
+    // Extra keys a later build might add ride along in the file but land nowhere here.
+    expect(readExtensionData(ID_A, { ...sent, version: '1.2.3', id: ID_B })).toEqual(read)
+    // An unknown store id (a store a later build adds): the record is ignored – null, not a guess.
+    expect(readExtensionData(ID_A, { ...sent, store: 'firefox-add-ons' })).toBeNull()
+    expect(readExtensionData(ID_A, { ...sent, store: 'crx' })).toBeNull()
+    expect(readExtensionData(ID_A, { ...sent, store: 'unpacked' })).toBeNull()
+    expect(readExtensionData(ID_A, { ...sent, store: 7 })).toBeNull()
+    // The switches must be booleans; missing or stringly ones are garbage.
+    expect(
+      readExtensionData(ID_A, { store: 'chrome-web-store', enabled: 'yes', toolbarPinned: true })
+    ).toBeNull()
+    expect(readExtensionData(ID_A, { store: 'chrome-web-store', enabled: true })).toBeNull()
+    expect(readExtensionData(ID_A, { store: 'chrome-web-store', toolbarPinned: false })).toBeNull()
+    expect(readExtensionData(ID_A, null)).toBeNull()
+    expect(readExtensionData(ID_A, 'nonsense')).toBeNull()
+    expect(readExtensionData(ID_A, [sent])).toBeNull()
+    // The record's id is the extension's id at the store: anything else is no install target.
+    expect(readExtensionData('not-an-id', sent)).toBeNull()
+    expect(readExtensionData(ID_A.toUpperCase(), sent)).toBeNull()
+    expect(readExtensionData(ID_A.slice(0, 31), sent)).toBeNull()
+    expect(readExtensionData('qrstuvwxyzqrstuvwxyzqrstuvwxyzqr', sent)).toBeNull()
+  })
+
+  it('diffLocal: first seen at 0; a switch flipped stamps that record at now; a removal is a tombstone at now; the newest write wins whole', () => {
+    const src = {
+      ...sources(),
+      extensions: [
+        ext(ID_A, 'chrome-web-store', true, true),
+        ext(ID_B, 'edge-add-ons', true, false)
+      ]
+    }
+    const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    expect(first.meta[ID_A]).toMatchObject({ type: 'extension', modified: 0 })
+    expect(first.meta[ID_B]).toMatchObject({ type: 'extension', modified: 0 })
+
+    src.extensions = [
+      ext(ID_A, 'chrome-web-store', true, true),
+      ext(ID_B, 'edge-add-ons', false, false)
+    ]
+    const edited = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+    expect(edited.changed).toBe(true)
+    expect(edited.meta[ID_B].modified).toBe(2000)
+    expect(edited.meta[ID_A].modified).toBe(0)
+    expect(edited.records.find((r) => r.id === ID_B)).toEqual({
+      id: ID_B,
+      type: 'extension',
+      modified: 2000,
+      deleted: false,
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: false }
+    })
+
+    // Uninstalled here: the engine names it in `removedExtensions`, and the absence tombstones.
+    src.extensions = [ext(ID_B, 'edge-add-ons', false, false)]
+    const removed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000, {
+      stamp: 4000,
+      frozen: frozenRecords(
+        { ...src, removedExtensions: new Set([ID_A]) },
+        defaultScope(),
+        edited.meta
+      )
+    })
+    expect(removed.changed).toBe(true)
+    expect(removed.meta[ID_A]).toEqual({
+      type: 'extension',
+      hash: '',
+      modified: 4000,
+      deleted: true
+    })
+    expect(removed.records.find((r) => r.id === ID_A)).toEqual({
+      id: ID_A,
+      type: 'extension',
+      modified: 4000,
+      deleted: true,
+      data: null
+    })
+    // Last writer per extension, the whole record; a tie keeps this device's copy.
+    const live: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 3999,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: true }
+    }
+    expect(winningRemote(removed.meta, new Map([[ID_A, live]]))).toEqual([])
+    expect(winningRemote(removed.meta, new Map([[ID_A, { ...live, modified: 4000 }]]))).toEqual([])
+    expect(
+      winningRemote(removed.meta, new Map([[ID_A, { ...live, modified: 4001 }]]))
+    ).toHaveLength(1)
+    expect(metaFromRemote([{ ...live, modified: 4001 }])[ID_A]).toEqual({
+      type: 'extension',
+      hash: hashData(live.data),
+      modified: 4001,
+      deleted: false
+    })
+  })
+
+  it('frozenRecords: an extension entry whose extension this device does not hold is frozen – an install in flight, failed, or landed pending – unless the extension was uninstalled here', () => {
+    // Device B has applied A's record (metaFromRemote) but the install has not landed yet.
+    const remote: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 5000,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    const src = { ...sources(), extensions: [] as ExtensionSyncSource[] }
+    const meta: MetaMap = {
+      ...diffLocal({}, collectLocal(src, defaultScope()), 1000).meta,
+      ...metaFromRemote([remote])
+    }
+    const waiting = diffLocal(meta, collectLocal(src, defaultScope()), 6000, {
+      stamp: 6000,
+      frozen: frozenRecords(src, defaultScope(), meta)
+    })
+    expect(waiting.changed).toBe(false)
+    expect(waiting.meta[ID_A]).toEqual(meta[ID_A])
+    expect(waiting.records.some((r) => r.id === ID_A)).toBe(false)
+    // Landed turned off, waiting for approval: `collectLocal` leaves it out, the entry stays.
+    const pending = {
+      ...src,
+      extensions: [ext(ID_A, 'chrome-web-store', false, false, { pendingApproval: true })]
+    }
+    const held = diffLocal(meta, collectLocal(pending, defaultScope()), 7000, {
+      stamp: 7000,
+      frozen: frozenRecords(pending, defaultScope(), meta)
+    })
+    expect(held.changed).toBe(false)
+    expect(held.meta[ID_A]).toEqual(meta[ID_A])
+    // Approved: the extension stands as the record said, the same bytes – no stamp, no record.
+    const approved = { ...src, extensions: [ext(ID_A, 'chrome-web-store', true, false)] }
+    const same = diffLocal(meta, collectLocal(approved, defaultScope()), 8000, {
+      stamp: 8000,
+      frozen: frozenRecords(approved, defaultScope(), meta)
+    })
+    expect(same.changed).toBe(false)
+    expect(same.meta[ID_A]).toEqual(meta[ID_A])
+    // Uninstalled here (the pending landing removed, or the installed copy): the tombstone.
+    const gone = diffLocal(meta, collectLocal(src, defaultScope()), 9000, {
+      stamp: 9000,
+      frozen: frozenRecords({ ...src, removedExtensions: new Set([ID_A]) }, defaultScope(), meta)
+    })
+    expect(gone.changed).toBe(true)
+    expect(gone.meta[ID_A]).toEqual({ type: 'extension', hash: '', modified: 9000, deleted: true })
+    // Without the rule the absence would be a deletion – and would uninstall the peer's copy.
+    const naive = diffLocal(meta, collectLocal(src, defaultScope()), 6000)
+    expect(naive.records.find((r) => r.id === ID_A)?.deleted).toBe(true)
+    // Turning the type off holds the entries as every toggle does.
+    const on = diffLocal({}, collectLocal(approved, defaultScope()), 1000)
+    const off = { ...defaultScope(), extensions: false }
+    const switched = diffLocal(on.meta, collectLocal(approved, off), 2000, {
+      stamp: 2000,
+      frozen: frozenRecords(approved, off, on.meta)
+    })
+    expect(switched.changed).toBe(false)
+    expect(switched.meta[ID_A]).toEqual(on.meta[ID_A])
+  })
+
+  it('pendingExtensionRequests: a live remote record this device holds as applied but not as installed is handed to the host again every round; a winner, a tombstone, a held id, a closed entry or the type off is not', () => {
+    const live: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 5000,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    const other: SyncRecord = {
+      ...live,
+      id: ID_B,
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true }
+    }
+    const tomb: SyncRecord = {
+      id: ID_C,
+      type: 'extension',
+      modified: 5000,
+      deleted: true,
+      data: null
+    }
+    const mod: SyncRecord = {
+      id: 'mod_a',
+      type: 'mod',
+      modified: 5000,
+      deleted: false,
+      data: { css: 'a {}' }
+    }
+    const local = metaFromRemote([live, other, tomb, mod])
+    const remote = new Map([live, other, tomb, mod].map((r) => [r.id, r] as const))
+    const none = new Map<string, unknown>()
+    // Neither installed: both asked for again.
+    expect(
+      pendingExtensionRequests(local, none, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_A, ID_B])
+    // B installed (held locally): A alone.
+    const heldB = new Map<string, unknown>([[ID_B, {}]])
+    expect(
+      pendingExtensionRequests(local, heldB, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_A])
+    // A among this round's winners: left to them.
+    expect(pendingExtensionRequests(local, heldB, remote, [live], defaultScope())).toEqual([])
+    // An entry this device tombstoned (uninstalled here) is closed; one it never saw is no request yet.
+    const closed = { ...local, [ID_A]: { ...local[ID_A], deleted: true, hash: '' } }
+    expect(
+      pendingExtensionRequests(closed, none, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_B])
+    const { [ID_A]: _unseen, ...never } = local
+    void _unseen
+    expect(
+      pendingExtensionRequests(never, none, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_B])
+    // The type off asks for nothing.
+    expect(
+      pendingExtensionRequests(local, none, remote, [], { ...defaultScope(), extensions: false })
+    ).toEqual([])
+    // The newest remote copy is what is handed over (the map holds it; identity kept).
+    expect(pendingExtensionRequests(local, none, remote, [], defaultScope())[0]).toBe(live)
+    // A record this build cannot read (the engine rule of #712) is never a request, whatever
+    // its entry says – it never had one.
+    const foreign: SyncRecord = {
+      ...live,
+      id: ID_D,
+      data: { store: 'firefox-add-ons', enabled: true, toolbarPinned: false }
+    }
+    const withForeign = { ...local, ...metaFromRemote([foreign]) }
+    const remoteWithForeign = new Map([...remote, [ID_D, foreign]])
+    expect(
+      pendingExtensionRequests(withForeign, none, remoteWithForeign, [], defaultScope()).map(
+        (r) => r.id
+      )
+    ).toEqual([ID_A, ID_B])
+  })
+
+  it('extensionDeclineStands / pendingExtensionRequests’ `declined` (the lead’s ruling, round 4; the criterion of round 5): the four cases – no decline: no bar; a decline against a record without `installedAt`: stands, whatever its stamp; against `installedAt` ≤ the decline: stands, whatever its stamp; against `installedAt` > the decline (a fresh install by hand on a peer): beaten, offered once more – and a tombstone beats nothing', () => {
+    const unstamped: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 5000,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    const installed = (installedAt: number, modified = 5000): SyncRecord => ({
+      ...unstamped,
+      modified,
+      data: { ...(unstamped.data as object), installedAt }
+    })
+    const tomb: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 9000,
+      deleted: true,
+      data: null
+    }
+    // Case 1 – no decline: nothing stands, whatever the record.
+    expect(extensionDeclineStands(undefined, unstamped)).toBe(false)
+    expect(extensionDeclineStands(undefined, installed(9000))).toBe(false)
+    expect(extensionDeclineStands(undefined, tomb)).toBe(false)
+    // Case 2 – a record without `installedAt` (a build before the field): the decline stands,
+    // however the record is stamped – a flip's newer stamp, a stamp after the decline, none of
+    // it re-offers.
+    const stampedAt = (modified: number): SyncRecord => ({ ...unstamped, modified })
+    expect(extensionDeclineStands(7000, unstamped)).toBe(true)
+    expect(extensionDeclineStands(7000, stampedAt(7001))).toBe(true)
+    expect(extensionDeclineStands(7000, stampedAt(90_000))).toBe(true)
+    expect(extensionDeclineStands(4999, unstamped)).toBe(true)
+    // Case 3 – `installedAt` at or before the decline (the install the user declined; a flip or
+    // a landing elsewhere re-stamps the record but moves no install): stands, whatever `modified`.
+    expect(extensionDeclineStands(7000, installed(4000))).toBe(true)
+    expect(extensionDeclineStands(7000, installed(7000))).toBe(true)
+    expect(extensionDeclineStands(7000, installed(4000, 7001))).toBe(true)
+    expect(extensionDeclineStands(7000, installed(7000, 90_000))).toBe(true)
+    // Case 4 – `installedAt` after the decline (a fresh install by hand on a peer): beaten,
+    // even under a stamp that is not (the stamp counts for nothing either way).
+    expect(extensionDeclineStands(7000, installed(7001))).toBe(false)
+    expect(extensionDeclineStands(7000, installed(7001, 6000))).toBe(false)
+    expect(extensionDeclineStands(7000, installed(90_000, 90_000))).toBe(false)
+    // A tombstone is no offer and beats nothing.
+    expect(extensionDeclineStands(7000, tomb)).toBe(false)
+    expect(extensionDeclineStands(9000, tomb)).toBe(false)
+    // A record this build cannot read carries no install: stands (it is no request either).
+    expect(
+      extensionDeclineStands(7000, {
+        ...unstamped,
+        data: { store: 'firefox-add-ons', enabled: true, toolbarPinned: false, installedAt: 9000 }
+      })
+    ).toBe(true)
+    // In the requests: the declined id is closed on this device while the decline stands, and
+    // asked for again once the peer's copy carries an install after it – never on a stamp
+    // alone. Another id is untouched.
+    const other: SyncRecord = {
+      ...unstamped,
+      id: ID_B,
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true }
+    }
+    const requests = (a: SyncRecord, declined?: Record<string, number>): string[] =>
+      pendingExtensionRequests(
+        metaFromRemote([a, other]),
+        new Map<string, unknown>(),
+        new Map([a, other].map((r) => [r.id, r] as const)),
+        [],
+        defaultScope(),
+        declined
+      ).map((r) => r.id)
+    expect(requests(unstamped, { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(stampedAt(7001), { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(installed(4000, 7001), { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(installed(7000, 8000), { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(installed(7001, 7001), { [ID_A]: 7000 })).toEqual([ID_A, ID_B])
+    expect(requests(installed(7001, 5000), { [ID_A]: 7000 })).toEqual([ID_A, ID_B])
+    // Without the argument, nothing is declined (the callers from before).
+    expect(requests(unstamped)).toEqual([ID_A, ID_B])
+    expect(requests(installed(4000))).toEqual([ID_A, ID_B])
+  })
+
+  it('`installedAt` travels (round 5) – after the clocks, when the source holds one (a positive finite time; 0 or none is left out, the bytes of before and of the fixture); the reader takes a positive finite time alone, drops a field it does not know, and round-trips the rest byte for byte; `syncedExtensionData` reads none as 0; the time is part of the hash', () => {
+    const before = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true),
+      'chrome-web-store'
+    )
+    expect(Object.keys(before)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    // Held: after the clocks, in the interface's order.
+    const full = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true, {
+        enabledAt: 1500,
+        toolbarPinnedAt: 1200,
+        installedAt: 1000
+      }),
+      'chrome-web-store'
+    )
+    expect(full).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200,
+      installedAt: 1000
+    })
+    expect(Object.keys(full)).toEqual([
+      'store',
+      'enabled',
+      'toolbarPinned',
+      'enabledAt',
+      'toolbarPinnedAt',
+      'installedAt'
+    ])
+    // Alone – the phone's shape before any flip: no clock, the install's time.
+    expect(
+      extensionRecordData(
+        ext(ID_A, 'chrome-web-store', true, true, { installedAt: 1000 }),
+        'chrome-web-store'
+      )
+    ).toEqual({ store: 'chrome-web-store', enabled: true, toolbarPinned: true, installedAt: 1000 })
+    // None held (0 – a landing from a record without one; the fixture's sources): left out.
+    for (const none of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(
+        extensionRecordData(
+          ext(ID_A, 'chrome-web-store', true, true, { installedAt: none }),
+          'chrome-web-store'
+        )
+      ).toEqual(before)
+    // Part of the hash: a later install under the same switches is an edit (the time adopted
+    // from a peer's record makes this device's copy the peer's bytes).
+    expect(hashData(full)).not.toBe(hashData({ ...full, installedAt: 1001 }))
+    expect(hashData({ ...before, installedAt: 1000 })).not.toBe(hashData(before))
+    // The reader: round-trip, none for anything that is no time, an unknown field dropped.
+    expect(readExtensionData(ID_A, full)).toEqual(full)
+    expect(hashData(readExtensionData(ID_A, full))).toBe(hashData(full))
+    expect(readExtensionData(ID_A, { ...before, installedAt: 1000 })).toEqual({
+      ...before,
+      installedAt: 1000
+    })
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, '1000', null, true, {}])
+      expect(readExtensionData(ID_A, { ...before, installedAt: bad })).toEqual(before)
+    expect(readExtensionData(ID_A, { ...full, uninstalledAt: 2000, origin: 'phone' })).toEqual(full)
+    // What the apply hands the host: none read as 0, older than any install a device made.
+    expect(syncedExtensionData(readExtensionData(ID_A, before)!).installedAt).toBe(0)
+    expect(syncedExtensionData(readExtensionData(ID_A, full)!).installedAt).toBe(1000)
+    // `collectLocal` writes what the source projects: a hand install's own time, a landing's the
+    // time its record carried (`syncSources()`), none from a source at 0.
+    const out = collectLocal(
+      {
+        ...sources(),
+        extensions: [
+          ext(ID_A, 'chrome-web-store', true, false, { enabledAt: 1500, installedAt: 1000 }),
+          ext(ID_B, 'edge-add-ons', true, false, { enabledAt: 1500 })
+        ]
+      },
+      defaultScope()
+    )
+    expect(out.get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false,
+      enabledAt: 1500,
+      installedAt: 1000
+    })
+    expect(out.get(ID_B)!.data).toEqual({
+      store: 'edge-add-ons',
+      enabled: true,
+      toolbarPinned: false,
+      enabledAt: 1500
+    })
+  })
+
+  it('the switches’ clocks (round 2): `enabledAt` and `toolbarPinnedAt` travel when the source holds them, after the three fields, and never otherwise – a source without them writes the bytes of before, hash and all; the reader takes finite positive clocks alone; each clock is part of the hash', () => {
+    const before = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true),
+      'chrome-web-store'
+    )
+    expect(Object.keys(before)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    const stamped = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true, { enabledAt: 1500, toolbarPinnedAt: 1200 }),
+      'chrome-web-store'
+    )
+    expect(stamped).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200
+    })
+    expect(Object.keys(stamped)).toEqual([
+      'store',
+      'enabled',
+      'toolbarPinned',
+      'enabledAt',
+      'toolbarPinnedAt'
+    ])
+    // One clock alone travels alone; a clock of 0 (none kept) does not travel.
+    expect(
+      extensionRecordData(
+        ext(ID_A, 'chrome-web-store', true, true, { enabledAt: 1500 }),
+        'chrome-web-store'
+      )
+    ).toEqual({ store: 'chrome-web-store', enabled: true, toolbarPinned: true, enabledAt: 1500 })
+    expect(
+      extensionRecordData(
+        ext(ID_A, 'chrome-web-store', true, true, { enabledAt: 0, toolbarPinnedAt: 0 }),
+        'chrome-web-store'
+      )
+    ).toEqual(before)
+    // A clock is part of the hash: a later clock under the same value is an edit (the clock
+    // adopted from a peer's record makes this device's copy the peer's bytes).
+    expect(hashData(stamped)).not.toBe(hashData(before))
+    expect(hashData(stamped)).not.toBe(hashData({ ...stamped, enabledAt: 1501 }))
+    // The reader round-trips the clocks and drops what is no clock.
+    expect(readExtensionData(ID_A, stamped)).toEqual(stamped)
+    expect(hashData(readExtensionData(ID_A, stamped))).toBe(hashData(stamped))
+    expect(readExtensionData(ID_A, before)).toEqual(before)
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, '1500', null, true]) {
+      expect(readExtensionData(ID_A, { ...before, enabledAt: bad, toolbarPinnedAt: bad })).toEqual(
+        before
+      )
+    }
+    expect(readExtensionData(ID_A, { ...before, toolbarPinnedAt: 7 })).toEqual({
+      ...before,
+      toolbarPinnedAt: 7
+    })
+    // `collectLocal` writes the clocks the source holds and no other field beside them.
+    const out = collectLocal(
+      {
+        ...sources(),
+        extensions: [
+          ext(ID_A, 'chrome-web-store', false, true, { enabledAt: 1500, toolbarPinnedAt: 1200 })
+        ]
+      },
+      defaultScope()
+    )
+    expect(out.get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200
+    })
+  })
+
+  it('syncedExtensionData: what the apply hands the host – each switch with its clock and the install’s time, an absent one read as 0 (older than any clocked switch: a switch its host never flipped, or a record from before the clocks, never beats a clocked one – never the record’s `modified`; an install of none, round 5, neither moves the time here nor re-offers a decline)', () => {
+    const data = readExtensionData(ID_A, {
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true
+    })!
+    expect(syncedExtensionData(data)).toEqual({
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 0,
+      toolbarPinnedAt: 0,
+      installedAt: 0
+    })
+    // One clock carried, the other not: the carried one travels, the absent one is 0 – the
+    // phone's shape after a flip of one switch (from a build before the install's time).
+    expect(syncedExtensionData({ ...data, enabledAt: 1500 })).toEqual({
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 0,
+      installedAt: 0
+    })
+    expect(
+      syncedExtensionData({ ...data, enabledAt: 1500, toolbarPinnedAt: 1200, installedAt: 1000 })
+    ).toEqual({
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200,
+      installedAt: 1000
+    })
+    // The function has no eye on the record's stamp: the same bytes read the same whatever
+    // `modified` the record travelled under.
+    expect(syncedExtensionData.length).toBe(1)
+  })
+
+  it('extensionRecordReadable (the engine rule of #712): a live record the reader takes or a tombstone under an extension id is a winner; an unknown store, a switch that is no boolean, garbage or a tombstone under no extension id is not – and every other type is', () => {
+    const record: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 1,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    expect(extensionRecordReadable(record)).toBe(true)
+    expect(
+      extensionRecordReadable({ ...record, data: { ...(record.data as object), enabledAt: 1500 } })
+    ).toBe(true)
+    expect(extensionRecordReadable({ ...record, deleted: true, data: null })).toBe(true)
+    expect(
+      extensionRecordReadable({
+        ...record,
+        data: { store: 'firefox-add-ons', enabled: true, toolbarPinned: false }
+      })
+    ).toBe(false)
+    expect(
+      extensionRecordReadable({
+        ...record,
+        data: { store: 'chrome-web-store', enabled: 'yes', toolbarPinned: false }
+      })
+    ).toBe(false)
+    expect(extensionRecordReadable({ ...record, data: 'nonsense' })).toBe(false)
+    expect(extensionRecordReadable({ ...record, data: null })).toBe(false)
+    expect(extensionRecordReadable({ ...record, id: 'not-an-extension-id' })).toBe(false)
+    expect(
+      extensionRecordReadable({ ...record, id: 'not-an-extension-id', deleted: true, data: null })
+    ).toBe(false)
+    // Every other type passes untouched – the rule is the extension record's.
+    expect(
+      extensionRecordReadable({ id: 'mod_a', type: 'mod', modified: 1, deleted: false, data: 7 })
+    ).toBe(true)
+    expect(
+      extensionRecordReadable({
+        id: 'not-an-extension-id',
+        type: 'bookmark',
+        modified: 1,
+        deleted: true,
+        data: null
+      })
+    ).toBe(true)
   })
 })
