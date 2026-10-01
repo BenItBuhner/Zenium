@@ -27,16 +27,25 @@ import { PROTECTED, sentence, tableEntries, tableValues } from '../strings'
  *    favorite, center, gray, "license" as a noun (the page is "Licences"; the verb's "licensed"
  *    passes) and the words listed with them.
  *
- * The table's own values are checked too: no ellipsis, no typographic quote, no US spelling,
- * an explicit `sentence` that differs from the derived one. The scaffold sweeps no root yet; a
- * literal a later family will take is named in `PENDING` with the PR that takes it, one entry
- * per literal, so a new stray cannot hide behind an old exemption.
+ * The table's own values are checked too: no ellipsis, no typographic quote, no US spelling
+ * (an `os` face excepted: the platform's own words, Q4), an explicit `sentence` that differs
+ * from the derived one. A literal a later family will take is named in `PENDING` with the PR
+ * that takes it, one entry per literal, so a new stray cannot hide behind an old exemption; a
+ * literal that is to stay one – a parent that shares an act's word, a count's truncation – is
+ * named in `KEPT` with its reason. Both are asserted still there.
  */
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 
-/** The roots walked (files or directories; tests left out): a family's call sites once it has landed. */
-const SWEPT: readonly string[] = []
+/**
+ * The roots walked (files or directories; tests left out): a family's call sites once it has
+ * landed – the action tables first (PR-2: the key table, the palette, the mac menu bar).
+ */
+const SWEPT: readonly string[] = [
+  'src/shared/shortcuts.ts',
+  'src/shared/commands.ts',
+  'src/core/menuBar.ts'
+]
 
 /** The table's own modules: the one place its values are typed, never swept. */
 const TABLE_DIR = 'src/shared/strings'
@@ -45,7 +54,33 @@ const TABLE_DIR = 'src/shared/strings'
  * Literals in a swept root that equal a table value or carry an ellipsis and are left for the
  * PR named: the file (repo-relative), the literal's text, the PR.
  */
-const PENDING: ReadonlyArray<readonly [file: string, text: string, until: string]> = []
+const PENDING: ReadonlyArray<readonly [file: string, text: string, until: string]> = [
+  // The Bookmarks menu's import and export rows: the bookmark menus' family (PR-8).
+  ['src/core/menuBar.ts', 'Import Bookmarks and Settings…', 'PR-8'],
+  ['src/core/menuBar.ts', 'Export Bookmarks…', 'PR-8'],
+  // The app menu's rows (PR-2b): the Help menu's report form; `space.new`'s second label, the
+  // app menu's "New Space…" over the key table's "Create New Space".
+  ['src/core/menuBar.ts', 'Report an Unsafe Site…', 'PR-2b'],
+  ['src/core/menuBar.ts', 'New Space…', 'PR-2b'],
+  // The Tab menu's folder row: the noun axis (P-11, PR-4).
+  ['src/core/menuBar.ts', 'New Folder…', 'PR-4']
+]
+
+/**
+ * Literals in a swept root that equal a table value or carry an ellipsis and stay as they are:
+ * the file, the text, why. Not a label of the act the value names.
+ */
+const KEPT: ReadonlyArray<readonly [file: string, text: string, reason: string]> = [
+  ['src/core/menuBar.ts', 'Find', "Chrome's Find ▸ parent of the Edit menu, not the act (§B)"],
+  [
+    'src/core/menuBar.ts',
+    '${children.length - BOOKMARK_MENU_MAX} more…',
+    'the count of bookmarks the menu leaves out, not an ask'
+  ],
+  // The Settings page's group headings over the key table, named for their feature.
+  ['src/shared/shortcuts.ts', 'Compact Mode', "a shortcut group's heading, not the act's row"],
+  ['src/shared/shortcuts.ts', 'Developer Tools', "a shortcut group's heading, not the act's row"]
+]
 
 /** Words a US-spelling rule would flag that are another sense or a name: the file, the text. */
 const US_ALLOWED: ReadonlyArray<readonly [file: string, text: string]> = []
@@ -125,6 +160,9 @@ export function literalsOf(file: string, source: string): Literal[] {
 
 const TYPOGRAPHIC = /[\u2018\u2019\u201C\u201D]/
 
+/** A dotted identifier on a label line – an act id (`'window.minimize'`), code rather than words. */
+const DOTTED_ID = /^[a-z]\w*(?:\.\w+)+$/
+
 /**
  * The US spellings a label must not carry: the `-ize` family (three letters before it, so
  * "size" and "prize" are not words of it; the `-size` compounds named apart), the `-yze` verbs,
@@ -149,17 +187,21 @@ export interface SweepRules {
   /** The table's values by their act, `tableValues()`. */
   values: ReadonlyMap<string, string>
   pending?: ReadonlyArray<readonly [file: string, text: string, until: string]>
+  kept?: ReadonlyArray<readonly [file: string, text: string, reason: string]>
   usAllowed?: ReadonlyArray<readonly [file: string, text: string]>
 }
 
 export function strays(literals: Literal[], rules: SweepRules): string[] {
   const out: string[] = []
   const pending = rules.pending ?? []
+  const kept = rules.kept ?? []
   const usAllowed = rules.usAllowed ?? []
   for (const { file, line, text, label, prose } of literals) {
     const at = rel(file)
     const where = `${at}:${line}: "${text}"`
-    const left = pending.some(([f, t]) => f === at && t === text)
+    const left =
+      pending.some(([f, t]) => f === at && t === text) ||
+      kept.some(([f, t]) => f === at && t === text)
     const id = rules.values.get(text)
     if (id !== undefined && !left && (label || /\s/.test(text.trim())))
       out.push(
@@ -169,7 +211,7 @@ export function strays(literals: Literal[], rules: SweepRules): string[] {
       out.push(`${where} – carries "…": the ask flag supplies the ellipsis, never a value (§C)`)
     if ((label || prose) && TYPOGRAPHIC.test(text))
       out.push(`${where} – a typographic quote: straight apostrophes and quotes (Q7)`)
-    if (label || prose) {
+    if ((label || prose) && !DOTTED_ID.test(text)) {
       const us = usSpelling(text)
       if (us !== undefined && !usAllowed.some(([f, t]) => f === at && t === text))
         out.push(`${where} – US spelling "${us}": British spelling (§9 item 10)`)
@@ -183,23 +225,40 @@ describe('the string table sweep (§9 item 10)', () => {
   const literals = files.flatMap((f) => literalsOf(f, readFileSync(f, 'utf8')))
   const values = tableValues()
 
-  it('sweeps the roots of the families that have landed – none yet: the scaffold', () => {
-    expect(SWEPT).toEqual([])
-    expect(files).toEqual([])
+  it('sweeps the roots of the families that have landed: the action tables', () => {
+    expect(SWEPT).toEqual([
+      'src/shared/shortcuts.ts',
+      'src/shared/commands.ts',
+      'src/core/menuBar.ts'
+    ])
+    expect(files.map(rel)).toEqual(SWEPT)
+    expect(literals.length).toBeGreaterThan(100)
     expect(files.some((f) => rel(f).startsWith(`${TABLE_DIR}/`))).toBe(false)
     expect(files.some((f) => f.includes('__tests__') || /\.test\.tsx?$/.test(f))).toBe(false)
   })
 
   it('carries no stray: no table value typed as a literal, no "…", no typographic quote, no US spelling', () => {
-    expect(strays(literals, { values, pending: PENDING, usAllowed: US_ALLOWED })).toEqual([])
+    expect(
+      strays(literals, { values, pending: PENDING, kept: KEPT, usAllowed: US_ALLOWED })
+    ).toEqual([])
   })
 
-  it('names the literals it leaves to a later PR, each still in its file', () => {
-    for (const [file, text, until] of PENDING) {
+  it('names the literals it leaves to a later PR or keeps, each still in its file and one a rule would flag', () => {
+    const exempt: ReadonlyArray<readonly [file: string, text: string, why: string]> = [
+      ...PENDING.map(([file, text, until]) => [file, text, `left for ${until}`] as const),
+      ...KEPT.map(([file, text, reason]) => [file, text, `kept: ${reason}`] as const)
+    ]
+    for (const [file, text, why] of exempt) {
+      const found = literals.filter((l) => rel(l.file) === file && l.text === text)
       expect(
-        literals.some((l) => rel(l.file) === file && l.text === text),
-        `${file}: "${text}" (left for ${until}) is no longer there – drop the exemption`
-      ).toBe(true)
+        found.length,
+        `${file}: "${text}" (${why}) is no longer there – drop the exemption`
+      ).toBeGreaterThan(0)
+      // An exempt literal is one rule 1 or 2 would flag; one neither reads needs no entry.
+      expect(
+        strays(found, { values }),
+        `${file}: "${text}" is flagged by no rule – drop the exemption`
+      ).not.toEqual([])
     }
     for (const [file, text] of US_ALLOWED) {
       expect(
@@ -231,7 +290,9 @@ describe('the string table sweep (§9 item 10)', () => {
         const where = `${id}.${field} = "${text}"`
         expect(text.includes('…'), `${where} carries "…": set ask instead`).toBe(false)
         expect(TYPOGRAPHIC.test(text), `${where} carries a typographic quote (Q7)`).toBe(false)
-        expect(usSpelling(text), `${where} is spelled the US way`).toBeUndefined()
+        // A platform's face is its own spelling (Q4: the mac's Window ▸ "Minimize").
+        if (!field.startsWith('os.'))
+          expect(usSpelling(text), `${where} is spelled the US way`).toBeUndefined()
         expect(text, `${where} has a space at an end or two in a row`).toBe(text.trim())
         expect(/ {2}/.test(text), `${where} has two spaces in a row`).toBe(false)
         expect(text.length, `${where} is empty`).toBeGreaterThan(0)
@@ -258,6 +319,7 @@ describe('the string table sweep (§9 item 10)', () => {
       ['Copy Link', 'tab.copyUrl'],
       ['Copy link', 'tab.copyUrl'],
       ['Settings', 'settings.open'],
+      ['Find', 'find.open'],
       ['Find in Page', 'find.open'],
       ['Find in Page…', 'find.open'],
       ['Find in page…', 'find.open'],
@@ -321,17 +383,21 @@ describe('the string table sweep (§9 item 10)', () => {
     expect(flag("label: 'Horizon',")).toEqual([])
     expect(flag("label: 'Wizard',")).toEqual([])
     expect(flag("label: 'Centre',")).toEqual([])
-    // A US spelling outside a label is code, not the user's words.
+    // A US spelling outside a label is code, not the user's words; so is an act id on one.
     expect(flag("className: 'text-center'")).toEqual([])
     expect(flag("const color = 'gray'")).toEqual([])
     expect(flag("style={{ color: 'gray' }}", tsx)).toEqual([])
+    expect(flag("{ label: S.menu('window.minimize', { os }), action: 'window.minimize' }")).toEqual(
+      []
+    )
+    expect(flag("label: 'window.minimize',")).toEqual([])
     // Code and comments, not prose.
     expect(flag("// label: 'Copy Link' used to be here")).toEqual([])
     expect(flag("console.log('Copy Link')")).toEqual([])
     expect(flag("action: 'tab.copyUrl'")).toEqual([])
     expect(flag("keywords: ['copy link', 'url']")).toEqual([])
     expect(flag('  return label')).toEqual([])
-    // A pending literal is let through for rules 1 and 2 alone.
+    // A pending or kept literal is let through for rules 1 and 2 alone, in its file alone.
     const pending = [['src/core/menuBar.ts', 'Find in Page…', 'PR-2b'] as const]
     expect(
       strays(literalsOf(file, "label: 'Find in Page…',"), { values: fixture, pending })
@@ -341,6 +407,12 @@ describe('the string table sweep (§9 item 10)', () => {
         values: fixture,
         pending
       })
+    ).toHaveLength(1)
+    const kept = [['src/core/menuBar.ts', 'Find', "Chrome's Find ▸ parent"] as const]
+    expect(strays(literalsOf(file, "label: 'Find',"), { values: fixture, kept })).toEqual([])
+    expect(strays(literalsOf(tsx, "label: 'Find',"), { values: fixture, kept })).toHaveLength(1)
+    expect(
+      strays(literalsOf(file, "label: 'Find', title: 'What’s New'"), { values: fixture, kept })
     ).toHaveLength(1)
     // An allowed US spelling is let through, in its file alone.
     const usAllowed = [['src/core/menuBar.ts', 'Help Center'] as const]
