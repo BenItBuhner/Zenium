@@ -817,8 +817,40 @@ export class ZenWindow {
    */
   async snapshot(tabId: string, fresh = false): Promise<string | null> {
     const view = this.browser.tabs.view(tabId)
-    if (!view || (!fresh && !view.isVisible())) return null
+    if (!view) return this.snapshotChromePage(tabId)
+    if (!fresh && !view.isVisible()) return null
     return view.snapshot()
+  }
+
+  /**
+   * The picture of a page the chrome draws itself (Settings; `PageService.isChromePage`): no
+   * view to copy, so it is the host's copy of the content area while the page is what the area
+   * shows – this window's active tab, nothing of the chrome over it (`contentHidden`) – and
+   * only on a host that copies its chrome (`WindowHost.snapshotChrome`; the desktop has none,
+   * and answers null as it did). The card the overview swaps in for the page then shows the
+   * section the tab is on rather than a drawing of the landing, and the host keeps that card
+   * picture on disk under the tab's address as it keeps a page's: it is raised to the chrome as
+   * `thumbnail.captured` while the tab is still at that address, never for the page it has
+   * left since (BH-14).
+   */
+  private async snapshotChromePage(tabId: string): Promise<string | null> {
+    if (!this.alive) return null
+    const snapshotChrome = this.host.snapshotChrome
+    if (!snapshotChrome) return null
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab || !this.browser.pages.isChromePage(tab)) return null
+    if (this.selectedTabIn(this.activeSpace()) !== tabId || this.contentHidden) return null
+    const url = tab.url
+    const picture = await snapshotChrome.call(this.host, {
+      tabId,
+      url,
+      area: this.contentRect(),
+      persist: !this.browser.tabs.isPrivate(tab)
+    })
+    if (!picture) return null
+    if (picture.card && this.browser.tabs.tab(tabId)?.url === url)
+      this.send('thumbnail.captured', { tabId, ...picture.card })
+    return picture.cover
   }
 
   /**

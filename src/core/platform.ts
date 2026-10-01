@@ -1358,6 +1358,38 @@ export interface WindowHost {
    * (`HostCapabilities.popupSurface` false) leave this out.
    */
   setPopupSurface?(bounds: Rect | null): void
+  /**
+   * The picture of a page the chrome draws itself (Settings: `render: 'chrome'`, no page view
+   * to copy) as it is on screen: the host's copy of its window where the content area is – the
+   * cover the overview's card swaps in for the page, and the card picture the host scales from
+   * the same copy and keeps on disk under the tab's address as it keeps a page's
+   * (`ThumbnailHost`; the window raises `thumbnail.captured` for it while the tab is still at
+   * that address). Null where the host cannot copy its window. Hosts that take no pictures of
+   * their chrome leave this out.
+   */
+  snapshotChrome?(request: ChromeSnapshotRequest): Promise<ChromeSnapshot | null>
+}
+
+/** What `WindowHost.snapshotChrome` is asked for. */
+export interface ChromeSnapshotRequest {
+  tabId: string
+  /** The tab's address: the document the card picture is kept under (the stamp `thumbnail.load` compares). */
+  url: string
+  /** The content area in chrome CSS px, window coordinates; null for the whole window. */
+  area: Rect | null
+  /** Whether the card picture may be written to disk: never a private tab's (the chrome alone sees it). */
+  persist: boolean
+}
+
+/** What `WindowHost.snapshotChrome` answers: the copy, and the card picture made of it. */
+export interface ChromeSnapshot {
+  /** The copy as a data URL, at the page's own size (the cover a card swaps in for the page). */
+  cover: string
+  /**
+   * The card picture scaled from the copy, or null when the host's picture of the tab is a
+   * moment old and still stands (`Thumbnails.kt`'s freshness rule: no second one for one frame).
+   */
+  card: ThumbnailPicture | null
 }
 
 export interface WindowCreateInit {
