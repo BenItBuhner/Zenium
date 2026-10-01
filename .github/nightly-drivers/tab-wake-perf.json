@@ -1,0 +1,16 @@
+{
+  "id": "tab-wake-perf",
+  "class": "TabWakePerfDemo",
+  "shard": "api33",
+  "mirrors": "android-tab-wake-perf.yml",
+  "dir": "tab-wake-perf",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_ARGS": "-e holdBackgroundWork true -e assert true",
+    "DEMO_HANDSHAKE_S": "420",
+    "DEMO_RECORD": "0"
+  },
+  "timeout": 900,
+  "estimate": 7,
+  "note": "W6-S26-b: waking a sleeping tab from the overview, profiled and asserted (the switch and the swipe back out against the warm control of the same run; PASS / FAIL lines in tab-wake-findings.txt). No recording in the nightly (the encoder is a load of its own on the software GPU). On the api33 shard for its headroom: every phone shard stands at the 60-minute line, and the bar is read relative to the same run's warm control, so the WebView the shard runs does not move the verdict."
+}

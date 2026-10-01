@@ -1,0 +1,109 @@
+name: Android tab wake perf
+
+# Waking a SLEEPING tab from the phone's overview, profiled and asserted (W6-S26-b): TabWakePerfDemo
+# puts a heavy loopback page to sleep through the core's own path (`tab.unload`), taps its card in
+# the overview and records every frame of the app's window (`Window.OnFrameMetricsAvailableListener`:
+# the stages of each frame and its vsync) through the close morph and on to the page's load, then
+# the same tap followed by the way out while the page still loads – the pull on the pill back to
+# the overview and the system's predictive back – and the same three gestures on the tab WARM as
+# the control. Beside the window's frames: the harness's `dumpsys gfxinfo framestats` and the
+# WebViews' Chromium trace per scene (`traceFrames`), and a Perfetto trace of the device across
+# the sequence (sched, gfx, view, input, webview, dalvik, the frame timeline) cut per scene by
+# android-perf-trace.py in the post-script. The bar – p95 at or under one vsync and no frame over
+# two during the switch and the swipe-out, read on the UI thread's part of the frame and relative
+# to the warm control where the software GPU cannot hold 60 fps for anything – is a `PASS` / `FAIL`
+# line per claim in tab-wake-findings.txt; `assert` makes a failed claim fail the run. The
+# measured scenes run before the recorder rolls; the recorded part is one sleeping wake. The
+# app's startup sweeps are held for the run (`holdBackgroundWork`). API 34, the phone lane. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail the run on a failed PASS / FAIL claim (off reports them)
+        type: boolean
+        default: true
+      record:
+        description: Record the screen too (the encoder is a load of its own on the emulator; off for the numbers)
+        type: boolean
+        default: true
+  # TEMPORARY (W6-S26-b): the branch's own runs while the profile and the fix are measured; removed before the PR is ready.
+  push:
+    branches:
+      - cursor/android-tab-wake-perf-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tab-wake-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    name: Tab wake perf (light)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabWakePerfDemo
+        DEMO_DIR=tab-wake-perf
+        DEMO_OUT=artifacts/android-tab-wake-perf
+        DEMO_THEME=light
+        DEMO_VIDEO=android-tab-wake-perf-light.mp4
+        DEMO_RECORD=${{ (github.event_name == 'workflow_dispatch' && inputs.record == false) && '0' || '1' }}
+        DEMO_ARGS=-e holdBackgroundWork true -e assert ${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
+        DEMO_HANDSHAKE_S=420
+        DEMO_PERFETTO_CONFIG=.github/scripts/android-tab-wake-perf.pbtx
+      post-script: |
+        python3 -m pip install --quiet --disable-pip-version-check perfetto
+        out=artifacts/android-tab-wake-perf
+        trace=$(ls "$out"/zen-*.pftrace 2>/dev/null | head -n 1 || true)
+        if [ -n "$trace" ] && [ -f "$out/scenes.txt" ]; then
+          python3 .github/scripts/android-perf-trace.py "$trace" "$out/scenes.txt" --json "$out/perfetto.json" > "$out/perfetto-report.md" 2>&1 || echo "::warning::the Perfetto reader failed"
+          { echo '## The system (Perfetto)'; echo; cat "$out/perfetto-report.md"; } >> "$GITHUB_STEP_SUMMARY" || true
+        else
+          echo "::notice::no Perfetto trace or scenes.txt to read"
+        fi
+        if [ -f "$out/tab-wake-findings.txt" ]; then
+          { echo '## The driver (tab-wake-findings.txt)'; echo; echo '```'; cat "$out/tab-wake-findings.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+      artifact-name: android-tab-wake-perf-light
+      artifact-path: artifacts/android-tab-wake-perf/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed.
+  profile-again:
+    name: Tab wake perf (light), second boot
+    needs: profile
+    if: ${{ failure() && needs.profile.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabWakePerfDemo
+        DEMO_DIR=tab-wake-perf
+        DEMO_OUT=artifacts/android-tab-wake-perf
+        DEMO_THEME=light
+        DEMO_VIDEO=android-tab-wake-perf-light.mp4
+        DEMO_RECORD=${{ (github.event_name == 'workflow_dispatch' && inputs.record == false) && '0' || '1' }}
+        DEMO_ARGS=-e holdBackgroundWork true -e assert ${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
+        DEMO_HANDSHAKE_S=420
+        DEMO_PERFETTO_CONFIG=.github/scripts/android-tab-wake-perf.pbtx
+      post-script: |
+        python3 -m pip install --quiet --disable-pip-version-check perfetto
+        out=artifacts/android-tab-wake-perf
+        trace=$(ls "$out"/zen-*.pftrace 2>/dev/null | head -n 1 || true)
+        if [ -n "$trace" ] && [ -f "$out/scenes.txt" ]; then
+          python3 .github/scripts/android-perf-trace.py "$trace" "$out/scenes.txt" --json "$out/perfetto.json" > "$out/perfetto-report.md" 2>&1 || echo "::warning::the Perfetto reader failed"
+          { echo '## The system (Perfetto)'; echo; cat "$out/perfetto-report.md"; } >> "$GITHUB_STEP_SUMMARY" || true
+        else
+          echo "::notice::no Perfetto trace or scenes.txt to read"
+        fi
+        if [ -f "$out/tab-wake-findings.txt" ]; then
+          { echo '## The driver (tab-wake-findings.txt)'; echo; echo '```'; cat "$out/tab-wake-findings.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+      artifact-name: android-tab-wake-perf-light-second-boot
+      artifact-path: artifacts/android-tab-wake-perf/
+      timeout-minutes: 60
