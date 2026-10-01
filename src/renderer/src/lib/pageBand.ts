@@ -18,17 +18,17 @@
  * same number through `content/PageBandLayer.tsx`, which reads the store without React, so a
  * frame of the travel re-renders nothing.
  *
- * Android's band host (`lib/band/androidHost.ts`) moves the WebView by the pull channel and
- * leaves the seat at 0 for it: a document is translated at rest, never laid out under the band,
- * and a report with nothing seated carries no band. For a page the chrome draws itself – a
- * `render: 'chrome'` page, the phone's new tab page – it writes the OFFSET per frame
- * (`moveChromePage`) and the SEAT as the desktop host does (`seatBand`: the lesser of the seat
- * and the destination as a travel departs, the band's height at its rest), so `PageBandLayer`
- * rides on both as on the desktop – translated through a travel, seated at rest with its box
- * inset by the band's height, so a long chrome page scrolls to its last row. The core is not
- * told the offset, since there is no view under such a page for it to move (`core/pages.ts`);
- * the seat it hears in the layout report lays out no WebView there either (a chrome page has no
- * view, is never a split's member, and the phone's blank tab is not placed).
+ * Android's band host (`lib/band/androidHost.ts`) never writes these two: it moves the WebView
+ * by the pull channel – a document is translated at rest, never laid out under the band – and
+ * a report with nothing seated carries no band. For a page the chrome draws itself – a
+ * `render: 'chrome'` page, the phone's new tab page – it writes the CHROME PAGE'S pair below
+ * (`seatChromePage`, `moveChromePage`) under the same contract (the seat the lesser of itself
+ * and the destination as a travel departs, the band's height at its rest; the offset per
+ * frame), so `PageBandLayer` rides on it there as on the desktop's pair here – translated
+ * through a travel, seated at rest with its box inset by the band's height, so a long chrome
+ * page scrolls to its last row. That pair is the layer's alone: no view stands under such a
+ * page for the core to inset or move (`core/pages.ts`), so the layout report never carries it –
+ * `layoutBand()` reads the desktop's pair, unchanged.
  */
 import type { LayoutBand, Rect } from '@shared/types'
 import { run } from './api'
@@ -65,15 +65,50 @@ export function movePage(to: number): void {
 }
 
 /**
- * A page the chrome draws itself is `to` from the frame's top edge now (per frame), on a host
- * that moves its page views another way (Android's band host, over the pull channel): the store
+ * The CHROME PAGE'S pair: the band's seat and offset for a page the chrome draws itself on a
+ * host that moves its page views another way – Android's band host, over the pull channel –
+ * and lays nothing out by rects. Written by that host alone, read by `PageBandLayer` alone
+ * (mounted with `source="chrome-page"` where that host is), under the pair above's contract;
+ * never part of the layout report, which is the desktop's pair's (`layoutBand`), since there
+ * is no view under such a page for the core to inset or move.
+ */
+export const chromePageSeatStore = createStore<{ seat: number }>({ seat: 0 }, 'chromePageSeat')
+export const chromePageOffsetStore = createStore<{ offset: number }>(
+  { offset: 0 },
+  'chromePageOffset'
+)
+
+/** The chrome page's seated height: its layer's box is inset this far at the top. */
+export function chromePageSeat(): number {
+  return chromePageSeatStore.get().seat
+}
+
+/** The chrome page's present offset from the frame's top edge (0 at home). */
+export function chromePageOffset(): number {
+  return chromePageOffsetStore.get().offset
+}
+
+/** Seat the chrome page's layer at `seat` (0 unseats it): its box is laid out under the band, the layout report untouched. */
+export function seatChromePage(seat: number): void {
+  if (chromePageSeatStore.get().seat === seat) return
+  chromePageSeatStore.set({ seat })
+}
+
+/**
+ * A page the chrome draws itself is `to` from the frame's top edge now (per frame): the store
  * carries it to `PageBandLayer` alone; the core, which has no view under such a page, is not
  * told. Returns whether the offset changed.
  */
 export function moveChromePage(to: number): boolean {
-  if (to === bandOffsetStore.get().offset) return false
-  bandOffsetStore.set({ offset: to })
+  if (to === chromePageOffsetStore.get().offset) return false
+  chromePageOffsetStore.set({ offset: to })
   return true
+}
+
+/** Forget the chrome page's seat and offset (tests). */
+export function resetChromePageBand(): void {
+  chromePageOffsetStore.set({ offset: 0 })
+  chromePageSeatStore.set({ seat: 0 })
 }
 
 /** What the layout report says of the band: nothing while nothing is seated and the page is home. */

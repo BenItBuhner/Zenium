@@ -1,6 +1,11 @@
 import type { JSX, ReactNode } from 'react'
 import { useLayoutEffect, useRef } from 'react'
-import { bandOffset, bandOffsetStore, bandSeatStore } from '@renderer/lib/pageBand'
+import {
+  bandOffsetStore,
+  bandSeatStore,
+  chromePageOffsetStore,
+  chromePageSeatStore
+} from '@renderer/lib/pageBand'
 
 /**
  * The layer a page the chrome draws itself rides on under the page-edge band (motion spec §3.4;
@@ -17,22 +22,38 @@ import { bandOffset, bandOffsetStore, bandSeatStore } from '@renderer/lib/pageBa
  * out under it. At home the layer is a plain full-frame box with no transform, so nothing of
  * the page's own layout is changed by it. The band draws above it (`.zen-band`'s `z-index`).
  *
+ * Its SOURCE is the band's host's pair: the page's (`source="page"`, the default) where the
+ * desktop's host is mounted – the stores above, the layout's too; the chrome page's
+ * (`source="chrome-page"`) where Android's host is (`lib/band/androidHost.ts`), which moves
+ * the WebView by the pull channel and writes `seatChromePage`/`moveChromePage` for such a page
+ * alone – a pair the layout report never carries. The same contract either way: a travel
+ * translates, the rest seats.
+ *
  * The desktop's new tab page is not drawn here: `zen://newtab` is a document the chrome serves
  * into a page view, and the core moves it with every other view.
  */
-export function PageBandLayer({ children }: { children: ReactNode }): JSX.Element {
+export function PageBandLayer({
+  source = 'page',
+  children
+}: {
+  source?: 'page' | 'chrome-page'
+  children: ReactNode
+}): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
-  const seat = bandSeatStore.use((s) => s.seat)
+  const chrome = source === 'chrome-page'
+  const seatStore = chrome ? chromePageSeatStore : bandSeatStore
+  const offsetStore = chrome ? chromePageOffsetStore : bandOffsetStore
+  const seat = seatStore.use((s) => s.seat)
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     const place = (): void => {
-      const shift = bandOffset() - seat
+      const shift = offsetStore.get().offset - seat
       el.style.transform = shift === 0 ? '' : `translateY(${shift}px)`
     }
     place()
-    return bandOffsetStore.subscribe(place)
-  }, [seat])
+    return offsetStore.subscribe(place)
+  }, [offsetStore, seat])
   return (
     <div
       ref={ref}

@@ -897,7 +897,8 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         val frameBottom = scrolled.optDouble("frameBottom", -1.0)
         val lastBottom = scrolled.optDouble("lastBottom", 1e6)
         check(
-            "at rest the layer is seated and zen://settings scrolls to its last row (layer seat ${layer.optInt("seat", -1)}, shift ${layer.optDouble("shift", -1.0)}; " +
+            "at rest the layer is seated (`top` the band's height, no transform) and `zen://settings` scrolls to its last row above the frame's bottom " +
+                "(layer seat ${layer.optInt("seat", -1)}, shift ${layer.optDouble("shift", -1.0)}; " +
                 "${scrolled.optInt("rows")} rows, the last '${scrolled.optString("lastLabel")}' bottom $lastBottom against the frame's bottom $frameBottom; " +
                 "scrollTop ${scrolled.optInt("scrollTop")} of ${scrolled.optInt("scrollHeight")} in ${scrolled.optInt("clientHeight")})",
             seated && scrolled.optBoolean("scroller") && scrolled.optBoolean("overflows") && scrolled.optBoolean("atBottom") &&

@@ -14,9 +14,13 @@ import { browserStore } from '@renderer/lib/browserStore'
 import { viewportStore } from '@renderer/lib/formFactor'
 import {
   bandOffset,
-  bandOffsetStore,
   bandSeat,
-  bandSeatStore,
+  chromePageOffset,
+  chromePageOffsetStore,
+  chromePageSeat,
+  chromePageSeatStore,
+  layoutBand,
+  resetChromePageBand,
   resetPageBand
 } from '@renderer/lib/pageBand'
 import {
@@ -105,6 +109,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     uiStore.set({ frameDialogsOpen: 0, frameDialogCover: 0 })
     resetBands()
     resetPageBand()
+    resetChromePageBand()
   })
   afterEach(() => {
     host?.release()
@@ -117,6 +122,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     viewportStore.set({ formFactor: 'desktop' })
     resetBands()
     resetPageBand()
+    resetChromePageBand()
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -145,36 +151,36 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     // The entrance: depart toward 56 from shut seats nothing; the frames translate.
     host.depart(56)
     host.translate(24)
-    expect(bandSeat()).toBe(0)
-    expect(bandOffset()).toBe(24)
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(24)
     host.translate(56)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     // At rest the band is seated: seat 56, offset 56 – the layer's transform is '' and its box
     // is inset by the band's height (`PageBandLayer`: `top: seat`, `translateY(offset − seat)`).
     host.rest(56)
     expect(written).toEqual([])
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     expect(vi.mocked(run)).not.toHaveBeenCalled()
     // The leave: depart toward 0 unseats before the first frame (the layer's box full-frame,
     // translated by 56 – the same place), the frames translate home, the rest at 0 is home.
     host.depart(0)
-    expect(bandSeat()).toBe(0)
-    expect(bandOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(56)
     host.translate(30)
     host.translate(0)
     host.rest(0)
-    expect(bandOffset()).toBe(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toEqual([])
     // The phone's new tab page the same.
     browserStore.set({ state: stateWith('ntp') })
     host.depart(56)
     host.translate(56)
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(0)
     host.rest(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     expect(written).toEqual([])
   })
 
@@ -185,27 +191,27 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.depart(76)
     host.translate(76)
     host.rest(76)
-    expect(bandSeat()).toBe(76)
-    expect(bandOffset()).toBe(76)
+    expect(chromePageSeat()).toBe(76)
+    expect(chromePageOffset()).toBe(76)
     // 76 → 56: the seat drops to 56 as the travel departs (the layer's box inset by 56,
     // translated by the 20 still to travel), the frames bring the offset down, the rest holds.
     host.depart(56)
-    expect(bandSeat()).toBe(56)
-    expect(bandOffset()).toBe(76)
+    expect(chromePageSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(76)
     host.translate(66)
     host.translate(56)
     host.rest(56)
-    expect(bandSeat()).toBe(56)
-    expect(bandOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
     // 56 → 76: the seat stays at 56 through the travel (the layer rides down past the frame's
     // edge), and seats at 76 at rest.
     host.depart(76)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     host.translate(70)
     host.translate(76)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     host.rest(76)
-    expect(bandSeat()).toBe(76)
+    expect(chromePageSeat()).toBe(76)
     expect(written).toEqual([])
   })
 
@@ -216,26 +222,50 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.depart(56)
     host.translate(56)
     host.rest(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     // The finger takes hold: the first frame at the height moves nothing; the first below it
     // unseats the layer – translated from here (offset 50, seat 0), never a bare strip.
     host.translate(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     host.translate(50)
-    expect(bandSeat()).toBe(0)
-    expect(bandOffset()).toBe(50)
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(50)
     host.translate(40)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     // Released short of half: the return is a travel toward 56 (depart keeps 0), and the rest
     // seats again.
     host.depart(56)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     host.translate(48)
     host.translate(56)
     host.rest(56)
-    expect(bandSeat()).toBe(56)
-    expect(bandOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
     expect(written).toEqual([])
+  })
+
+  it("a chrome page's travel and rest report NOTHING to the layout: the desktop's pair (seatBand/movePage, the layout report's) stays at 0 and layoutBand() says nothing – the chrome page's pair is the layer's alone", () => {
+    browserStore.set({ state: stateWith('settings') })
+    host = createAndroidBandHost()
+    showBand(state())
+    host.depart(56)
+    host.translate(24)
+    expect(layoutBand()).toBeUndefined()
+    host.translate(56)
+    host.rest(56)
+    expect(chromePageSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    host.depart(0)
+    host.translate(30)
+    expect(layoutBand()).toBeUndefined()
+    host.rest(0)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    expect(vi.mocked(run)).not.toHaveBeenCalled()
   })
 
   it('the seat store is written once at the rest and once at the departure – never per frame – and the offset store once per frame that moves', () => {
@@ -244,8 +274,8 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     showBand(state())
     const seats: number[] = []
     const offsets: number[] = []
-    const offSeat = bandSeatStore.subscribe(() => seats.push(bandSeat()))
-    const offOffset = bandOffsetStore.subscribe(() => offsets.push(bandOffset()))
+    const offSeat = chromePageSeatStore.subscribe(() => seats.push(chromePageSeat()))
+    const offOffset = chromePageOffsetStore.subscribe(() => offsets.push(chromePageOffset()))
     host.depart(56)
     host.translate(10)
     host.translate(30)
@@ -265,13 +295,13 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host = createAndroidBandHost()
     showBand(state())
     const seats: number[] = []
-    const offSeat = bandSeatStore.subscribe(() => seats.push(bandSeat()))
+    const offSeat = chromePageSeatStore.subscribe(() => seats.push(chromePageSeat()))
     host.depart(56)
     host.translate(56)
     host.rest(56)
     expect(heldPageOffset('t1')).toBe(56)
-    expect(bandSeat()).toBe(0)
-    expect(bandOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
     host.depart(0)
     host.translate(0)
     host.rest(0)
@@ -290,15 +320,15 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.depart(56)
     host.translate(56)
     host.rest(56)
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     expect(written).toEqual([])
     // The same tab now shows a web page.
     const navigated = stateWith('ntp')
     ;(navigated.tabs as Record<string, { url: string }>).ntp.url = 'https://example.com/landed'
     browserStore.set({ state: navigated })
-    expect(bandOffset()).toBe(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toEqual([['ntp', 56]])
     expect(heldPageOffset('ntp')).toBe(56)
     // And a Settings page typed into it: the WebView comes home, the layer takes the band –
@@ -311,16 +341,16 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
       ['ntp', 0]
     ])
     expect(heldPageOffset('ntp')).toBe(0)
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     // The band leaves there: the layer comes home, nothing is written to the channel.
     host.depart(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     host.translate(20)
     host.translate(0)
     host.rest(0)
-    expect(bandOffset()).toBe(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toHaveLength(2)
   })
 
@@ -331,22 +361,22 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.translate(56)
     host.rest(56)
     expect(written).toEqual([['t1', 56]])
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     browserStore.set({ state: stateWith('settings') })
     expect(written).toEqual([
       ['t1', 56],
       ['t1', 0]
     ])
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     browserStore.set({ state: stateWith('ntp') })
     // Two chrome-drawn pages share the one layer: home and back at the same offset and seat.
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     expect(written).toHaveLength(2)
     browserStore.set({ state: stateWith('t2') })
-    expect(bandOffset()).toBe(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toEqual([
       ['t1', 56],
       ['t1', 0],
@@ -361,10 +391,12 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.depart(56)
     host.translate(56)
     host.rest(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     const order: string[] = []
-    const offSeat = bandSeatStore.subscribe(() => order.push(`seat ${bandSeat()}`))
-    const offOffset = bandOffsetStore.subscribe(() => order.push(`offset ${bandOffset()}`))
+    const offSeat = chromePageSeatStore.subscribe(() => order.push(`seat ${chromePageSeat()}`))
+    const offOffset = chromePageOffsetStore.subscribe(() =>
+      order.push(`offset ${chromePageOffset()}`)
+    )
     setPullHost({
       setOffset: (tabId, offset) => {
         written.push([tabId, offset])
@@ -375,7 +407,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     offSeat()
     offOffset()
     expect(order).toEqual(['offset 0', 'seat 0', 'pull t2 56'])
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(heldPageOffset('t2')).toBe(56)
   })
 
@@ -389,13 +421,13 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
       ['t1', 30],
       ['t1', 0]
     ])
-    expect(bandOffset()).toBe(30)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(30)
+    expect(chromePageSeat()).toBe(0)
     host.translate(56)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     host.rest(56)
-    expect(bandSeat()).toBe(56)
-    expect(bandOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
   })
 
   it("a tab-scoped band's seat does not follow the switch onto a chrome page it does not stand on", () => {
@@ -406,13 +438,13 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.rest(76)
     browserStore.set({ state: stateWith('settings') })
     expect(shownBand()).toBeNull()
-    expect(bandSeat()).toBe(0)
-    expect(bandOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
     // The cut the band component makes for it (`jump(0)`): nothing moves, the seat stays 0.
     host.depart(0)
     host.translate(0)
     host.rest(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toEqual([
       ['t1', 76],
       ['t1', 0]
@@ -424,7 +456,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host = createAndroidBandHost()
     showBand(state())
     const frames: number[] = []
-    const off = bandOffsetStore.subscribe(() => frames.push(bandOffset()))
+    const off = chromePageOffsetStore.subscribe(() => frames.push(chromePageOffset()))
     host.translate(10)
     host.translate(10)
     host.translate(56)
@@ -440,11 +472,11 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.depart(56)
     host.translate(56)
     host.rest(56)
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     host.release()
-    expect(bandOffset()).toBe(0)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toEqual([])
     host = null
   })
@@ -572,12 +604,12 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
       ['t2', 56],
       ['t2', 0]
     ])
-    expect(bandOffset()).toBe(56)
-    expect(bandSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(chromePageSeat()).toBe(56)
     // A frame there moves the layer, never the channel (a finger's: the layer unseated for it).
     host.translate(40)
-    expect(bandOffset()).toBe(40)
-    expect(bandSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(40)
+    expect(chromePageSeat()).toBe(0)
     expect(written).toHaveLength(4)
   })
 

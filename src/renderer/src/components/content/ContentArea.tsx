@@ -185,10 +185,11 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   // The page-edge band's host is the desktop's: Android lays its band over the WebView itself.
   const pageBand = !phone && state.platform !== 'android'
   // The layer a page the chrome draws itself rides on under the band (`PageBandLayer`, §3.4,
-  // §10): on the desktop with the band's host; on Android too, where the band's host
-  // (`lib/band/androidHost.ts`) writes the layer's offset for such a page in place of the
-  // WebView's translation – a chrome page and the phone's new tab page have no view under them
-  // for the pull channel to move (the Design Lead's (B) on #735's question (8)).
+  // §10): on the desktop with the band's host, on the page's seat and offset; on Android too,
+  // where the band's host (`lib/band/androidHost.ts`) writes the chrome page's own pair for
+  // such a page in place of the WebView's translation – a chrome page and the phone's new tab
+  // page have no view under them for the pull channel to move (the Design Lead's (B) on #735's
+  // question (8)), and that pair is the layer's alone, never the layout report's.
   const chromePageBand = pageBand || state.platform === 'android'
   // The phone draws a new tab page in the frame where the blank page would be (the desktop
   // keeps Zen's bare frame). Its view is never placed there – see `useLayoutReporter`.
@@ -337,7 +338,7 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
               // A chrome page has no view for the core to move under the band: where the band
               // is hosted it rides on the band's seat and offset as the views do (§3.4, §10).
               (chromePageBand ? (
-                <PageBandLayer>
+                <PageBandLayer source={pageBand ? 'page' : 'chrome-page'}>
                   <InternalPageHost state={state} tab={tab} hidden={staged} />
                 </PageBandLayer>
               ) : (
@@ -348,7 +349,7 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
               // just not painted, so the page is there the moment they leave. Drawn by the chrome
               // over `zen://blank`, it rides on the band's layer as a chrome page does (Android).
               (chromePageBand ? (
-                <PageBandLayer>
+                <PageBandLayer source={pageBand ? 'page' : 'chrome-page'}>
                   <NewTabPage
                     state={state}
                     tab={tab}

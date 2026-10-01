@@ -1,6 +1,6 @@
 import { bandStore, chooseBand, dismissBand, setBandFrame, shownBand } from '@renderer/lib/band'
 import type { BandSeam } from '@renderer/lib/motion/band'
-import { moveChromePage, seatBand } from '@renderer/lib/pageBand'
+import { moveChromePage, seatChromePage } from '@renderer/lib/pageBand'
 import { holdPage, setPageHold, type PageHold } from '@renderer/lib/pull'
 import { bandFrameOf, subscribeBandSignals, type BandSignals } from './signals'
 
@@ -22,13 +22,15 @@ import { bandFrameOf, subscribeBandSignals, type BandSignals } from './signals'
  *
  * A page the CHROME DRAWS itself – a `render: 'chrome'` page under `InternalPageHost` (Settings,
  * History, …) or the phone's new tab page over `zen://blank` – has no view under it for the pull
- * channel to move. For it the same frame goes to `lib/pageBand.ts`'s offset store instead
- * (`moveChromePage`), which #740's `PageBandLayer` – mounted around those pages on Android too
- * (`ContentArea.tsx`) – reads without React and translates the page by: the one writer, two
- * surfaces, the signals' `chromePage` saying which the front page is (the Design Lead's (B) on
- * #735's question (8): the band stands on the chrome-drawn pages once this layer is there). The
- * core is not told (`layout.pageOffset` is the desktop's seam: it moves placed views, and a
- * chrome page has none – `core/pages.ts`).
+ * channel to move. For it the same frame goes to `lib/pageBand.ts`'s CHROME PAGE'S pair instead
+ * (`moveChromePage`, `seatChromePage`), which #740's `PageBandLayer` – mounted around those
+ * pages on Android too (`ContentArea.tsx`, `source="chrome-page"`) – reads and moves the page
+ * by: the one writer, two surfaces, the signals' `chromePage` saying which the front page is
+ * (the Design Lead's (B) on #735's question (8): the band stands on the chrome-drawn pages once
+ * this layer is there). The core is not told (`layout.pageOffset` is the desktop's seam: it
+ * moves placed views, and a chrome page has none – `core/pages.ts`), and the layout report
+ * never carries that pair: it is the layer's alone, the desktop's `seatBand`/`movePage` pair
+ * untouched on Android, so no report lays a WebView out under a band or shifts one by it.
  *
  * The layer keeps the desktop seam's contract (`PageBandHost`, `lib/pageBand.ts`): a travel
  * TRANSLATES, the rest SEATS. `depart` seats the band at the lesser of its seat and the
@@ -39,15 +41,12 @@ import { bandFrameOf, subscribeBandSignals, type BandSignals } from './signals'
  * destination (`BandSeam.depart`): its first frame below the seat unseats the layer here, so the
  * page's bottom rides past the frame's edge under the finger and never bares it – the one
  * layout the drag costs, where the desktop keeps the seat and bares the strip. The seat is
- * written to the shared seat store only while a chrome-drawn surface is in front: the WebView
- * under the pull channel is TRANSLATED at rest (#734/#735, §3.4 Android), its placed rect
- * never laid out under the band, so a document in front always reads seat 0. The layout
- * reporter reads the same store (`ContentArea.tsx`, `useLayoutReporter.ts`), and with a
- * chrome-drawn page in front it lays out no WebView: such a page has no view, is never a split's
- * member (`splittable: false`), and the phone's blank tab is not placed – a seat there moves no
- * WebView's rect. A surface change puts the old surface home (offset 0, seat 0) before the
- * standing band is re-targeted onto the new one, seated if the band rests, translated if it
- * travels.
+ * written only while a chrome-drawn surface is in front and held: the WebView under the pull
+ * channel is TRANSLATED at rest (#734/#735, §3.4 Android), its placed rect never laid out under
+ * the band, so a document in front always reads seat 0 – the known asymmetry this slice keeps.
+ * A surface change puts the old surface home (offset 0, seat 0) in the same synchronous
+ * subscriber that re-targets the standing band onto the new one – seated if the band rests,
+ * translated if it travels.
  *
  * The page the band stands on is the front tab's. A tab leaving the front with its page held
  * has it put home at once – a view in the back must not keep its translation for its return –
@@ -99,8 +98,9 @@ export function createAndroidBandHost(): AndroidBandHost {
   let offset = 0
   /**
    * The band's seat as the desktop seats it (`PageBandHost`): the height it rests at, the
-   * lesser of that and the destination through a travel, 0 shut. Published to the seat store
-   * while the chrome's layer is the surface in front (`publishSeat`); a WebView reads 0.
+   * lesser of that and the destination through a travel, 0 shut. Published to the chrome page's
+   * seat store while the chrome's layer is the surface in front (`publishSeat`); a WebView
+   * reads 0.
    */
   let seat = 0
   /** A `depart` was heard and no `rest` yet: the frames are a travel's, not a finger's. */
@@ -119,12 +119,13 @@ export function createAndroidBandHost(): AndroidBandHost {
   }
 
   /**
-   * The seat store carries the band's seat for the chrome's layer alone, and only while the
-   * band has the layer (a frame above 0 written); a document in front, or a layer no band
-   * stands on, reads 0.
+   * The chrome page's seat store carries the band's seat for the chrome's layer alone, and
+   * only while the band has the layer (a frame above 0 written); a document in front, or a
+   * layer no band stands on, reads 0. The desktop's pair (`seatBand`), the layout report's, is
+   * never written here.
    */
   const publishSeat = (): void => {
-    seatBand(front?.layer && layerHeld ? seat : 0)
+    seatChromePage(front?.layer && layerHeld ? seat : 0)
   }
 
   /** Whether a frame moves `surface`: the band holds it already, or a band stands on it (its entrance). */
@@ -159,13 +160,13 @@ export function createAndroidBandHost(): AndroidBandHost {
     setBandFrame(bandFrameOf(signals))
     const next = surfaceOf(signals)
     if (sameSurface(next, front)) return
-    // The surface leaving the front comes home at once – the chrome's layer with its seat (the
+    // The surface leaving the front comes home at once – the chrome's layer with its seat (its
     // seat store reads 0 before the WebView arriving is written to); the one arriving takes the
     // standing band's offset, and the layer its seat with it (seated where the band rests,
     // translated while it travels). A page changing kind under the band (the new tab page
     // navigating to a web page) is a leave and an arrival on the same tab.
     if (front !== null && holds(front)) write(front, 0)
-    if (front?.layer) seatBand(0)
+    if (front?.layer) seatChromePage(0)
     front = next
     if (front !== null && offset > 0 && shownBand() !== null) write(front, offset)
     publishSeat()
