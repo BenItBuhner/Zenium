@@ -13,7 +13,9 @@ import { isExtensionPageUrl, toServedUrl } from '@core/extensions/runtime/extens
  * to the WebView. Requests to the extension's own origin and to hosts outside its permissions are
  * untouched: those are the WebView's, CORS and all, as they are Chrome's – except that an
  * extension-origin answer the host refused, where Chrome has no answer but a network error,
- * rejects as Chrome's does (`NET_ERROR_HEADER`).
+ * rejects as Chrome's does (`NET_ERROR_HEADER`): the `fetch` with Chrome's `TypeError`, the
+ * `XMLHttpRequest` with Chrome's course for a network error (`readyState` 4, `status` 0, the
+ * `error` and `loadend` events, never `load`).
  */
 
 export const PROXY_HEADER = 'X-Zenium-Proxy'
@@ -53,7 +55,24 @@ interface XhrState {
   url: string
   async: boolean
   contentType: string | null
+  /** The host refused the extension-origin request: the XHR reads as Chrome's network error. */
+  netError: boolean
+  /** The network error's own events are being dispatched: the watcher lets them through. */
+  replaying: boolean
 }
+
+const HEADERS_RECEIVED = 2
+const DONE = 4
+/** The native XHR's events after the host's refusal, swallowed so Chrome's course alone is seen. */
+const SWALLOWED_EVENTS = [
+  'readystatechange',
+  'progress',
+  'load',
+  'loadend',
+  'error',
+  'abort',
+  'timeout'
+]
 
 /** Whether a URL is one the proxy answers: http(s), off the extension origin, inside the permissions. */
 export function proxiesUrl(
@@ -127,18 +146,25 @@ function installFetch(win: Window & typeof globalThis, options: CorsProxyOptions
 }
 
 /**
+ * Whether an answer is the host's refusal of an extension-origin request (`NET_ERROR_HEADER`) –
+ * the network error Chrome fails the request with. An opaque response has no headers to read:
+ * it stands.
+ */
+export function refusedByHost(response: Response): boolean {
+  try {
+    return Boolean(response.headers.get(NET_ERROR_HEADER))
+  } catch {
+    return false
+  }
+}
+
+/**
  * An extension-origin answer as Chrome gives it: the host's refusal (`NET_ERROR_HEADER`) is the
  * network error Chrome fails the request with, so the fetch rejects with Chrome's `TypeError`;
  * any other answer stands.
  */
 function asChromeAnswers(win: Window & typeof globalThis, response: Response): Response {
-  let refused: string | null = null
-  try {
-    refused = response.headers.get(NET_ERROR_HEADER)
-  } catch {
-    /* no headers to read (an opaque response): the answer stands */
-  }
-  if (refused) throw new win.TypeError('Failed to fetch')
+  if (refusedByHost(response)) throw new win.TypeError('Failed to fetch')
   return response
 }
 
@@ -181,7 +207,9 @@ function installXhr(win: Window & typeof globalThis, options: CorsProxyOptions):
       method: String(method).toUpperCase(),
       url: absolute,
       async: rest.length === 0 || rest[0] !== false,
-      contentType: null
+      contentType: null,
+      netError: false,
+      replaying: false
     })
     return (nativeOpen as (...args: unknown[]) => void).call(this, method, url, ...rest)
   } as typeof proto.open
@@ -239,6 +267,148 @@ function installXhr(win: Window & typeof globalThis, options: CorsProxyOptions):
     }
     ticketed(encoded)
   }
+
+  installNetErrorCourse(win, states)
+}
+
+/**
+ * The host's refusal of an extension-origin request on an `XMLHttpRequest`, as Chrome's network
+ * error (R26-3, the XHR half of R25-11): where `fetch` rejects, Chrome's XHR goes `readyState` 4
+ * with `status` 0 and fires `error` and `loadend` – never `load`, never a 2 or 3 – and the host's
+ * marked 404 (`NET_ERROR_HEADER`) must read the same, or an extension's `onload`/`onerror` pair
+ * reads a missing file as present. The page's `XMLHttpRequest` becomes a subclass of the
+ * realm's, the same to `instanceof`, the statics and the prototype chain, whose constructor
+ * registers the FIRST listeners on each request (an `onload` or `onreadystatechange` set before
+ * `open` is a listener registered before `open`; nothing registered later can run ahead of the
+ * constructor's): at the native's HEADERS_RECEIVED with the header on an extension-origin
+ * answer the request is marked, that event is stopped before any other listener sees it, Chrome's
+ * three events are dispatched, and every later event of the native's (the body's 3 and 4,
+ * `progress`, `load`, `loadend`) is swallowed; the subclass's accessors read the mark – 4, 0,
+ * an empty response, no headers – and the native's own values otherwise. A web answer with the
+ * header, and an extension-origin answer without it (a generated page's 404), stand as they are.
+ */
+function installNetErrorCourse(
+  win: Window & typeof globalThis,
+  states: WeakMap<XMLHttpRequest, XhrState>
+): void {
+  const Native = win.XMLHttpRequest
+  const proto = Native.prototype as unknown as Record<string, unknown>
+  const nativeGetter = (name: string): ((this: XMLHttpRequest) => unknown) => {
+    for (let p: object | null = proto; p !== null; p = Object.getPrototypeOf(p)) {
+      const getter = Object.getOwnPropertyDescriptor(p, name)?.get
+      if (getter) return getter as (this: XMLHttpRequest) => unknown
+    }
+    return () => undefined
+  }
+  const nativeMethod = (name: string): ((this: XMLHttpRequest, ...args: unknown[]) => unknown) =>
+    proto[name] as (this: XMLHttpRequest, ...args: unknown[]) => unknown
+  const readyStateOf = nativeGetter('readyState')
+  const getResponseHeader = nativeMethod('getResponseHeader')
+
+  const progressEvent = (type: string): Event => {
+    try {
+      return new win.ProgressEvent(type, { lengthComputable: false, loaded: 0, total: 0 })
+    } catch {
+      return new win.Event(type)
+    }
+  }
+
+  const watch = (xhr: XMLHttpRequest): void => {
+    if (typeof xhr.addEventListener !== 'function') return
+    xhr.addEventListener('readystatechange', (event) => {
+      const state = states.get(xhr)
+      if (!state) return
+      if (state.netError) {
+        if (!state.replaying) event.stopImmediatePropagation()
+        return
+      }
+      if (readyStateOf.call(xhr) !== HEADERS_RECEIVED || !isExtensionPageUrl(state.url)) return
+      let refused: unknown = null
+      try {
+        refused = getResponseHeader.call(xhr, NET_ERROR_HEADER)
+      } catch {
+        refused = null
+      }
+      if (!refused) return
+      state.netError = true
+      event.stopImmediatePropagation()
+      state.replaying = true
+      try {
+        xhr.dispatchEvent(new win.Event('readystatechange'))
+        xhr.dispatchEvent(progressEvent('error'))
+        xhr.dispatchEvent(progressEvent('loadend'))
+      } finally {
+        state.replaying = false
+      }
+    })
+    for (const type of SWALLOWED_EVENTS) {
+      if (type === 'readystatechange') continue
+      xhr.addEventListener(type, (event) => {
+        const state = states.get(xhr)
+        if (state?.netError && !state.replaying) event.stopImmediatePropagation()
+      })
+    }
+  }
+
+  // The class keeps the native's name: `XMLHttpRequest.name` reads as before.
+  const Patched = class XMLHttpRequest extends Native {
+    constructor() {
+      super()
+      watch(this)
+    }
+  }
+  const patched = Patched.prototype as unknown as Record<string, unknown>
+  const failed = (xhr: XMLHttpRequest): boolean => states.get(xhr)?.netError === true
+  const textual = (xhr: XMLHttpRequest): boolean => {
+    const type = xhr.responseType
+    return type === '' || type === 'text'
+  }
+  const getters: Record<string, (this: XMLHttpRequest) => unknown> = {
+    readyState() {
+      return failed(this) ? DONE : nativeGetter('readyState').call(this)
+    },
+    status() {
+      return failed(this) ? 0 : nativeGetter('status').call(this)
+    },
+    statusText() {
+      return failed(this) ? '' : nativeGetter('statusText').call(this)
+    },
+    responseURL() {
+      return failed(this) ? '' : nativeGetter('responseURL').call(this)
+    },
+    response() {
+      if (!failed(this)) return nativeGetter('response').call(this)
+      return textual(this) ? '' : null
+    },
+    responseText() {
+      // A non-text `responseType` throws the native's InvalidStateError, as it would.
+      if (!failed(this) || !textual(this)) return nativeGetter('responseText').call(this)
+      return ''
+    },
+    responseXML() {
+      return failed(this) ? null : nativeGetter('responseXML').call(this)
+    }
+  }
+  for (const [name, get] of Object.entries(getters)) {
+    Object.defineProperty(patched, name, { get, configurable: true, enumerable: true })
+  }
+  const methods: Record<string, (this: XMLHttpRequest, ...args: unknown[]) => unknown> = {
+    getResponseHeader(name) {
+      return failed(this) ? null : nativeMethod('getResponseHeader').call(this, name)
+    },
+    getAllResponseHeaders() {
+      return failed(this) ? '' : nativeMethod('getAllResponseHeaders').call(this)
+    }
+  }
+  for (const [name, method] of Object.entries(methods)) {
+    Object.defineProperty(patched, name, {
+      value: method,
+      writable: true,
+      configurable: true,
+      enumerable: false
+    })
+  }
+  win.XMLHttpRequest = Patched as unknown as typeof XMLHttpRequest
 }
 
 function isPromise<T>(value: T | Promise<T>): value is Promise<T> {

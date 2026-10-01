@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto-click fixture</title>
+    <link rel="stylesheet" href="probe-page.css" />
+    <style>
+      #target {
+        display: inline-block;
+        margin: 24px 0;
+        padding: 28px 32px;
+        border-radius: 14px;
+        background: #dbeafe;
+        font-size: 22px;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Auto-click fixture</h1>
+      <p>
+        The link below counts every click it receives. An auto-clicker started from the long-press
+        menu on it (its content script clicks the element under the <code>contextmenu</code> event's
+        point until stopped) drives the count up; the page keeps the last
+        <code>contextmenu</code> event it saw for the reading.
+      </p>
+      <p><a id="target" href="#tap">Hold me, then count</a></p>
+      <p>Clicks: <span id="count">0</span></p>
+      <p id="menu-state">contextmenu: none yet</p>
+    </main>
+    <script>
+      window.__zenClicks = 0
+      window.__zenContextMenu = null
+      document.getElementById('target').addEventListener('click', function (e) {
+        e.preventDefault()
+        window.__zenClicks += 1
+        document.getElementById('count').textContent = String(window.__zenClicks)
+      })
+      document.addEventListener(
+        'contextmenu',
+        function (e) {
+          var t = e.target
+          window.__zenContextMenu = {
+            at: Date.now(),
+            x: e.clientX,
+            y: e.clientY,
+            target: t && t.id ? '#' + t.id : t && t.tagName ? t.tagName.toLowerCase() : null
+          }
+          document.getElementById('menu-state').textContent =
+            'contextmenu: at ' +
+            e.clientX +
+            ',' +
+            e.clientY +
+            ' on ' +
+            window.__zenContextMenu.target
+        },
+        true
+      )
+    </script>
+  </body>
+</html>

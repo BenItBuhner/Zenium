@@ -158,6 +158,16 @@ export interface BootStats {
    */
   unanswered?: Record<string, UnansweredCall[]>
   /**
+   * The content scripts' fetch relay of this copy (`extensionFetchRelay.ts`; the scope's
+   * `XMLHttpRequest` rides on it): its requests still without the host's answer – an
+   * extension's own file asked over the bridge, or a cross-origin request the page's policy
+   * refused and the host sends as the page's own. Read beside `unanswered` when a core check
+   * runs out its wait: a content script's `await fetch(chrome.runtime.getURL(…))` is this
+   * count's, not the engines' (RoValra's init gate on 156, compat round 26 §3.2); both at zero
+   * and the wait is the page's own.
+   */
+  relay?: { pending: number }
+  /**
    * The webpack chunks of the content scripts' module graphs under the `with` fallback: run in
    * the content script's scope, imported plain on the page's global, thrown
    * (`extensionChunkRelay.ts`).
