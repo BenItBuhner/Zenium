@@ -6,7 +6,8 @@ vi.mock('../api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
-import type { UIState, WebAppInfo, WebAppInstallPrompt } from '@shared/types'
+import type { UIState, WebAppInstallPrompt } from '@shared/types'
+import type { WebAppInfo } from '@shared/webApp'
 import { cmd, run } from '../api'
 import {
   browserStore,
