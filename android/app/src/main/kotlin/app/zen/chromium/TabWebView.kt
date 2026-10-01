@@ -311,15 +311,32 @@ class TabWebView(
      * said before each of the agent's actions and taken back when it lets the tab go; OS-40).
      * The page's `beforeunload` objection is then the agent's question, not the user's
      * ([UnloadObjection]): the agent's input is trusted input, so a page it drives may raise
-     * one. Hidden, the view runs as any hidden one does (nothing pauses a GONE WebView;
-     * [TabHost.setVisible]). A show clears it: a tab brought in front is the user's again, sheet
-     * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
-     * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
-     *
-     * TODO(OS-40 part B): route `alert` / `confirm` / `prompt` of an agent-driven page to the
-     * agent (a `view.pageDialog` host event) once PR #742's `PageDialogService` is on main.
+     * one. Its `alert` / `confirm` / `prompt` go to the agent too ([AgentPageDialogs]: the
+     * `pageDialog` view event, the `JsResult` held for `view.pageDialogAnswer`). Hidden, the view
+     * runs as any hidden one does (nothing pauses a GONE WebView; [TabHost.setVisible]). A show
+     * clears it: a tab brought in front is the user's again, sheet and all, until the agent's
+     * next action says otherwise (§9.23). Cleared too when the view is bound to another tab
+     * ([TabHost.bind], [TabHost.adopt]). A dialog held for the agent when the flag goes is
+     * dismissed – the page the user now looks at (or another tab's) must not sit in a call
+     * nobody will answer – and the core hears so (`pageDialogGone`).
      */
     var agentDriven = false
+        set(value) {
+            field = value
+            if (!value) dropAgentDialog()
+        }
+    /** The page's dialog held for its agent's answer ([AgentPageDialogs]), if any; one at a time, the renderer waits in the call. */
+    private var agentDialog: HeldAgentDialog? = null
+    private var agentDialogSeq = 0
+
+    private class HeldAgentDialog(
+        val id: String,
+        val kind: PageDialogKind,
+        val frameUrl: String,
+        val message: String,
+        val defaultValue: String,
+        val result: JsResult
+    )
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
@@ -428,6 +445,7 @@ class TabWebView(
             up.sheet.dismiss()
             up.result.cancel()
         }
+        dropAgentDialog()
         unloadCheck?.settle(leave = true, destroyView = false)
         cancelHeldFileChoosers()
         clearAgentUploads()
@@ -1979,14 +1997,23 @@ class TabWebView(
 
     /**
      * The page called `alert`, `confirm` or `prompt` from the frame at `frameUrl` and waits in
-     * the call (PUI-27). A page the user is not looking at – a hidden tab's, or the shown tab's
-     * under the overview – has its dialog answered as a dismissal at once: the WebView's one
-     * renderer waits in the call for every page and for the chrome, so nothing could bring the
-     * tab forward for the dialog to wait on, as Chrome's would (`PageDialogSpec`). So is a
-     * dialog of a page told to open no more this visit ([PageDialogVisit]); the checkbox that
-     * tells it so is offered from its second dialog on.
+     * the call (PUI-27). A page an agent drives ([agentDriven]) has its dialog routed to the
+     * agent ([askAgent], OS-40 part B): the core says whose it is and answers, and only a tab
+     * that turns out not to be an agent's comes back here as `user`. A page the user is not
+     * looking at – a hidden tab's, or the shown tab's under the overview – has its dialog
+     * answered as a dismissal at once: the WebView's one renderer waits in the call for every
+     * page and for the chrome, so nothing could bring the tab forward for the dialog to wait on,
+     * as Chrome's would (`PageDialogSpec`). So is a dialog of a page told to open no more this
+     * visit ([PageDialogVisit]); the checkbox that tells it so is offered from its second dialog
+     * on.
      */
     private fun pageDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
+        if (agentDriven && askAgent(kind, frameUrl, message ?: "", defaultValue ?: "", result)) return
+        userDialog(kind, frameUrl, message, defaultValue, result)
+    }
+
+    /** The user's path of [pageDialog]: the dismissal of a page they are not looking at, the visit's silence, or the sheet. */
+    private fun userDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
         if (!isShown) {
             result.cancel()
             return
@@ -1998,6 +2025,65 @@ class TabWebView(
         }
         val spec = PageDialogSpec.page(kind, frameUrl, currentDocument ?: url ?: "", message ?: "", defaultValue ?: "", offer)
         showDialog(spec, result) { _, suppress -> dialogVisit.answered(suppress) }
+    }
+
+    // --- an AI agent's page dialogs (AgentPageDialogs.kt, OS-40 part B) -----------------------------
+
+    /**
+     * The page an agent drives opened a dialog: nothing opens; the core hears of it
+     * (`pageDialog`) and answers with [answerPageDialog] – the agent's word, the core's
+     * two-minute default (a dismissal), or `user` for a tab that is not an agent's. The
+     * `JsResult` waits meanwhile; [dropAgentDialog] dismisses one left waiting when the flag
+     * goes or the view does. False for a kind the core is never asked about (none of the
+     * page's three), and for a second dialog while one is held – it cannot be, the renderer
+     * waits in the call – which is dismissed rather than left to wait on an answer that would
+     * name the first.
+     */
+    private fun askAgent(kind: PageDialogKind, frameUrl: String, message: String, defaultValue: String, result: JsResult): Boolean {
+        val id = "pd_${++agentDialogSeq}"
+        val event = AgentPageDialogs.event(id, kind, frameUrl, currentDocument ?: url ?: "", message, defaultValue) ?: return false
+        if (agentDialog != null) {
+            result.cancel()
+            return true
+        }
+        agentDialog = HeldAgentDialog(id, kind, frameUrl, message, defaultValue, result)
+        host.viewEvent(tabId, "pageDialog", event)
+        return true
+    }
+
+    /**
+     * The core's answer to a held dialog (`view.pageDialogAnswer`): the agent accepted (a
+     * prompt with its text) or dismissed it, or `user` – the tab is not an agent's, and Zenium's
+     * sheet opens as it would have ([userDialog], which counts it for the visit as any of the
+     * user's). An answer to a dialog no longer held (the flag went, the page did) is nothing.
+     * The visit's count and its silencing never see an agent's dialog: nothing the agent
+     * answers is remembered for the user.
+     */
+    fun answerPageDialog(dialogId: String, args: JSONObject) {
+        val held = agentDialog?.takeIf { it.id == dialogId } ?: return
+        agentDialog = null
+        when (val answer = AgentPageDialogs.answer(args, held.kind)) {
+            AgentPageDialogs.Answer.User -> userDialog(held.kind, held.frameUrl, held.message, held.defaultValue, held.result)
+            AgentPageDialogs.Answer.Cancel -> held.result.cancel()
+            is AgentPageDialogs.Answer.Accept -> {
+                val result = held.result
+                if (result is JsPromptResult) result.confirm(answer.value) else result.confirm()
+            }
+        }
+    }
+
+    /**
+     * A dialog held for the agent goes with the flag ([agentDriven] off: the tab brought in
+     * front, the agent letting it go, the view bound to another tab) or with the view: the page
+     * hears a dismissal – §9.23's default, no sheet for a page nobody asked to see one on – and
+     * the core hears the dialog is gone (`pageDialogGone`), so the agent's answer, when it
+     * comes, names nothing.
+     */
+    private fun dropAgentDialog() {
+        val held = agentDialog ?: return
+        agentDialog = null
+        held.result.cancel()
+        host.viewEvent(tabId, "pageDialogGone", json("dialogId" to held.id))
     }
 
     /**
@@ -2019,16 +2105,17 @@ class TabWebView(
 
     /**
      * Whether the page may be unloaded (the core's `TabView.confirmUnload`, ahead of a tab close,
-     * the app's exit): its `beforeunload` handlers run, and one that objects has the core ask
-     * "Leave site?". `reply` hears true once the page may go – no objection, the user chose to
-     * leave, the page gone or silent for [UNLOAD_CHECK_TIMEOUT_MS] (a hung renderer holds no
-     * close up, as in Chrome) – and false when the user chose to stay, the page intact.
+     * the app's exit): its `beforeunload` handlers run. `reply` hears true once the page may go
+     * – no objection, an objection overruled, the page gone or silent for
+     * [UNLOAD_CHECK_TIMEOUT_MS] (a hung renderer holds no close up, as in Chrome). On a touch
+     * host it never hears false: a close path never asks "Leave site?" (§9.23,
+     * [UnloadObjection.SettleCheck]) – the close is undoable, and Undo is the protection.
      *
      * The WebView runs the handlers for a navigation only, so the check is one: a load of
      * `about:blank` the page may object to, started past this view's own [loadUrl] (nothing of
      * it is the page's news: the callbacks it raises are dropped while the check is up, its
      * navigation report too). An objection comes as `onJsBeforeUnload` with the navigation held,
-     * and the answer either lets it go on or cancels it, the page as it was. A page that does
+     * and is let go on, the check settled as leave. A page that does
      * not object commits the blank document, and the view is destroyed at once (Electron's
      * `close({ waitForBeforeUnload })` does the same): the core hears `destroyed` and closes
      * the tab, or keeps it unloaded with its stack when the check was the app's exit. Its card
@@ -2056,13 +2143,12 @@ class TabWebView(
     }
 
     /**
-     * A `beforeunload` check in flight (see [confirmUnload]): what it answers to, the id of the
-     * objection the page raised under it (if it did), and whether its blank document started.
+     * A `beforeunload` check in flight (see [confirmUnload]): what it answers to, and whether
+     * its blank document started. A page that objects under it is not asked on a touch host
+     * ([UnloadObjection.SettleCheck]): the objection is overruled and the check settles as leave.
      */
     private inner class UnloadCheck(reply: (Boolean) -> Unit) {
         val replies = arrayListOf(reply)
-        /** The page objected under the check: its "Leave site?" is up (its answer settles the check). */
-        var asked = false
         /** The check's blank document has started: the page did not object, and is on its way out. */
         var navigated = false
         val timeout = Runnable { settle(leave = true, destroyView = false) }
@@ -2070,17 +2156,10 @@ class TabWebView(
         /**
          * The check is over: every asker hears `leave`, and with `destroyView` the view goes
          * (posted: never from inside the WebView's own callback), the core hearing `destroyed`.
-         * A "Leave site?" still up (the page went another way) goes with the check, its
-         * navigation let go or held as `leave` says.
          */
         fun settle(leave: Boolean, destroyView: Boolean) {
             if (unloadCheck !== this) return
             removeCallbacks(timeout)
-            if (asked) dialog?.let { up ->
-                dialog = null
-                up.sheet.dismiss()
-                if (leave) up.result.confirm() else up.result.cancel()
-            }
             val askers = replies.toList()
             replies.clear()
             if (destroyView) {
@@ -3424,11 +3503,16 @@ class TabWebView(
          * cancels it, the page as it was ([stayedOnPage]). A check waits as long as the question
          * is up: its silence timer stops here, and the answer settles it.
          *
-         * A page an agent drives is not asked ([UnloadObjection], OS-40): the WebView raises
-         * the question only after a user gesture, but an agent's input is trusted input, so a
-         * page it works on may object, and the question is the agent's, not the user's. For
-         * such a page the navigation goes on, with the bookkeeping a Leave runs, and a check in
-         * flight settles as leave, the view destroyed. A page the user drives asks as it always has.
+         * A page the user is not looking at never puts the sheet in front of them
+         * ([UnloadObjection], §9.23 on touch hosts): under a check – every touch close path –
+         * the leave is confirmed at once and the check settles as leave, the view destroyed
+         * (the close is undoable, and Undo is the protection); a page an agent drives (OS-40:
+         * the WebView raises the question only after a user gesture, but an agent's input is
+         * trusted input, so a page it works on may object, and the question is the agent's,
+         * not the user's) leaves silently, with the bookkeeping a Leave runs; a hidden user
+         * page objecting to its own navigation, or to the reload the chrome asked of it, stays,
+         * the navigation cancelled as a Stay cancels it ([stayedOnPage]). The page the user is
+         * looking at asks as it always has.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3443,6 +3527,7 @@ class TabWebView(
                 return true
             }
             val decision = UnloadObjection.decide(
+                isShown = isShown,
                 agentDriven = agentDriven,
                 checkInFlight = check != null,
                 reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
@@ -3457,15 +3542,15 @@ class TabWebView(
                     result.confirm()
                     leaveChosen(askedAt = now, chosenAt = now, reload = decision.reload)
                 }
+                is UnloadObjection.StayHidden -> {
+                    result.cancel()
+                    stayedOnPage()
+                }
                 is UnloadObjection.Sheet -> {
-                    if (check != null) {
-                        removeCallbacks(check.timeout)
-                        check.asked = true
-                    }
+                    // Never under a check (a check settles above): the question is the shown page's own navigation's.
                     val reload = decision.reload
                     showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
-                        if (check != null) check.settle(leave = leave, destroyView = leave)
-                        else if (!leave) stayedOnPage()
+                        if (!leave) stayedOnPage()
                         else leaveChosen(askedAt = now, chosenAt = SystemClock.uptimeMillis(), reload = reload)
                     }
                 }

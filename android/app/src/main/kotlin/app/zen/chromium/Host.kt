@@ -1217,8 +1217,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.stop" -> { tab?.stopLoading(); reply(null) }
             // --- the page's beforeunload (PUI-28; `TabWebView.confirmUnload`) ---
             // Whether the page may be unloaded (the core's `TabView.confirmUnload`, before a tab
-            // close or the app's exit): true once its `beforeunload` handlers let it go or the user
-            // chose to leave, false when they chose to stay. A view already gone may go.
+            // close or the app's exit): true once its `beforeunload` handlers let it go or an
+            // objection was overruled (a close path never asks on a touch host, §9.23; the close is
+            // undoable). A view already gone may go.
             "view.confirmUnload" -> if (tab == null) reply(true) else tab.confirmUnload { leave -> reply(leave) }
             "view.setMuted" -> { tab?.setMuted(args.bool("muted")); reply(null) }
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
@@ -1226,6 +1227,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
             // The agent's word on driving the page while the layout hides it (OS-40; `TabWebView.agentDriven`).
             "view.setAgentDriven" -> { tab?.agentDriven = args.bool("driven"); reply(null) }
+            // The core's answer to a dialog held for the agent driving the page (OS-40 part B; `AgentPageDialogs`).
+            "view.pageDialogAnswer" -> { tab?.answerPageDialog(args.str("dialogId"), args); reply(null) }
             // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
             // one as the self-submitting form document the core built (`ImagePostNavigation`).
             "view.post" -> {

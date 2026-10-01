@@ -65,6 +65,14 @@ import {
   uploadPathsRefusal,
   type FileChooserEvent
 } from './agentPrompts'
+import {
+  pageDialogAnswerWire,
+  pageDialogRequestOf,
+  USER_DIALOG,
+  type AgentDialogHooks,
+  type PageDialogAnswerWire,
+  type PageDialogEvent
+} from './agentDialogs'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
 export interface ViewNavState {
@@ -169,6 +177,14 @@ export interface ViewEventPayloads {
    * comes back as `view.fileChooserAnswer` (`agentPrompts.ts`).
    */
   fileChooser: FileChooserEvent
+  /**
+   * The page an agent drives (`view.setAgentDriven`) called `alert`, `confirm` or `prompt`:
+   * Kotlin holds the `JsResult` until the core's answer comes back as `view.pageDialogAnswer`
+   * (`agentDialogs.ts`, OS-40 part B).
+   */
+  pageDialog: PageDialogEvent
+  /** Kotlin dropped a held dialog (the view stopped being agent-driven, or went): its page heard a dismissal. */
+  pageDialogGone: { dialogId: string }
   destroyed: void
 }
 
@@ -276,8 +292,13 @@ export class AndroidTabView implements TabView {
     /** The core's content-rules resolver, asked for every navigation the view starts or Kotlin asks about. */
     private readonly rules: () => ContentRulesResolver | null = () => null,
     /** A line for the agent driving this tab, read with its next result (`AgentSession.notices`); heard by no one before the core is bound. */
-    private readonly agentNotice: (line: string) => void = () => {}
+    private readonly agentNotice: (line: string) => void = () => {},
+    /** The core's agent service on a held page dialog (`AgentDialogHooks`); null before the core is bound, when every dialog is the user's. */
+    private readonly agentDialogs: () => AgentDialogHooks | null = () => null
   ) {}
+
+  /** The dialogs Kotlin holds for the core's answer, by id (one at a time: the renderer waits in the call). */
+  private readonly heldDialogs = new Set<string>()
 
   /**
    * Every content-rule row's answer for a page at `url` in this tab's container – the word the
@@ -454,6 +475,12 @@ export class AndroidTabView implements TabView {
       case 'fileChooser':
         this.onFileChooser(payload as FileChooserEvent)
         return
+      case 'pageDialog':
+        this.onPageDialog(payload as PageDialogEvent)
+        return
+      case 'pageDialogGone':
+        this.onPageDialogGone(payload as ViewEventPayloads['pageDialogGone'])
+        return
       case 'destroyed':
         this.destroyed = true
         ev.onDestroyed()
@@ -495,6 +522,53 @@ export class AndroidTabView implements TabView {
       .catch(() => answer({ kind: 'cancel' }))
   }
 
+  // --- an AI agent's page dialogs (agentDialogs.ts, OS-40 part B) ------------
+
+  /**
+   * A dialog the page opened while an agent drives it, held by Kotlin: the core says whose it
+   * is and answers – the agent's word, the core's default once it waited, or `user` for a tab
+   * that is not an agent's (any more), on which Kotlin shows the sheet it would have. The core
+   * is asked to route it only when its agent service would take it (`AgentDialogHooks.takes`,
+   * the same `takesDialog` the service routes by): a dialog the core would queue for the
+   * chrome has no chrome to show it on here (the chrome's own script waits in the page's call),
+   * so that tab's dialog is the user's, as every dialog is before the core is bound. An event
+   * the core cannot be asked about, or an answer that fails, dismisses the dialog: the page
+   * must never sit in a call nobody answers.
+   */
+  private onPageDialog(event: PageDialogEvent): void {
+    if (typeof event?.dialogId !== 'string' || !event.dialogId) return
+    const { dialogId } = event
+    const answer = (wire: PageDialogAnswerWire): void => {
+      if (!this.heldDialogs.delete(dialogId)) return
+      this.bridge.send('view.pageDialogAnswer', { tabId: this.tabId, dialogId, ...wire })
+    }
+    this.heldDialogs.add(dialogId)
+    const request = pageDialogRequestOf(event)
+    if (!request) {
+      answer(pageDialogAnswerWire({ accepted: false, value: null }))
+      return
+    }
+    if (!this.agentDialogs()?.takes(this.tabId)) {
+      answer(USER_DIALOG)
+      return
+    }
+    void this.events
+      .onDialog(request)
+      .then((response) => answer(pageDialogAnswerWire(response)))
+      .catch(() => answer(pageDialogAnswerWire({ accepted: false, value: null })))
+  }
+
+  /**
+   * Kotlin dropped a dialog it held (the view stopped being agent-driven – the tab brought in
+   * front, the agent letting it go – or went): its page heard a dismissal already, so the
+   * agent's pending question is dismissed too and the answer, when it comes, goes nowhere.
+   */
+  private onPageDialogGone(payload: ViewEventPayloads['pageDialogGone']): void {
+    const dialogId = payload?.dialogId
+    if (typeof dialogId !== 'string' || !this.heldDialogs.delete(dialogId)) return
+    this.agentDialogs()?.dismiss(this.tabId)
+  }
+
   // --- an AI agent's native prompts -----------------------------------------
 
   /**
@@ -522,13 +596,15 @@ export class AndroidTabView implements TabView {
 
   /**
    * Whether the page may be unloaded (`TabView.confirmUnload`): Kotlin runs its `beforeunload`
-   * handlers through a navigation the page may object to (`TabWebView.confirmUnload`) – an
-   * objection asks "Leave site?" as Zenium's native sheet there (PUI-28; the page's `alert` /
-   * `confirm` / `prompt` are that sheet too, PUI-27: the WebView's one renderer waits in the
-   * page's call for the chrome as well, so nothing the core draws could answer it), and the
-   * answer settles the check – and destroys a view whose page did not object (the core hears
-   * `destroyed`). Only an explicit false keeps the page: a host without the method (an older
-   * APK, the preview host) does not object.
+   * handlers through a navigation the page may object to (`TabWebView.confirmUnload`). On a
+   * touch host an objection under the check is overruled at once (§9.23, `UnloadObjection`): a
+   * close path never puts a "Leave site?" sheet in front of the user – the close is undoable,
+   * and Undo is the protection – so the check settles as leave and destroys the view (the core
+   * hears `destroyed`), as it does for a page that did not object. (The page's `alert` /
+   * `confirm` / `prompt` are Zenium's native sheet there, PUI-27: the WebView's one renderer
+   * waits in the page's call for the chrome as well, so nothing the core draws could answer
+   * it.) Only an explicit false keeps the page: a host without the method (an older APK, the
+   * preview host) does not object.
    */
   async confirmUnload(): Promise<boolean> {
     if (this.destroyed) return true
@@ -764,9 +840,11 @@ export class AndroidTabView implements TabView {
    * the agent service says it before each action and takes it back when it lets the tab go).
    * Kotlin keeps the flag on the `TabWebView` (OS-40): a page an agent drives never puts its
    * "Leave site?" sheet over the page the user is looking at – the navigation goes on, the
-   * question the agent's to answer. Kotlin clears it when the tab is shown (a tab brought in
-   * front is the user's again), and the flag is sent as it is said, so a view shown or replaced
-   * meanwhile (a renderer swap) hears it again at the agent's next action.
+   * question the agent's to answer – and its `alert` / `confirm` / `prompt` come here as the
+   * `pageDialog` event for the agent (`agentDialogs.ts`). Kotlin clears it when the tab is shown
+   * (a tab brought in front is the user's again, a dialog held for the agent dismissed), and
+   * the flag is sent as it is said, so a view shown or replaced meanwhile (a renderer swap)
+   * hears it again at the agent's next action.
    */
   setAgentDriven(driven: boolean): void {
     this.bridge.send('view.setAgentDriven', { tabId: this.tabId, driven })
@@ -1254,6 +1332,13 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
    * swallowed. Nothing hears it before the core is bound.
    */
   agentNotices: ((tabId: string, line: string) => void) | null = null
+  /**
+   * The core's agent service on the page dialogs Kotlin holds for it (`AndroidPlatform.bind`
+   * points it at `browser.agents`): whose a dialog is, and that a dropped one waits for nobody.
+   * Null before the core is bound, when every dialog is the user's.
+   */
+  agentDialogs: AgentDialogHooks | null = null
+  private readonly dialogHooks = (): AgentDialogHooks | null => this.agentDialogs
 
   constructor(private readonly bridge: Bridge) {
     this.navigation = new NavigationBridge(bridge)
@@ -1272,7 +1357,8 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
       this,
       this.placed,
       this.rules,
-      (line) => this.agentNotices?.(tab.id, line)
+      (line) => this.agentNotices?.(tab.id, line),
+      this.dialogHooks
     )
     view.events = events
     view.containerId = tab.containerId
@@ -1300,7 +1386,8 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
       this,
       this.placed,
       this.rules,
-      (line) => this.agentNotices?.(tabId, line)
+      (line) => this.agentNotices?.(tabId, line),
+      this.dialogHooks
     )
     this.views.set(tabId, view)
     return view
