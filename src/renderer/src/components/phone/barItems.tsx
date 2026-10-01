@@ -27,6 +27,7 @@ import {
   privateTabsOf,
   tabsOnPane
 } from '@renderer/lib/privateTabs'
+import { overviewMenuRequest } from '@renderer/lib/overviewMenuRequest'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar, prepareMenu } from '@renderer/lib/ui'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
@@ -201,7 +202,9 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     // The sheet comes up over the page's picture: taken as the finger lands, so the tap's
     // round trip through the core and the host's capture run together (`prepareMenu`).
     press: ({ tab }) => prepareMenu(tab?.id ?? null),
-    run: () => run('app.menu', {})
+    // While the tab overview stands the ⋯ is the overview's menu (tab overview cleanup spec
+    // §1, §4): the request says so, and the core pops the overview's rows through this sheet.
+    run: () => run('app.menu', overviewMenuRequest())
   },
   spaces: {
     id: 'spaces',

@@ -5,6 +5,7 @@ import { PRIVATE_THEME, blendResolvedThemes, resolveTheme } from '@shared/theme'
 import { THEME_BLEND_MS } from '@renderer/hooks/useTheme'
 import {
   activeTabIsPrivate,
+  anyPrivateTab,
   isPrivateTab,
   openInPrivateItems,
   overviewPane,
@@ -111,7 +112,7 @@ describe('private tabs on the phone', () => {
     expect(sameModeAs(state.tabs.x2, order).map((t) => t.id)).toEqual(['x1', 'x2'])
   })
 
-  it('opens the overview on the pane of the tab in view until a segment is picked', () => {
+  it('opens the overview on the pane of the tab in view until a view is picked', () => {
     expect(overviewPane(stateWith('r1'))).toBe('tabs')
     expect(overviewPane(stateWith('x1'))).toBe('private')
     pickOverviewPane('private')
@@ -119,6 +120,28 @@ describe('private tabs on the phone', () => {
     expect(privateTabsStore.get().pane).toBe('private')
     resetOverviewPane()
     expect(overviewPane(stateWith('r1'))).toBe('tabs')
+  })
+
+  it('a pick of the private view with no private tab open reads as the regular view: there is no empty private view (the cleanup spec §4)', () => {
+    const state = stateWith('r1')
+    const regularOnly: UIState = {
+      ...state,
+      tabs: Object.fromEntries(Object.entries(state.tabs).filter(([id]) => !id.startsWith('x'))),
+      spaces: state.spaces.map((s) => ({
+        ...s,
+        tabIds: s.tabIds.filter((id) => !id.startsWith('x'))
+      }))
+    }
+    expect(anyPrivateTab(state)).toBe(true)
+    expect(anyPrivateTab(regularOnly)).toBe(false)
+    pickOverviewPane('private')
+    expect(overviewPane(regularOnly)).toBe('tabs')
+    expect(overviewPane(regularOnly, 'private')).toBe('tabs')
+    expect(overviewPane(state, 'private')).toBe('private')
+    // The pick itself stands in the store for the private tab that may open next.
+    expect(privateTabsStore.get().pane).toBe('private')
+    expect(privateSurfaceActive(regularOnly, true)).toBe(false)
+    resetOverviewPane()
   })
 
   it('stands on the private surface with a private tab in view or the private pane up', () => {

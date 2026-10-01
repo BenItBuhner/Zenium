@@ -253,17 +253,19 @@ describe('the vertical list’s column (tabs-28)', () => {
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
     sidebar([{ id: 'work', tabs: many(30) }])
     const scroller = scrollerOf(panel())
-    expect(scroller.dataset.fadeAxis).toBe('y')
-    // With nothing past either edge (happy-dom lays out no overflow) both fades are 0.
+    // With nothing past either edge (happy-dom lays out no overflow) both fades are 0, and
+    // the list carries no mask.
     expect(scroller.style.getPropertyValue('--zen-fade-start')).toBe('0px')
     expect(scroller.style.getPropertyValue('--zen-fade-end')).toBe('0px')
-    // Scrolled into a long list, both edges fade at 24.
+    expect(scroller.dataset.fadeAxis).toBeUndefined()
+    // Scrolled into a long list, both edges fade at 24, on the scroller's mask.
     lay(scroller, { scrollTop: 200, scrollHeight: 30 * ROW, clientHeight: 300 })
     act(() => {
       scroller.dispatchEvent(new Event('scroll'))
     })
     expect(frame).not.toBeNull()
     act(() => frame!())
+    expect(scroller.dataset.fadeAxis).toBe('y')
     expect(scroller.style.getPropertyValue('--zen-fade-start')).toBe(`${STRIP_FADE}px`)
     expect(scroller.style.getPropertyValue('--zen-fade-end')).toBe(`${STRIP_FADE}px`)
     expect(STRIP_FADE).toBe(24)

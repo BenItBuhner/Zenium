@@ -582,12 +582,15 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         }
         check("a pull down the toolbar opens the tab overview", awaitJs(OVERVIEW_PHASE + "==='open'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
         check("open, the layer stands untransformed at full opacity", jsText(OVERVIEW_TRANSFORM) == "" && jsText(OVERVIEW_OPACITY).let { it == "" || it == "1" }, "transform '${jsText(OVERVIEW_TRANSFORM)}', opacity '${jsText(OVERVIEW_OPACITY)}'")
-        // TABLET-14: the grid at the width's columns, the search a field in the header.
+        // TABLET-14 as the tab overview cleanup spec's §7 re-states it: the grid at the width's
+        // columns; the header one row, the title alone (no segment row, no search field or
+        // magnifier – the search is the ⋯ menu's Search Tabs row, its field pinned under the
+        // header while it stands).
         val columns = gridColumns()
         check("the grid runs at the width's columns: three or more on a tablet, four at 1280", columns >= 3 && (width < 800 || columns == 4), "columns $columns at $width wide, cells ${cellKeys()}")
-        check("the tab search stands in the header as a field, no magnifier toggle (TABLET-14, §9.34)", awaitDom(SEARCH_INPUT, 4_000) && !jsBoolean("!!document.querySelector('$SEARCH_TOGGLE')"), "field ${domRect(SEARCH_INPUT)}, toggle ${domRect(SEARCH_TOGGLE)}")
-        check("the field's X stands only over a query: none on the empty field", !jsBoolean("!!document.querySelector('$SEARCH_CLEAR')"), "clear ${domRect(SEARCH_CLEAR)}")
-        check("the header keeps under four segments", jsNumber("document.querySelectorAll('$SEGMENT').length") <= 3, "segments ${jsText("[...document.querySelectorAll('$SEGMENT')].map(function(s){return s.textContent})")}")
+        check("the header is the title alone: no search field before the menu's Search Tabs row, no magnifier (cleanup spec §1, §7)", awaitDom(OVERVIEW_TITLE, 4_000) && domRect(SEARCH_INPUT) == null && !jsBoolean("!!document.querySelector('$SEARCH_TOGGLE')"), "title ${domRect(OVERVIEW_TITLE)}, field ${domRect(SEARCH_INPUT)}, toggle ${domRect(SEARCH_TOGGLE)}")
+        check("the header draws no segment row (cleanup spec §1)", jsNumber("document.querySelectorAll('$SEGMENT').length") <= 0, "segments ${jsText("[...document.querySelectorAll('$SEGMENT')].map(function(s){return s.textContent})")}")
+        check("the overview draws no ⋯ of its own: the toolbar's opens its menu (cleanup spec §4, §7)", domRect(OVERVIEW_MORE) == null, "more ${domRect(OVERVIEW_MORE)}")
         // §9.36: a card's picture takes the frame's aspect – landscape on this landscape shard – and
         // the grid opens with the active card's row whole. The numbers drawn are the finding.
         val frame = domRect(CONTENT)
@@ -610,23 +613,34 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         SystemClock.sleep(1_500)
         shot("13-overview")
         val cellsBefore = cellKeys()
+        // The search through the toolbar's ⋯: while the overview stands it pops the overview's
+        // menu (cleanup spec §4), its Search Tabs row pins the field under the header.
+        check("the toolbar's ⋯ pops the overview's menu with a Search Tabs row", openOverviewMenu() && menuRow(SEARCH_ROW) != null, "menu ${jsText(MENU_OPEN)}, rows ${menuRowLabels()}")
+        tapMenuRow(SEARCH_ROW)
+        check("the Search Tabs row pins the field under the header, the menu gone (cleanup spec §4, §7)", awaitDom(SEARCH_INPUT, 4_000) && awaitJs(MENU_OPEN, false, 4_000), "field ${domRect(SEARCH_INPUT)}, menu ${jsText(MENU_OPEN)}")
+        check("the empty field's X is Close search (one control with back's two meanings)", jsText(SEARCH_CLEAR_NAME) == "Close search", "clear ${domRect(SEARCH_CLEAR)} '${jsText(SEARCH_CLEAR_NAME)}'")
         tapDom(SEARCH_INPUT)
         awaitIme(true)
         SystemClock.sleep(600)
         instrumentation.sendStringSync("tea")
         check("a query narrows the grid to the matching cards and the New Tab card leaves (§9.34)", awaitJs("document.querySelectorAll('$CELL').length<${cellsBefore.length()}&&!document.querySelector('$CELL[data-cell=\"$NEW_TAB_CELL\"]')", true, 5_000), "cells ${cellKeys()} (were $cellsBefore)")
-        check("the field's X stands over the query", jsBoolean("!!document.querySelector('$SEARCH_CLEAR')"), "clear ${domRect(SEARCH_CLEAR)}")
+        check("over the query the X is Clear search", jsText(SEARCH_CLEAR_NAME) == "Clear search", "clear ${domRect(SEARCH_CLEAR)} '${jsText(SEARCH_CLEAR_NAME)}'")
         SystemClock.sleep(1_200)
         shot("13b-overview-search")
         tapDom(SEARCH_CLEAR)
         check("the X clears the query and the grid is whole again", awaitJs("document.querySelectorAll('$CELL').length===${cellsBefore.length()}", true, 5_000), "cells ${cellKeys()}")
         // The X hands the focus back to the field (the keyboard stays for the next query): off it, so
-        // the keyboard is down before the sheet.
+        // the keyboard is down before the field closes.
         blurChrome()
         awaitIme(false)
         SystemClock.sleep(800)
-        tapDom(OVERVIEW_MORE)
-        check("the overview's More opens a sheet", awaitDom(".zen-sheet", 4_000), "sheet ${domRect(".zen-sheet")}")
+        tapDom(SEARCH_CLEAR)
+        check("the X on the empty field closes the search and the header is the title again (cleanup spec §4)", awaitDomGone(SEARCH_INPUT, 4_000) && domRect(OVERVIEW_TITLE) != null, "field ${domRect(SEARCH_INPUT)}, title ${domRect(OVERVIEW_TITLE)}")
+        SystemClock.sleep(800)
+        // The sheet's dock, on the sheet the overview still has: the Spaces sheet its title opens
+        // (cleanup spec §1 – the overview's ⋯ and its sheet are gone).
+        tapDom(OVERVIEW_TITLE)
+        check("the title opens the Spaces sheet", awaitDom(".zen-sheet", 4_000) && awaitDom(SPACES_SHEET_ROW, 4_000), "sheet ${domRect(".zen-sheet")}, rows ${jsText("document.querySelectorAll('$SPACES_SHEET_ROW').length")}")
         SystemClock.sleep(1_500)
         val sheet = domRect(".zen-sheet")
         val window = domRect(CHROME_ROOT)
@@ -695,11 +709,16 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         finding("before the resize: active $tabBefore at scroll $scrollBefore, ${placeBefore.describe()}, ${loadsBefore} loads of the page so far")
 
         // What is up rides the fold (TABLET-08): the overview with a query in its field, and the
-        // Spaces drawer over it – the switcher's transient state is `overviewUiStore`'s and the
-        // drawer's `uiStore`'s, neither a shell's, so the phone shell the fold mounts comes up
-        // with all three where the tablet's left them.
+        // Spaces sheet its title opens over it (tab overview cleanup spec §1; the overview's
+        // Spaces drawer button is gone) – the switcher's transient state is `overviewUiStore`'s,
+        // the search and the sheet with it, none a shell's, so the phone shell the fold mounts
+        // comes up with all three where the tablet's left them.
         tapDom(TABS_BUTTON)
         check("the overview is up for the fold", awaitJs(OVERVIEW_PHASE + "==='open'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
+        SystemClock.sleep(1_200)
+        check("the toolbar's ⋯ pops the overview's menu for the fold's query", openOverviewMenu() && menuRow(SEARCH_ROW) != null, "menu ${jsText(MENU_OPEN)}, rows ${menuRowLabels()}")
+        tapMenuRow(SEARCH_ROW)
+        check("the Search Tabs row pins the field for the fold's query", awaitDom(SEARCH_INPUT, 4_000) && awaitJs(MENU_OPEN, false, 4_000), "field ${domRect(SEARCH_INPUT)}, menu ${jsText(MENU_OPEN)}")
         tapDom(SEARCH_INPUT)
         awaitIme(true)
         SystemClock.sleep(600)
@@ -709,11 +728,11 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         blurChrome()
         awaitIme(false)
         SystemClock.sleep(600)
-        tapDom(OVERVIEW_SPACES)
-        check("the Spaces drawer opens over the overview", awaitJs(SPACES_DRAWER_OPEN, true, 5_000) && awaitDom(SPACES_PANEL, 4_000), "drawer ${jsText(SPACES_DRAWER_STATE)}, panel ${domRect(SPACES_PANEL)}")
+        tapDom(OVERVIEW_TITLE)
+        check("the title opens the Spaces sheet over the overview", awaitJs(SPACES_SHEET_OPEN, true, 5_000) && awaitDom(SPACES_SHEET_ROW, 4_000), "sheet ${jsText(SPACES_SHEET_STATE)}, rows ${jsText("document.querySelectorAll('$SPACES_SHEET_ROW').length")}")
         SystemClock.sleep(1_500)
         shot("15a-fold-before")
-        finding("before the fold: overview ${jsText(OVERVIEW_PHASE)} at ${gridColumns()} columns, query '${jsText(SEARCH_VALUE)}', cells $cellsFolded, Spaces drawer ${jsText(SPACES_DRAWER_STATE)}")
+        finding("before the fold: overview ${jsText(OVERVIEW_PHASE)} at ${gridColumns()} columns, query '${jsText(SEARCH_VALUE)}', cells $cellsFolded, Spaces sheet ${jsText(SPACES_SHEET_STATE)}")
 
         // A 1280 x 590 window: the short side under 600 dp is the phone chrome, its bar below.
         resize("1280x590")
@@ -721,12 +740,12 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         SystemClock.sleep(2_500)
         check("the fold keeps the overview up, on the phone's mount", awaitJs(OVERVIEW_PHASE + "==='open'", true, 8_000) && awaitDom(".zen-overview:not([data-tablet])", 8_000), "phase ${jsText(OVERVIEW_PHASE)}, layer ${domRect(".zen-overview")}, tablet mount ${domRect(OVERVIEW_LAYER)}")
         check("and its query, in the phone's field, the grid narrowed the same way", awaitJs("$SEARCH_VALUE==='zen'", true, 5_000) && cellKeys().toString() == cellsFolded, "query '${jsText(SEARCH_VALUE)}', cells ${cellKeys()} (were $cellsFolded)")
-        check("and the Spaces drawer over it", jsBoolean(SPACES_DRAWER_OPEN) && awaitDom(SPACES_PANEL, 4_000), "drawer ${jsText(SPACES_DRAWER_STATE)}, panel ${domRect(SPACES_PANEL)}")
-        finding("after the fold: overview ${jsText(OVERVIEW_PHASE)} at ${gridColumns()} columns (the width's, not the shell's), query '${jsText(SEARCH_VALUE)}', Spaces drawer ${jsText(SPACES_DRAWER_STATE)}")
+        check("and the Spaces sheet over it, the phone's full width", jsBoolean(SPACES_SHEET_OPEN) && awaitDom(SPACES_SHEET_ROW, 4_000), "sheet ${jsText(SPACES_SHEET_STATE)}, box ${domRect(".zen-sheet")}, rows ${jsText("document.querySelectorAll('$SPACES_SHEET_ROW').length")}")
+        finding("after the fold: overview ${jsText(OVERVIEW_PHASE)} at ${gridColumns()} columns (the width's, not the shell's), query '${jsText(SEARCH_VALUE)}', Spaces sheet ${jsText(SPACES_SHEET_STATE)}")
         shot("15b-fold-after")
-        // The three come down by back, the phone's way: the drawer, then the query, then the overview.
+        // The three come down by back, the phone's way: the sheet, then the query, then the overview.
         back()
-        check("back takes the Spaces drawer down on the phone", awaitJs(SPACES_DRAWER_OPEN, false, 5_000) && awaitDomGone(SPACES_PANEL, 5_000), "drawer ${jsText(SPACES_DRAWER_STATE)}")
+        check("back takes the Spaces sheet down on the phone", awaitJs(SPACES_SHEET_OPEN, false, 5_000) && awaitDomGone(".zen-sheet", 5_000), "sheet ${jsText(SPACES_SHEET_STATE)}")
         SystemClock.sleep(1_200)
         shot("15c-fold-after-overview")
         closeOverviewByBack()
@@ -861,6 +880,48 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val l = a.getDouble(0).toFloat()
         val t = a.getDouble(1).toFloat()
         return RectF(l, t, l + a.getDouble(2).toFloat(), t + a.getDouble(3).toFloat())
+    }
+
+    /** The bounding rect (CSS px) of the element the JS expression `js` yields; null for none. */
+    private fun domRectOf(js: String): RectF? {
+        val raw = chromeJs("(function(){var e=($js);if(!e)return null;var b=e.getBoundingClientRect();return [b.left,b.top,b.width,b.height]})()")
+        if (raw.isEmpty() || raw == "null") return null
+        val a = JSONArray(raw)
+        val l = a.getDouble(0).toFloat()
+        val t = a.getDouble(1).toFloat()
+        return RectF(l, t, l + a.getDouble(2).toFloat(), t + a.getDouble(3).toFloat())
+    }
+
+    /** The toolbar menu's row whose label starts with `prefix` (`.zen-v2-menu-item`), as its rect; null while none. */
+    private fun menuRow(prefix: String): RectF? = domRectOf(
+        "Array.prototype.find.call(document.querySelectorAll('$TABLET_MENU_ITEM'),function(r){return r.textContent.trim().indexOf(${JSONObject.quote(prefix)})===0})||null"
+    )
+
+    /** The open toolbar menu's rows by their labels, in their order. */
+    private fun menuRowLabels(): String = jsText("[...document.querySelectorAll('$TABLET_MENU_ITEM')].map(function(r){return r.textContent.trim()})")
+
+    /**
+     * The toolbar's ⋯ while the overview stands: it pops the overview's menu (tab overview
+     * cleanup spec §4, §7). True once the menu is open with rows; a menu already up is left as it is.
+     */
+    private fun openOverviewMenu(): Boolean {
+        if (jsBoolean(MENU_OPEN) && menuRow("") != null) return true
+        tapDom(MENU_BUTTON, last = true)
+        if (!awaitJs(MENU_OPEN, true, 5_000)) return false
+        val deadline = SystemClock.uptimeMillis() + 4_000
+        while (SystemClock.uptimeMillis() < deadline && menuRow("") == null) SystemClock.sleep(150)
+        SystemClock.sleep(600)
+        return menuRow("") != null
+    }
+
+    /** A real touch on the toolbar menu's row that starts with `prefix`; false (and a note) when there is none. */
+    private fun tapMenuRow(prefix: String): Boolean {
+        val target = screen(menuRow(prefix)) ?: run {
+            finding("no '$prefix' row in the toolbar's menu to tap: ${menuRowLabels()}")
+            return false
+        }
+        Finger().tap(target.centerX(), target.centerY())
+        return true
     }
 
     /** A real touch on the middle of the element `selector` matches; false (and a note) when there is none. */
@@ -1146,6 +1207,7 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val OMNIBOX_ROW = ".zen-omnibox-row"
         /** The gap between the pill and its popup (`POPUP_GAP` in `Urlbar.tsx`). */
         private const val POPUP_GAP = 4f
+        /** The overview's own ⋯ – gone with the tab overview cleanup spec (§4); pinned absent. */
         private const val OVERVIEW_MORE = ".zen-overview button[aria-label=\"More\"]"
         /** The overview's layer under the tablet's mount flag (`TabOverview` with `tablet`), and what the slide writes to it per frame. */
         private const val OVERVIEW_LAYER = ".zen-overview[data-tablet]"
@@ -1196,15 +1258,24 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val CARD_ASPECT_SET = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');return l&&l.parentElement?(l.parentElement.style.getPropertyValue('--zen-overview-card-aspect')||'none'):'no layer'})()"
         /** Whether the active card's cell lies whole inside the grid's scroller (the opening scroll, §9.36). */
         private const val ACTIVE_ROW_WHOLE = "(function(){var a=document.querySelector('$ACTIVE_CELL');var s=document.querySelector('$SCROLLER');if(!a||!s)return false;var r=a.getBoundingClientRect();var g=s.getBoundingClientRect();return r.top>=g.top-1&&r.bottom<=g.bottom+1})()"
-        /** The header's tab search: the field (inline on the tablet, the phone's own row after a fold), its X, the phone's magnifier. */
+        /**
+         * The overview's header after the tab overview cleanup spec (§1, §7): the title is the
+         * space switcher (`OverviewTitle`, both mounts), the one row; the tab search is the ⋯
+         * menu's Search Tabs row, its field pinned under the header while it stands (its X Clear
+         * search over a query, Close search on the empty field); no magnifier toggle, no segment row.
+         */
+        private const val OVERVIEW_TITLE = ".zen-overview [data-testid=\"overview-title\"]"
+        private const val SEARCH_ROW = "Search Tabs"
         private const val SEARCH_INPUT = ".zen-overview [data-testid=\"overview-search\"] input"
         private const val SEARCH_CLEAR = ".zen-overview [data-testid=\"overview-search-clear\"]"
+        private const val SEARCH_CLEAR_NAME = "((document.querySelector('$SEARCH_CLEAR')||{getAttribute:function(){return ''}}).getAttribute('aria-label')||'')"
         private const val SEARCH_TOGGLE = ".zen-overview [data-testid=\"overview-search-toggle\"]"
         private const val SEARCH_VALUE = "((document.querySelector('$SEARCH_INPUT')||{value:''}).value)"
-        private const val SEGMENT = ".zen-overview-segment [role=\"tab\"]"
-        /** The header's Spaces button (both mounts) and the Spaces drawer it opens over the overview. */
-        private const val OVERVIEW_SPACES = ".zen-overview button[aria-label=\"Spaces\"]"
-        private const val SPACES_PANEL = ".zen-drawer-panel:not(.zen-tablet-drawer-panel)"
+        private const val SEGMENT = ".zen-overview [role=\"tab\"]"
+        /** The Spaces sheet the title opens over the overview (`SpacesSheet`, `overviewUiStore`'s `sheet`): its space rows, and its state. */
+        private const val SPACES_SHEET_ROW = ".zen-sheet [data-testid=\"spaces-sheet-space\"]"
+        private const val SPACES_SHEET_OPEN = "(function(){var s=window.__zenStores['overview-ui'].get().sheet;return !!s&&s.kind==='spaces'})()"
+        private const val SPACES_SHEET_STATE = "(function(){var s=window.__zenStores['overview-ui'].get().sheet;return s?s.kind:'none'})()"
         /** The toolbar's tab-count button before Menu (`Tabs (N)`, TABLET-14's second entry). */
         private const val TABS_BUTTON = ".zen-tablet-toolbar [data-tablet-tabs]"
 
@@ -1217,9 +1288,6 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val MENU_ROW_HEIGHTS = "[...document.querySelectorAll('.zen-v2-menu-item')].map(function(r){return r.getBoundingClientRect().height})"
         private const val OVERVIEW_PHASE = "window.__zenStores.stage.get().overview.phase"
         private const val DRAWER_PHASE = "window.__zenStores['tablet-drawer'].get().phase"
-        /** The phone's Spaces drawer: up in `uiStore`, landed in its own store (`lib/gestures/drawer.ts`). */
-        private const val SPACES_DRAWER_OPEN = "window.__zenStores.ui.get().drawerOpen===true&&window.__zenStores['spaces-drawer'].get().phase==='open'"
-        private const val SPACES_DRAWER_STATE = "(window.__zenStores.ui.get().drawerOpen?'up':'down')+' '+window.__zenStores['spaces-drawer'].get().phase"
 
         /** How long the drawer's gentle spring is given inside its measured block (it lands well within). */
         private const val DRAWER_MS = 1_600L

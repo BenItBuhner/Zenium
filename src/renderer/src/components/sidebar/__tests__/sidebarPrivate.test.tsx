@@ -294,7 +294,8 @@ describe('the private pose: a private tab in view', () => {
     sidebar({ tabs: regularScene(), active: 'bank' })
     const scroller = q<HTMLElement>('[data-tab-scroller][data-active="true"]')!
     expect(scroller).not.toBeNull()
-    expect(scroller.dataset.fadeAxis).toBe('y')
+    // The rows' scroller is the one with the fading edges (measured: its fade variables are on it).
+    expect(scroller.style.getPropertyValue('--zen-fade-end')).toBe('0px')
     expect(scroller.contains(newTabRow())).toBe(false)
     const foot = newTabRow().closest<HTMLElement>('[data-strip-foot]')!
     expect(foot).not.toBeNull()

@@ -10,9 +10,12 @@ import { BLANK_URL } from '@shared/url'
 
 /*
  * The tablet shell's mount of the tab overview (matrix TABLET-14, TABLET-08, MOT-04; v2 §9.34,
- * §9.36, §11): the phone's `TabOverview` under a `tablet` flag, at the width's columns – three or
- * more at any tablet width – with the tab search as a FIELD standing in the header row where the
- * phone has its magnifier, always up on a searchable pane, its X only over a query. The overview's
+ * §9.36, §11; tab overview cleanup spec §7): the phone's `TabOverview` under a `tablet` flag, at
+ * the width's columns – three or more at any tablet width – and the ONE component otherwise: the
+ * same one header row (the title, nothing trailing it; no segments), the bar's ⋯ for the menu,
+ * and the tab search no longer a field in the header row but the ⋯ menu's "Search Tabs" row,
+ * whose field comes up under the header as on the phone (§7: "tab search moves from the header
+ * field into the ⋯ row"). The overview's
  * transient state – the query, the select-tabs mode and its picks, the sheet that is up, the
  * grid's scroll – is `overviewUiStore`'s, not the component's: a window resized between the phone
  * and tablet layouts swaps shells, and the next shell's mount comes up where the last one stood
@@ -47,6 +50,7 @@ const { browserStore, claimMessageCards, contentAreaStore, uiStore } =
 const { beginOverviewDrag, dismissOverview, dragOverview, overviewTravel, stageStore } =
   await import('@renderer/lib/gestures/stage')
 const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { dispatchOverviewCommand } = await import('@renderer/lib/overviewCommands')
 const { OVERVIEW_UI_OFF, overviewUiStore, resetOverviewUi } =
   await import('@renderer/lib/overviewUi')
 const { overviewColumns } = await import('@renderer/lib/layout')
@@ -353,12 +357,8 @@ afterEach(() => {
 
 // --- helpers -----------------------------------------------------------------------------------
 
-const byLabel = (label: string): HTMLElement | null =>
-  document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 const byTestId = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
-const buttonByText = (text: string): HTMLElement | undefined =>
-  [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === text)
 /** The cards in the grid's order (the New Tab card among them). */
 const cellKeys = (): string[] =>
   [...document.querySelectorAll<HTMLElement>('[data-cell]')].map((el) =>
@@ -421,18 +421,27 @@ function scrollGridTo(top: number): void {
   })
 }
 
-async function openMenu(): Promise<void> {
-  act(() => byLabel('More')!.click())
+/** A row of the bar's ⋯ menu picked (cleanup spec §4): its `overview.command` reaches the overview. */
+async function command(name: Parameters<typeof dispatchOverviewCommand>[0]): Promise<void> {
+  act(() => dispatchOverviewCommand(name))
   await settle()
   await land()
 }
 
-async function pick(text: string): Promise<void> {
-  const row = buttonByText(text)
-  expect(row, text).toBeDefined()
-  act(() => row!.click())
+/** The ⋯ menu's Search Tabs row: the field comes up under the header. */
+function openSearch(): void {
+  act(() => dispatchOverviewCommand('search-tabs'))
+}
+
+/** The title opens the Spaces sheet (§1); let it come up. */
+async function openSpaces(): Promise<void> {
+  act(() => byTestId('overview-title')!.click())
+  await settle()
   await land()
 }
+
+/** The header at rest (§1, §7): the one title control, "Work, N tabs", on both hosts. */
+const AT_REST = (count: number): string[] => [`Work, ${count} tabs`]
 
 function overview(patch: Partial<OverviewState>): void {
   act(() => stageStore.set({ overview: { ...stageStore.get().overview, ...patch } }))
@@ -467,60 +476,66 @@ describe('the tablet grid (TABLET-14)', () => {
   })
 })
 
-// --- (B) the search field in the header --------------------------------------------------------
+// --- (B) the search on the tablet ---------------------------------------------------------------
 
-describe('the search field in the tablet header (TABLET-14, §9.34)', () => {
-  it('stands in the header row in the magnifier`s place, up without a tap, the keyboard not taken', () => {
+describe('the search on the tablet (TABLET-14 as the cleanup spec §7 restates it)', () => {
+  it('the header row is the title alone, no field in it; Search Tabs is the ⋯ row and its field comes up under the header, the phone`s pose, focused', () => {
     render(stateOf(pages()), true)
+    expect(field()).toBeNull()
+    expect(headerButtons()).toEqual(AT_REST(6))
+    expect(byTestId('overview-search-toggle')).toBeNull()
+    expect(document.querySelectorAll('[role="tablist"]')).toHaveLength(0)
+    // Nothing for back to address while no field stands.
+    expect(topBackSurface()?.name).not.toBe('overview-search')
+
+    openSearch()
     const input = field()
     expect(input).not.toBeNull()
     expect(input!.getAttribute('aria-label')).toBe('Search tabs')
-    expect(header().contains(input)).toBe(true)
-    expect(byTestId('overview-search-toggle')).toBeNull()
-    expect(byTestId('overview-search')!.classList.contains('zen-overview-search-inline')).toBe(true)
-    // The phone's segments row stays: Spaces and More beside the field, no magnifier.
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
-    expect(document.activeElement).not.toBe(input)
-    // An empty field is a control like the others: no X, nothing for back to address.
-    expect(byTestId('overview-search-clear')).toBeNull()
-    expect(topBackSurface()?.name).not.toBe('overview-search')
+    expect(header().contains(input)).toBe(false)
+    expect(byTestId('overview-search')!.className).toContain('zen-overview-search')
+    expect(document.activeElement).toBe(input)
+    // An empty field closes on its X, as on the phone; the search is a back surface while up.
+    expect(byTestId('overview-search-clear')?.getAttribute('aria-label')).toBe('Close search')
+    expect(topBackSurface()?.name).toBe('overview-search')
   })
 
-  it('narrows the grid as it is typed, the X and the back surface only over a query; back clears the query and keeps the field', () => {
+  it('narrows the grid as it is typed; back clears the query first and closes the field second, the header row back as it was', () => {
     render(stateOf(pages()), true)
+    openSearch()
     type('wiki')
     expect(cellKeys()).toEqual(['coffee', 'tea'])
     expect(byTestId('overview-search-clear')?.getAttribute('aria-label')).toBe('Clear search')
-    expect(topBackSurface()?.name).toBe('overview-search')
     expect(overviewUiStore.get().search).toEqual({ open: true, query: 'wiki' })
     back()
     expect(field()?.value).toBe('')
     expect(field()).not.toBeNull()
-    expect(byTestId('overview-search-clear')).toBeNull()
-    expect(topBackSurface()?.name).not.toBe('overview-search')
     expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
+    back()
+    expect(field()).toBeNull()
+    expect(topBackSurface()?.name).not.toBe('overview-search')
+    expect(headerButtons()).toEqual(AT_REST(6))
   })
 
   it('the X over a query clears it and keeps the field with the keyboard', () => {
     render(stateOf(pages()), true)
+    openSearch()
     type('tea')
     expect(cellKeys()).toEqual(['tea'])
     act(() => byTestId('overview-search-clear')!.click())
     expect(field()?.value).toBe('')
     expect(document.activeElement).toBe(field())
-    expect(byTestId('overview-search-clear')).toBeNull()
+    expect(byTestId('overview-search-clear')?.getAttribute('aria-label')).toBe('Close search')
   })
 
-  it('the phone`s mount is the phone`s: the magnifier, no field until it is tapped', () => {
+  it('the phone`s mount is the same: the title alone, the field under the header from the ⋯ row', () => {
     viewportStore.set(PHONE)
     render(stateOf(pages()), false)
     expect(field()).toBeNull()
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
-    act(() => byTestId('overview-search-toggle')!.click())
+    expect(headerButtons()).toEqual(AT_REST(6))
+    openSearch()
     expect(field()).not.toBeNull()
-    expect(byTestId('overview-search')!.classList.contains('zen-overview-search-inline')).toBe(
-      false
-    )
+    expect(byTestId('overview-search')!.className).toContain('zen-overview-search')
     expect(header().contains(field())).toBe(false)
   })
 })
@@ -533,7 +548,7 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     viewportStore.set(PHONE)
     mountStage(state, false)
     await settle()
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('wiki')
     expect(cellKeys()).toEqual(['coffee', 'tea'])
     scrollGridTo(240)
@@ -542,7 +557,7 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     await swapTo(state, true)
     expect(layer().hasAttribute('data-tablet')).toBe(true)
     expect(field()?.value).toBe('wiki')
-    expect(header().contains(field())).toBe(true)
+    expect(header().contains(field())).toBe(false)
     expect(cellKeys()).toEqual(['coffee', 'tea'])
     expect(scroller().scrollTop).toBe(240)
     // The swap took no keyboard: the field is where it was, not focused anew.
@@ -556,19 +571,19 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     expect(cellKeys()).toEqual(['coffee', 'tea'])
   })
 
-  it('keeps the sheet that is up: the phone`s menu comes up again on the tablet`s mount', async () => {
+  it('keeps the sheet that is up: the phone`s Spaces sheet (the title`s, §1) comes up again on the tablet`s mount', async () => {
     const state = stateOf(pages())
     viewportStore.set(PHONE)
     mountStage(state, false)
     await settle()
-    await openMenu()
-    expect(sheetRows()).toContain('Select Tabs')
-    expect(overviewUiStore.get().sheet?.kind).toBe('menu')
+    await openSpaces()
+    expect(sheetRows()).toContain('New Space…')
+    expect(overviewUiStore.get().sheet?.kind).toBe('spaces')
 
     await swapTo(state, true)
     await land()
-    expect(overviewUiStore.get().sheet?.kind).toBe('menu')
-    expect(sheetRows()).toContain('Select Tabs')
+    expect(overviewUiStore.get().sheet?.kind).toBe('spaces')
+    expect(sheetRows()).toContain('New Space…')
   })
 
   it('keeps the select-tabs mode and its picks; the stage`s close resets everything', async () => {
@@ -576,8 +591,7 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     viewportStore.set(PHONE)
     mountStage(state, false)
     await settle()
-    await openMenu()
-    await pick('Select Tabs')
+    await command('select-tabs')
     expect(topBackSurface()?.name).toBe('overview-selection')
     act(() => card('coffee').click())
     expect(checkboxes().filter(([, on]) => on)).toEqual([['coffee', true]])
@@ -598,7 +612,7 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     viewportStore.set(PHONE)
     mountStage(state, false)
     await settle()
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('wiki')
     expect(topBackSurface()?.name).toBe('overview-search')
     // The Spaces drawer's place: a surface pushed over the search before the fold.
@@ -609,15 +623,21 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     // The tablet's mount did not re-push the search above it.
     expect(topBackSurface()?.name).toBe('over-the-search')
     popOver()
-    // Below it the search stands, and its back is the new mount's: the query clears first.
+    // Below it the search stands, and its back is the new mount's: the query clears first, the
+    // field staying; the next back closes the field (the phone's two steps, §4 on both hosts).
     expect(topBackSurface()?.name).toBe('overview-search')
     act(() => {
       dispatchBackEvent('commit')
     })
     expect(field()?.value).toBe('')
+    expect(overviewUiStore.get().search).toEqual({ open: true, query: '' })
+    expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
+    act(() => {
+      dispatchBackEvent('commit')
+    })
+    expect(field()).toBeNull()
     expect(overviewUiStore.get().search).toEqual({ open: false, query: '' })
     expect(topBackSurface()?.name).not.toBe('overview-search')
-    expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
   })
 
   it('a pane`s scroll is its own: the swap onto another pane comes up at the top', async () => {
@@ -659,25 +679,25 @@ describe("the phone switcher's gates hold on the tablet mount", () => {
       expect(privateGrid.hasAttribute('inert')).toBe(true)
       expect(privateGrid.getAttribute('aria-hidden')).toBe('true')
       expect(document.body.textContent).not.toContain('one.example')
-      // The header's field is the Private pane's too (a card pane), still in the header row.
-      expect(header().contains(field())).toBe(true)
+      // The header names the private view (§3): the mask heading, no control.
+      expect(byTestId('overview-title')?.getAttribute('data-view')).toBe('private')
+      expect(headerButtons()).toEqual([])
     } finally {
       act(() => resetPrivateLock())
     }
   })
 
-  it('the Inactive tabs entry is absent at 0 and the segment row`s trailing button otherwise (TAB-20, §9.34)', () => {
+  it('the Inactive tabs entry is the ⋯ menu`s row on the tablet too (TAB-20; cleanup spec §4, root §9): no button of the overview`s, no segment row', () => {
     const state = stateOf(pages())
     ;(state as unknown as { archivedTabCount: number }).archivedTabCount = 0
     render(state, true)
     expect(byTestId('overview-inactive-tabs')).toBeNull()
     const withArchive = { ...state, archivedTabCount: 2 } as UIState
     render(withArchive, true)
-    const entry = byTestId('overview-inactive-tabs')
-    expect(entry).not.toBeNull()
-    expect(entry!.getAttribute('aria-label')).toBe('Inactive tabs, 2')
-    // Never a fourth segment: the pane segments stay two (Tabs, Groups) beside it.
-    expect(document.querySelectorAll('[data-testid^="overview-pane-"]').length).toBeLessThan(4)
+    expect(byTestId('overview-inactive-tabs')).toBeNull()
+    expect(document.querySelectorAll('[aria-label^="Inactive tabs"]')).toHaveLength(0)
+    expect(document.querySelectorAll('[data-testid^="overview-pane-"]')).toHaveLength(0)
+    expect(headerButtons()).toEqual(AT_REST(6))
   })
 
   it('a group is a card spanning the grid`s columns, its members in it (TAB-16)', () => {
@@ -701,7 +721,8 @@ describe("the phone switcher's gates hold on the tablet mount", () => {
     expect(group!.classList.contains('col-span-full')).toBe(true)
     expect(byTestId('group-card-count')?.textContent?.trim()).toBe('2')
     expect(cellKeys()).toEqual(['group:research', 'm1', 'm2', 'a', 'new-tab'])
-    // And the field narrows into the group: a query keeps the group's matching member alone.
+    // And the search narrows into the group: a query keeps the group's matching member alone.
+    openSearch()
     type('zen')
     expect(cellKeys()).toEqual(['group:research', 'm2'])
   })
