@@ -3,7 +3,7 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { BLANK_URL, getHost } from '@shared/url'
 import { cmd } from './api'
 import { closeOverview, overviewIsOpen, setStageLayerShown } from './gestures/stage'
-import { reducedMotion, type SpringConfig } from './motion/spring'
+import { reducedMotion } from './motion/spring'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import { captureThumbnail } from './thumbnails'
@@ -52,18 +52,6 @@ export const newTabGrowStore = createStore<NewTabGrowState>(GROW_IDLE, 'newtab-g
 
 /** The corner radius the surface starts with: the plus button is a 44 pill. */
 export const GROW_ORIGIN_RADIUS = 22
-
-/**
- * The surface's spring: SNAPPY's family, a touch stiffer, so a full-height run from the bar to
- * the frame settles in about 300 ms without visible overshoot.
- */
-export const SPRING_GROW: SpringConfig = {
-  stiffness: 520,
-  damping: 45,
-  mass: 1,
-  restDelta: 0.5,
-  restSpeed: 10
-}
 
 export interface GrowFrame {
   x: number

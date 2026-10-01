@@ -40,9 +40,9 @@ import {
  *
  * Out of the walk: `__tests__`, `lib/motion/tokens.ts` (the owner) and `lib/motion/spring.ts`
  * (`SPRING_STEP_CLAMP_MS`'s owner, re-exported by the tokens). The stylesheet's own `120ms` /
- * `180ms` (main.css), Tailwind's `duration-*` classes and the springs of `lib/newtab.ts` and
- * `lib/gestures/dock.ts` are outside `components/**` and `lib/motion/**`: the wave report's
- * debt, not this pin's.
+ * `180ms` (main.css), Tailwind's `duration-*` classes and the dock's own lift spring
+ * (`lib/gestures/dock.ts`'s `SPRING_LIFT`) are outside `components/**` and `lib/motion/**`: the
+ * wave report's debt, not this pin's.
  */
 
 type Kind = 'css' | 'curve' | 'duration' | 'named' | 'wait' | 'spring'
