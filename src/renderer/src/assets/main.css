@@ -4429,12 +4429,12 @@
   .zen-group-tile-empty {
     background: rgb(var(--zen-fg-rgb) / 0.04);
   }
-  /* A saved group's tile (`SavedGroupCard`): the kept page's favicon over its title, two lines at most. */
+  /* A saved group's tile (`SavedGroupCard`): the kept page's favicon alone, centred on the
+     placeholder's fill, as an open group's uncaptured member draws (§2: no text at tile size). */
   .zen-group-tile-page {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 6px 6px;
+    align-items: center;
+    justify-content: center;
   }
   .zen-group-tile-favicon {
     width: 16px;
@@ -4444,16 +4444,6 @@
   }
   .zen-group-tile-favicon-none {
     background: rgb(var(--zen-fg-rgb) / 0.12);
-  }
-  .zen-group-tile-title {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    color: var(--zen-muted);
-    font-size: 11px;
-    line-height: 1.25;
-    overflow-wrap: anywhere;
   }
   .zen-group-options {
     z-index: 1;

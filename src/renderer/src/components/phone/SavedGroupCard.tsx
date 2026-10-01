@@ -3,7 +3,6 @@ import type { Folder, SavedGroupTab } from '@shared/types'
 import { groupColorVars } from '@renderer/lib/groups'
 import { groupRowLabel, type GroupRow } from '@renderer/lib/groupRows'
 import { uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
 import { GroupRename } from './GroupCard'
 import { mosaicOf, MOSAIC_TILES } from './groupMosaic'
@@ -15,7 +14,8 @@ import { useLongPress } from './useLongPress'
  * end, before the New Tab card, as a card in the folded group's dress – the saved ring in the
  * header's glyph slot (`GroupGlyph saved`, §9.36), the name, the pages' count as the aside, and
  * a 2×2 mosaic of the pages it keeps: no captures to show, so each tile is the page's favicon
- * over its title. A tap reopens the group (the owner's `folder.open`); a hold opens its sheet
+ * alone on the fill, as an open group's uncaptured member draws (`TabPreview tile`; never the
+ * title at tile size, ruled on #731). A tap reopens the group (the owner's `folder.open`); a hold opens its sheet
  * (Open, Rename, Delete – `GroupRowSheet`), Rename editing the name in the header in place
  * (`GroupRename`, as the open group's card does). The card is the grid's cell `saved:<id>` for
  * the glide.
@@ -100,16 +100,18 @@ export function SavedGroupCard({
   )
 }
 
-/** A kept page as a tile: its favicon (or a quiet disc where none is kept) over its title. */
+/**
+ * A kept page as a tile: its favicon (or a quiet disc where none is kept) alone, centred on the
+ * placeholder's fill – no title, no host (§2).
+ */
 function SavedPageTile({ page }: { page: SavedGroupTab }): JSX.Element {
   return (
-    <div className="zen-group-tile zen-group-tile-page" data-tile={page.url}>
+    <div className="zen-group-tile zen-group-tile-page zen-tab-placeholder" data-tile={page.url}>
       {page.favicon ? (
         <img className="zen-group-tile-favicon" src={page.favicon} alt="" draggable={false} />
       ) : (
-        <span className={cn('zen-group-tile-favicon zen-group-tile-favicon-none')} />
+        <span className="zen-group-tile-favicon zen-group-tile-favicon-none" />
       )}
-      <span className="zen-group-tile-title">{page.title || page.url}</span>
     </div>
   )
 }

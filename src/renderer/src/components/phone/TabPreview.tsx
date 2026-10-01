@@ -30,6 +30,12 @@ interface Props {
    * picture and reads none. On by default for the cards that are up whenever they are mounted.
    */
   visible?: boolean
+  /**
+   * This is a tile of a group card's mosaic (`GroupCard`, cleanup spec §2): the capture alone,
+   * or – with none – the favicon alone on the placeholder's fill, never the title and host the
+   * placeholder page carries, which are noise at tile size (ruled on #731).
+   */
+  tile?: boolean
   className?: string
   style?: CSSProperties
 }
@@ -38,7 +44,7 @@ interface Props {
  * What a tab looks like when its live page is not available to draw: the last picture the host
  * has of it (`lib/thumbnails.ts`: the card picture it keeps across restarts, or the full cover
  * the chrome captured), or – for pages it has none of – a quiet placeholder page carrying the
- * tab's identity.
+ * tab's identity (a mosaic tile, `tile`, carries the favicon of it alone).
  *
  * A private tab's card while the private tabs are locked (INC-05, `lib/privateLock.ts`) shows
  * none of it: its picture blurred to colour (`.zen-tab-preview-masked`), or a bare placeholder
@@ -52,12 +58,14 @@ export function TabPreview({
   cover = false,
   sharp = false,
   visible = true,
+  tile = false,
   className,
   style
 }: Props): JSX.Element {
   const thumbnail = useThumbnail(tab.id, { cover, sharp, visible })
   const masked = useTabMasked(tab)
-  // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
+  // A chrome page is never captured: its card shows the page drawn small (v2 §10.1) – the
+  // still stands as its capture in a tile too.
   if (isChromePageUrl(tab.url)) {
     return (
       <div className={cn('h-full w-full', className)} style={style}>
@@ -92,6 +100,20 @@ export function TabPreview({
   const host = getHost(tab.url).replace(/^www\./, '')
   const blank = isEmptyTabUrl(tab.url)
   const [iconPx, titlePx, hostPx] = placeholderPx(scale)
+  if (tile) {
+    return (
+      <div
+        className={cn(
+          'zen-tab-placeholder flex h-full w-full items-center justify-center',
+          className
+        )}
+        style={style}
+        data-testid="tab-preview-tile"
+      >
+        <Favicon tab={tab} size={iconPx} />
+      </div>
+    )
+  }
   return (
     <div
       className={cn(

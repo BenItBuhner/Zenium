@@ -85,9 +85,15 @@ describe('SavedGroupCard', () => {
       'more'
     ])
     expect(tiles[3].textContent).toBe('+2')
-    // A page with no title reads its address; a favicon kept is drawn, none is a quiet disc.
-    expect(tiles[0].querySelector('.zen-group-tile-title')!.textContent).toBe('https://p0.example/')
+    // A page's tile is its favicon alone on the placeholder's fill – a favicon kept is drawn,
+    // none is a quiet disc – with no title or address at tile size (§2, ruled on #731).
+    for (const tile of tiles.slice(0, 3)) {
+      expect(tile.textContent).toBe('')
+      expect(tile.classList.contains('zen-tab-placeholder')).toBe(true)
+      expect(tile.querySelector('.zen-group-tile-title')).toBeNull()
+    }
     expect(tiles[0].querySelector('img')).toBeNull()
+    expect(tiles[0].querySelector('.zen-group-tile-favicon-none')).not.toBeNull()
     expect(tiles[1].querySelector('img')!.getAttribute('src')).toBe(
       'https://p1.example/favicon.ico'
     )

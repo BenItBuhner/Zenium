@@ -387,7 +387,9 @@ export function GroupCard({
 /**
  * The folded card's 2×2 mosaic (§2): the members' captures as tiles – all of them up to four,
  * else three and a "+N" tile naming the rest (`mosaicOf`) – with the tiles a smaller group leaves
- * empty drawn as quiet slots, so the face is a two-by-two whatever the count. Laid under the
+ * empty drawn as quiet slots, so the face is a two-by-two whatever the count. A tile is the
+ * capture alone or, for a member with none, its favicon alone on the fill (`TabPreview tile`):
+ * never the title and host at tile size, which are noise (ruled on #731). Laid under the
  * header over the member cards' place and faded by the stylesheet with the fold
  * (`.zen-group-mosaic`); it reads nothing to assistive technology – the header's sentence names
  * the group and its count – and holds its pictures only while the card is on screen or a row
@@ -407,7 +409,7 @@ function GroupMosaic({
     <div className="zen-group-mosaic" aria-hidden data-testid="group-card-mosaic">
       {tiles.map((tab) => (
         <div key={tab.id} className="zen-group-tile" data-tile={tab.id}>
-          <TabPreview tab={tab} scale={0.45} visible={visible} />
+          <TabPreview tab={tab} scale={0.45} visible={visible} tile />
         </div>
       ))}
       {more > 0 && (
