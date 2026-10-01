@@ -9,10 +9,14 @@
  * height, and at a leave's start, when it seats 0 (`BandSeam.depart`): the page's bottom rides
  * past the frame's edge while it travels (clipped by the window, as Android's WebView is by its
  * container) and never leaves the frame bare. The OFFSET is where the page is right now, its
- * distance from the frame's top edge, written per frame of the travel straight to the host
+ * distance from the frame's top edge, written per frame of the travel to the host
  * (`layout.pageOffset`), which moves the placed views' bounds against the seat of the layout
  * they stand in – a move, never a resize (§6). The seat is a store, so the reporter lays out in
- * the same React flush that seats; the offset is a plain number, so a frame re-renders nothing.
+ * the same React flush that seats. The offset is a store too – the one source for everything
+ * that moves with the page: the core hears each write as `layout.pageOffset` and moves the
+ * views; a page the chrome draws itself (Settings, History – no view under it) rides on the
+ * same number through `content/PageBandLayer.tsx`, which reads the store without React, so a
+ * frame of the travel re-renders nothing.
  *
  * Android leaves both at 0: its band host moves the WebView by the pull channel, and a report
  * with nothing seated carries no band.
@@ -22,12 +26,17 @@ import { run } from './api'
 import { createStore } from './store'
 
 export const bandSeatStore = createStore<{ seat: number }>({ seat: 0 }, 'bandSeat')
-
-let offset = 0
+/** Where the page is right now – its distance from the frame's top edge – as the last frame put it. */
+export const bandOffsetStore = createStore<{ offset: number }>({ offset: 0 }, 'bandOffset')
 
 /** The band's seated height: the page is laid out this far below the frame's top edge. */
 export function bandSeat(): number {
   return bandSeatStore.get().seat
+}
+
+/** The page's present offset from the frame's top edge (0 at home). */
+export function bandOffset(): number {
+  return bandOffsetStore.get().offset
 }
 
 /** Seat the band at `seat` (0 unseats it): the layout reporter lays the page out under it. */
@@ -36,16 +45,20 @@ export function seatBand(seat: number): void {
   bandSeatStore.set({ seat })
 }
 
-/** The page is `to` from the frame's top edge now: the host moves its bounds there (per frame). */
+/**
+ * The page is `to` from the frame's top edge now (per frame): the store carries it to whatever
+ * the chrome draws for the page, the host moves the placed views' bounds there.
+ */
 export function movePage(to: number): void {
-  if (to === offset) return
-  offset = to
+  if (to === bandOffsetStore.get().offset) return
+  bandOffsetStore.set({ offset: to })
   run('layout.pageOffset', { offset: to })
 }
 
 /** What the layout report says of the band: nothing while nothing is seated and the page is home. */
 export function layoutBand(): LayoutBand | undefined {
   const seat = bandSeat()
+  const offset = bandOffset()
   return seat === 0 && offset === 0 ? undefined : { seat, offset }
 }
 
@@ -58,6 +71,6 @@ export function pageRectUnderBand(area: Rect, seat: number): Rect {
 
 /** Forget the seat and the offset (tests). */
 export function resetPageBand(): void {
-  offset = 0
+  bandOffsetStore.set({ offset: 0 })
   bandSeatStore.set({ seat: 0 })
 }
