@@ -87,8 +87,6 @@ import {
 } from '@renderer/lib/overviewSelection'
 import {
   SEARCH_OFF,
-  backFoldTarget,
-  noteGroupFolded,
   noteOverviewScroll,
   overviewUiStore,
   setOverviewSearch,
@@ -537,29 +535,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   )
   const exitSelection = useCallback(() => setSelection(endSelection()), [setSelection])
   useBackSurface(selecting ? { name: 'overview-selection', onCommit: exitSelection } : null)
-  // The system back folds the group the user unfolded here last (§2: "tap the header or the
-  // back gesture to fold") – the fold the header's tap makes, `folder.collapsed` as the model
-  // keeps it – for as long as one of them stands open with a card on this grid; a group that was
-  // open as the overview came up was no step taken here, and is not the back's to fold
-  // (`backFoldTarget`). Not while tabs are being selected: the mode's surface has the back.
-  const unfolded = overviewUiStore.use((s) => s.unfolded)
-  const backFoldId = backFoldTarget(
-    unfolded,
-    new Set(
-      groups.filter((f) => !f.collapsed && (members.get(f.id)?.length ?? 0) > 0).map((f) => f.id)
-    )
-  )
-  useBackSurface(
-    interactive && !selecting && backFoldId !== null
-      ? {
-          name: 'overview-group',
-          onCommit: () => {
-            run('folder.update', { folderId: backFoldId, patch: { collapsed: true } })
-            noteGroupFolded(backFoldId)
-          }
-        }
-      : null
-  )
   const handle = useOverviewHandle({ edge })
   // A horizontal drag over the grid's background moves to the neighbouring SPACE (GN-19; §1,
   // §6), the Space's slot riding the finger and the header following; not while tabs are being

@@ -69,23 +69,14 @@ export interface OverviewUiState {
   kept: KeptSelection
   sheet: OverviewSheet | null
   scroll: OverviewScroll | null
-  /**
-   * The groups the user UNFOLDED in this overview, oldest first (tab overview cleanup spec §2:
-   * "tap the header or the back gesture to fold"). The system back folds the latest of them
-   * that still stands open on the grid; a group that was already open when the overview came
-   * up was no step taken here, and back past the list leaves the overview as it always did –
-   * so an overview opened over three open groups is still one back from closing.
-   */
-  unfolded: string[]
 }
 
-/** A fresh overview: no query, no mode, no sheet, at the top, no group unfolded here. */
+/** A fresh overview: no query, no mode, no sheet, at the top. */
 export const OVERVIEW_UI_OFF: OverviewUiState = {
   search: SEARCH_OFF,
   kept: NO_KEPT_SELECTION,
   sheet: null,
-  scroll: null,
-  unfolded: []
+  scroll: null
 }
 
 export const overviewUiStore = createStore<OverviewUiState>(OVERVIEW_UI_OFF, 'overview-ui')
@@ -142,36 +133,6 @@ export function setOverviewSelection(next: Next<KeptSelection>): void {
 
 export function setOverviewSheet(next: Next<OverviewSheet | null>): void {
   overviewUiStore.set((s) => ({ sheet: resolve(next, s.sheet) }))
-}
-
-/** The user unfolded group `folderId` on this overview's grid: the latest one, for the back to fold. */
-export function noteGroupUnfolded(folderId: string): void {
-  overviewUiStore.set((s) => ({
-    unfolded: [...s.unfolded.filter((id) => id !== folderId), folderId]
-  }))
-}
-
-/** Group `folderId` folded (by its header, or by the back): no longer the back's to fold. */
-export function noteGroupFolded(folderId: string): void {
-  overviewUiStore.set((s) =>
-    s.unfolded.includes(folderId) ? { unfolded: s.unfolded.filter((id) => id !== folderId) } : {}
-  )
-}
-
-/**
- * The group the system back folds, or null: the one unfolded here last that still stands open
- * among `open` (the grid's open groups – a group folded by other means, gone, or with no card
- * on show is passed over).
- */
-export function backFoldTarget(
-  unfolded: readonly string[],
-  open: ReadonlySet<string>
-): string | null {
-  for (let i = unfolded.length - 1; i >= 0; i--) {
-    const id = unfolded[i]!
-    if (open.has(id)) return id
-  }
-  return null
 }
 
 /** The grid of `pane` scrolled to `top` (the grid's own scroll event). */

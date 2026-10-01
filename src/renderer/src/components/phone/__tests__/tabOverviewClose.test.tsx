@@ -63,7 +63,6 @@ const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/priv
 const { dispatchOverviewCommand, overviewCommandListeners } =
   await import('@renderer/lib/overviewCommands')
 const { overviewMenuRequest } = await import('@renderer/lib/overviewMenuRequest')
-const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 
@@ -298,8 +297,6 @@ afterEach(async () => {
     ...stageStore.get(),
     overview: { phase: 'closed', progress: 0, heroTabId: null, target: 0 }
   })
-  // The groups unfolded here are this overview's; the stage's dismissal resets them in the app.
-  resetOverviewUi()
   for (const [name, descriptor] of sizes) {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
@@ -932,103 +929,5 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     await settleClose()
     expect(toasts()).toEqual([])
     expect(of('session.recentlyClosed')).toEqual([])
-  })
-
-  // --- the fold: the header's tap or the system back (§2) ---------------------------------------
-
-  const FOLD = ['folder.update', { folderId: GROUP, patch: { collapsed: true } }] as const
-  const UNFOLD = ['folder.update', { folderId: GROUP, patch: { collapsed: false } }] as const
-  const groupHeader = (): HTMLElement => document.querySelector<HTMLElement>('.zen-group-header')!
-  const groupTap = (): HTMLElement =>
-    document.querySelector<HTMLElement>('[data-testid="group-card-tap"]')!
-
-  it('the system back folds the group the user unfolded here (§2: "tap the header or the back gesture to fold") – the header’s own fold, folder.update collapsed – and then the back is the overview’s again', async () => {
-    // Research stands open as the overview comes up: no step was taken here, so the back is
-    // the overview's own (one back leaves it), not a fold.
-    show(grouped())
-    expect(topBackSurface()?.name).toBe('overview')
-    // The header folds it (the model's `collapsed`), and the core's state follows.
-    act(() => groupHeader().click())
-    expect(commands()).toEqual([FOLD])
-    show(grouped(research({ collapsed: true })))
-    expect(groupTap()).not.toBeNull()
-    expect(topBackSurface()?.name).toBe('overview')
-    // A tap on the folded card unfolds it in place: the user's step, which the back undoes.
-    act(() => groupTap().click())
-    expect(commands()).toEqual([FOLD, UNFOLD])
-    show(grouped())
-    expect(topBackSurface()?.name).toBe('overview-group')
-    act(() => {
-      dispatchBackEvent('commit')
-    })
-    await settle()
-    // The same fold the header makes, nothing else: no close, no sheet, the overview standing.
-    expect(commands()).toEqual([FOLD, UNFOLD, FOLD])
-    expect(dialogTitle()).toBeUndefined()
-    show(grouped(research({ collapsed: true })))
-    expect(groupTap()).not.toBeNull()
-    // Folded, the group is no longer the back's: the next back is the overview's own.
-    expect(topBackSurface()?.name).toBe('overview')
-  })
-
-  it('the back folds the latest unfolded group first, passes over one folded again by its header, and yields to the select-tabs mode while it stands', async () => {
-    const OTHER = 'folder_reading'
-    const reading = (patch: Partial<Folder> = {}): Folder =>
-      ({ id: OTHER, spaceId: SPACE, name: 'Reading', icon: '📁', color: 'red', ...patch }) as Folder
-    const two = (research: Folder, reading: Folder): UIState => ({
-      ...stateOf([
-        tab('loose', 'https://c.example/', { title: 'Gamma' }),
-        tab('ra', 'https://a.example/', { title: 'Alpha', folderId: GROUP }),
-        tab('rb', 'https://b.example/', { title: 'Beta', folderId: GROUP }),
-        tab('da', 'https://d.example/', { title: 'Delta', folderId: OTHER }),
-        tab('db', 'https://e.example/', { title: 'Epsilon', folderId: OTHER })
-      ]),
-      folders: { [GROUP]: research, [OTHER]: reading }
-    })
-    const tapOf = (id: string): HTMLElement =>
-      document.querySelector<HTMLElement>(
-        `[data-cell="group:${id}"] [data-testid="group-card-tap"]`
-      )!
-    const headerOf = (id: string): HTMLElement =>
-      document.querySelector<HTMLElement>(`[data-cell="group:${id}"] .zen-group-header`)!
-    const fold = (id: string): [string, unknown] => [
-      'folder.update',
-      { folderId: id, patch: { collapsed: true } }
-    ]
-    const unfold = (id: string): [string, unknown] => [
-      'folder.update',
-      { folderId: id, patch: { collapsed: false } }
-    ]
-    // Both folded as the overview comes up; the user unfolds Research, then Reading.
-    show(two(research({ collapsed: true }), reading({ collapsed: true })))
-    expect(topBackSurface()?.name).toBe('overview')
-    act(() => tapOf(GROUP).click())
-    show(two(research(), reading({ collapsed: true })))
-    act(() => tapOf(OTHER).click())
-    show(two(research(), reading()))
-    expect(commands()).toEqual([unfold(GROUP), unfold(OTHER)])
-    expect(topBackSurface()?.name).toBe('overview-group')
-    // The select-tabs mode takes the back while it stands (its Done); the fold waits under it.
-    await command('select-tabs')
-    expect(topBackSurface()?.name).toBe('overview-selection')
-    act(() => {
-      dispatchBackEvent('commit')
-    })
-    await settle()
-    expect(topBackSurface()?.name).toBe('overview-group')
-    // Reading was the last unfolded: the first back folds it …
-    act(() => {
-      dispatchBackEvent('commit')
-    })
-    await settle()
-    expect(commands()).toEqual([unfold(GROUP), unfold(OTHER), fold(OTHER)])
-    show(two(research(), reading({ collapsed: true })))
-    expect(topBackSurface()?.name).toBe('overview-group')
-    // … the user folds Research by its header meanwhile: nothing unfolded here stands open,
-    // so the back is the overview's own, not a fold of a group already folded.
-    act(() => headerOf(GROUP).click())
-    expect(commands()).toEqual([unfold(GROUP), unfold(OTHER), fold(OTHER), fold(GROUP)])
-    show(two(research({ collapsed: true }), reading({ collapsed: true })))
-    expect(topBackSurface()?.name).toBe('overview')
   })
 })
