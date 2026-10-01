@@ -147,6 +147,7 @@ function fixture(expanded: boolean): { state: UIState; space: Space } {
     essentialTabIds: ['e1'],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     boosts: [],

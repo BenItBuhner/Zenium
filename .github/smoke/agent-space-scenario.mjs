@@ -368,6 +368,10 @@ export async function scenarioAgentSpace(h) {
         async () => {
           client = new HttpClient({ ...endpoint, name: 'smoke-agent-space', leg: 'agent-space' })
           await client.initialize()
+          await must(client, 'zen_session', {
+            action: 'start',
+            name: 'Smoke agent space: background tab'
+          })
           await must(client, 'zen_mode', { mode: 'background' })
           const opened = await must(client, 'browser_tabs', {
             action: 'new',

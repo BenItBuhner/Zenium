@@ -217,7 +217,12 @@ export class NoSync implements SyncHost {
       transport: 'folder',
       webdav: null,
       webdavAvailable: false,
-      authRefused: false
+      authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false
     }
   }
 
@@ -238,6 +243,13 @@ export class NoSync implements SyncHost {
   async setWebDavPassword(): Promise<SyncSetupRefusal | null> {
     return null
   }
+
+  async startAccountLink(win: ZenWindow): Promise<void> {
+    this.browser.toast('Sync is not available on this device yet.', 'info', win)
+  }
+
+  cancelAccountLink(): void {}
+  signOutAccount(): void {}
 
   setScope(): void {}
   setDeviceName(): void {}

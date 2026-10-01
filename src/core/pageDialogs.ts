@@ -24,6 +24,20 @@ export function dialogSite(url: string): string {
   }
 }
 
+/** One line for an agent: which page of its tab asked what. */
+export function describeDialog(d: PageDialog): string {
+  const from = d.site ? `${d.site}${d.embedded ? ' (an embedded frame)' : ''}` : 'the page'
+  const what =
+    d.kind === 'alert'
+      ? 'an alert'
+      : d.kind === 'confirm'
+        ? 'a confirm dialog'
+        : d.kind === 'prompt'
+          ? `a prompt${d.defaultValue ? ` (default ${JSON.stringify(d.defaultValue)})` : ''}`
+          : 'a "Leave site?" dialog'
+  return `The page in tab ${d.tabId} (${from}) opened ${what}: ${JSON.stringify(d.message.slice(0, 500))}`
+}
+
 /** Whether `frameUrl` belongs to another origin than the page's top document. */
 export function isEmbeddedDialog(frameUrl: string, pageUrl: string): boolean {
   try {
@@ -64,7 +78,7 @@ export class PageDialogService {
    */
   ask(tabId: string, request: PageDialogRequest): Promise<PageDialogResponse> {
     if (!this.browser.tabs.tab(tabId)) return Promise.resolve(CANCELLED)
-    return this.show({
+    const dialog: PageDialog = {
       id: newId('dialog'),
       kind: request.kind,
       tabId,
@@ -72,18 +86,27 @@ export class PageDialogService {
       embedded: isEmbeddedDialog(request.frameUrl, request.pageUrl),
       message: request.message,
       defaultValue: request.kind === 'prompt' ? request.defaultValue : ''
-    })
+    }
+    // An agent's page is the agent's to answer: the user never sees it, and the page – blocked
+    // until it is answered – never waits on a tab the user is not looking at.
+    const agents = this.browser.agents
+    if (agents?.takesDialog(tabId))
+      return agents.onPageDialog(dialog).then((r) => sanitizeResponse(dialog, r))
+    return this.show(dialog)
   }
 
   /**
    * A page's `beforeunload` handler objects to the page going away: ask whether to leave. The
    * tab is brought to the front first, as Chrome does, since the dialog is tab-modal. Resolves
-   * true when the user leaves (or the tab is gone), false when the page stays.
+   * true when the user leaves (or the tab is gone), false when the page stays. An agent's page
+   * leaves without a question: the agent asked for the navigation or the close, and its tab is
+   * never brought in front of the user nor its window focused.
    */
   async confirmLeave(tabId: string, reload: boolean): Promise<boolean> {
     const tabs = this.browser.tabs
     const tab = tabs.tab(tabId)
     if (!tab) return true
+    if (this.browser.agents?.takesDialog(tabId)) return true
     const win = tabs.windowFor(tabId)
     if (tabs.activeTabFor(win)?.id !== tabId) tabs.activateTab(tabId, win)
     if (!win.host.isFocused()) win.host.focus()

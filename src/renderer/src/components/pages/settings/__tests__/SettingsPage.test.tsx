@@ -97,7 +97,8 @@ const DESKTOP: HostCapabilities = {
   pageLanguages: true,
   genericFontFamilies: true,
   caretBrowsing: true,
-  placementAnswered: false
+  placementAnswered: false,
+  agentDialogs: true
 }
 
 const ANDROID: HostCapabilities = {
@@ -232,6 +233,7 @@ function state(
     mods: [],
     webApps: [],
     agents: [],
+    awayAgents: [],
     agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
@@ -358,6 +360,7 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Passwords',
       'Security',
       '|',
+      'Account',
       'Sync',
       'Import',
       'Accessibility',

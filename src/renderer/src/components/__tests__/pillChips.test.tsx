@@ -1798,7 +1798,8 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
         purpose: ['any']
       }
     ],
-    screenshots: []
+    screenshots: [],
+    shareTarget: null
   }
   const installable = tab('https://app.example/some/path', { readerable: true, webApp: app })
   /** The desktop host: a launcher to write, the chrome's own share popover. */

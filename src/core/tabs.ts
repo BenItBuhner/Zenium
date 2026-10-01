@@ -2807,6 +2807,9 @@ export class TabManager {
     // An offline error page that came back online while hidden reloads on its turn on screen.
     this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
+    // The page shown on this commit, at the frame's last reported rect, under the page it
+    // replaces until its first paint (W8-P0); the layout report still places it.
+    win.showOnCommit(tab.id)
     this.browser.state.commit()
     if (!opts.keepFocus) win.focusContent()
   }
@@ -2852,6 +2855,9 @@ export class TabManager {
     this.browser.mediaSession.onVisibleTabsChanged(win)
     this.browser.selectionMenu.onVisibleTabsChanged()
     win.findResult = null
+    // The space's page shown on this commit, under the page it replaces (W8-P0).
+    const front = win.selectedTabIn(space)
+    if (front) win.showOnCommit(front)
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
   }
