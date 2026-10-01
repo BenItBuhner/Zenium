@@ -372,12 +372,15 @@ export type PreviewState =
        * the title over its address, or "Phone number" / "Email address" over a `tel:` or
        * `mailto:` link's bare number or address, with the contact items (PUI-22). With `image`,
        * the hold is on an image at `url` instead (`image=<url>`): the image sheet (CT-32's
-       * Search Image row among its items).
+       * Search Image row among its items). `then` steps run on the menu once it is up – a row
+       * taken (`then=tap:Open Link in New Tab in Group`: the group the link menu makes, its
+       * strip in the bar band).
        */
       kind: 'link'
       url: string
       text?: string
       image?: boolean
+      then?: PreviewStep[]
     }
   | {
       kind: 'overlay'
@@ -955,6 +958,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const state: Extract<PreviewState, { kind: 'link' }> = { kind: 'link', url: link }
     const text = params.get('text')
     if (text) state.text = text
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
     return state
   }
   const image = params.get('image')

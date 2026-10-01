@@ -19,6 +19,8 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionRecordData,
+  extensionStoreOf,
   fullScope,
   hashData,
   inScope,
@@ -26,9 +28,11 @@ import {
   modData,
   newestByRecord,
   paymentMethodData,
+  readExtensionData,
   readModData,
   settingsKeyTime,
   winningRemote,
+  type ExtensionSyncSource,
   type MetaMap,
   type RecordType,
   type SyncRecord
@@ -38,6 +42,7 @@ import { parseDeviceFile, serializeDeviceFile } from '../transport'
 import legacy from './fixtures/legacy-device-file.json'
 import golden from './fixtures/golden-sources.json'
 import modRecords from './fixtures/mod-records.json'
+import extensionRecords from './fixtures/extension-records.json'
 
 /**
  * Format compatibility pins for the move of the engine from src/main/sync (Electron only,
@@ -93,9 +98,25 @@ interface ModFixture {
   meta: MetaMap
 }
 
+/**
+ * The `extension` records (services pass 16, ID-44), written once by the build that added the
+ * type: seven installs – three from the stores, one of them turned off – under a scope with the
+ * type alone on; the crx, zip and unpacked ones and the landing waiting for approval publish
+ * nothing, and the fixture pins that too.
+ */
+interface ExtensionFixture {
+  now: number
+  scope: SyncScope
+  extensions: ExtensionSyncSource[]
+  plaintext: string
+  hashes: Record<string, string>
+  meta: MetaMap
+}
+
 const legacyFixture = legacy as unknown as LegacyFixture
 const goldenFixture = golden as unknown as GoldenFixture
 const modFixture = modRecords as unknown as ModFixture
+const extensionFixture = extensionRecords as unknown as ExtensionFixture
 
 /** The golden fixture's local sources (the pre-move record set's inputs). */
 const goldenSources = (): Parameters<typeof collectLocal>[0] => ({
@@ -518,6 +539,194 @@ describe('the address and payment-method records against older builds (services 
     expect(inScope(records[2]!, { ...defaultScope(), addresses: false })).toBe(true)
     expect(inScope(records[2]!, { ...defaultScope(), paymentMethods: false })).toBe(false)
     expect(inScope(records[0]!, { ...defaultScope(), paymentMethods: false })).toBe(true)
+  })
+})
+
+/**
+ * The `extension` record type on its own fixture (services pass 16, ID-44): the bytes the build
+ * that introduced the type wrote for three store extensions, this build's against them; the
+ * goldens and the mod fixture untouched by the type (their scopes predate it); and what an older
+ * peer makes of the records – nothing, with no error, as of any type it does not know.
+ */
+describe('the extension records on a fixed extension list (services pass 16, ID-44)', () => {
+  const withExtensions = (): Parameters<typeof collectLocal>[0] => ({
+    ...goldenSources(),
+    extensions: extensionFixture.extensions
+  })
+
+  it('writes byte-identical payload JSON for the fixture’s store extensions – none for its crx, zip, unpacked or pending one – and hashes every record as the fixture has it', () => {
+    expect(extensionFixture.scope.extensions).toBe(true)
+    expect(Object.values(extensionFixture.scope).filter(Boolean)).toHaveLength(1)
+    expect(extensionFixture.extensions).toHaveLength(7)
+    const local = collectLocal(withExtensions(), extensionFixture.scope)
+    expect([...local.values()].every((r) => r.type === 'extension')).toBe(true)
+    expect([...local.keys()]).toEqual(
+      extensionFixture.extensions
+        .filter((e) => extensionStoreOf(e.source) && !e.pendingApproval)
+        .map((e) => e.id)
+    )
+    expect(local.size).toBe(3)
+    const diff = diffLocal({}, local, extensionFixture.now)
+    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(extensionFixture.plaintext)
+    const hashes: Record<string, string> = {}
+    for (const [id, { data }] of local) hashes[id] = hashData(data)
+    expect(hashes).toEqual(extensionFixture.hashes)
+    expect(diff.meta).toEqual(extensionFixture.meta)
+    for (const r of diff.records) {
+      expect(r.modified).toBe(0)
+      expect(Object.keys(r.data as object)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    }
+  })
+
+  it('the apply side re-publishes the fixture’s records as received: `readExtensionData ∘ extensionRecordData` leaves each hash the pinned one', () => {
+    const payload = JSON.parse(extensionFixture.plaintext) as { records: SyncRecord[] }
+    expect(payload.records).toHaveLength(3)
+    for (const r of payload.records) {
+      const landed = readExtensionData(r.id, r.data)!
+      expect(landed).not.toBeNull()
+      const source = extensionFixture.extensions.find((e) => e.id === r.id)!
+      // What the receiving device holds once the install landed as the record says, published
+      // again: the same bytes, the same hash – the round stamps nothing. The landing publishes
+      // the install time its record carried (`syncedInstalledAt`) – none here, 0 – never its own.
+      const republished = extensionRecordData(
+        {
+          id: r.id,
+          source: landed.store,
+          enabled: landed.enabled,
+          toolbarPinned: landed.toolbarPinned,
+          installedAt: landed.installedAt ?? 0
+        },
+        landed.store
+      )
+      expect(hashData(republished)).toBe(extensionFixture.hashes[r.id])
+      expect(JSON.stringify(republished)).toBe(JSON.stringify(r.data))
+      expect(landed).toEqual({
+        store: source.source,
+        enabled: source.enabled,
+        toolbarPinned: source.toolbarPinned
+      })
+    }
+  })
+
+  it('keeps the extensions out of a pre-move scope object and out of the mod fixture’s, and the type out of both pinned payloads; with the toggle on the same sources publish them and nothing else changes', () => {
+    expect(goldenFixture.scope).not.toHaveProperty('extensions')
+    expect(modFixture.scope).not.toHaveProperty('extensions')
+    expect(defaultScope().extensions).toBe(true)
+    const local = collectLocal(withExtensions(), goldenFixture.scope)
+    expect([...local.values()].some((r) => r.type === 'extension')).toBe(false)
+    expect(local.size).toBe(Object.keys(goldenFixture.hashes).length)
+    expect(JSON.stringify({ v: 1, records: diffLocal({}, local, goldenFixture.now).records })).toBe(
+      goldenAsWritten().plaintext
+    )
+    const mods = collectLocal({ ...withExtensions(), mods: modFixture.mods }, modFixture.scope)
+    expect([...mods.values()].every((r) => r.type === 'mod')).toBe(true)
+    expect(JSON.stringify({ v: 1, records: diffLocal({}, mods, modFixture.now).records })).toBe(
+      modFixture.plaintext
+    )
+
+    const on = collectLocal(withExtensions(), { ...goldenFixture.scope, extensions: true })
+    expect(on.size).toBe(local.size + 3)
+    for (const id of Object.keys(extensionFixture.hashes)) {
+      expect(on.get(id)!.type).toBe('extension')
+      expect(hashData(on.get(id)!.data)).toBe(extensionFixture.hashes[id])
+      on.delete(id)
+    }
+    expect(JSON.stringify({ v: 1, records: diffLocal({}, on, goldenFixture.now).records })).toBe(
+      goldenAsWritten().plaintext
+    )
+  })
+
+  it('an older peer – a build without the type, or a scope object from before it – drops an extension record and its tombstone from every round, not an error', () => {
+    const payload = JSON.parse(extensionFixture.plaintext) as { records: SyncRecord[] }
+    const live = payload.records[0]!
+    const gone: SyncRecord = {
+      ...payload.records[1]!,
+      data: null,
+      deleted: true,
+      modified: extensionFixture.now
+    }
+    const local = collectLocal(goldenSources(), goldenFixture.scope)
+    const mine = diffLocal({}, local, goldenFixture.now)
+    const remote = newestByRecord([[...mine.records, live, gone]])
+    const winners = winningRemote(mine.meta, remote)
+    expect(winners).toEqual([live])
+    expect(inScope(live, goldenFixture.scope)).toBeFalsy()
+    expect(inScope(gone, goldenFixture.scope)).toBeFalsy()
+    expect(inScope(live, modFixture.scope)).toBeFalsy()
+    expect(winners.filter((r) => inScope(r, goldenFixture.scope))).toEqual([])
+    expect(metaFromRemote(winners.filter((r) => inScope(r, goldenFixture.scope)))).toEqual({})
+    // A merge declined tombstones nothing for an extension on any build: the older one's
+    // `!inScope` skips it; this build's `confirmMerge(false)` skips the type by name (a peer's
+    // installed extension is never uninstalled by a "keep mine" here).
+    const declined = [...remote.values()].filter(
+      (r) =>
+        !local.has(r.id) &&
+        !r.deleted &&
+        r.type !== 'credential' &&
+        r.type !== 'extension' &&
+        inScope(r, defaultScope())
+    )
+    expect(declined).toEqual([])
+    expect(Object.keys(mine.meta)).not.toContain(live.id)
+    expect(JSON.stringify({ v: 1, records: mine.records })).toBe(goldenAsWritten().plaintext)
+    // This build, the toggle on: the same record is in scope and is handed to the host.
+    expect(inScope(live, defaultScope())).toBe(true)
+    expect(inScope(gone, defaultScope())).toBe(true)
+    expect(inScope(live, fullScope())).toBe(true)
+  })
+
+  it('`installedAt` is additive (round 5): the fixture’s sources hold no install time, so its payload and hashes stand byte for byte; a record carrying the field reads here with it and hashes as an edit; a reader that does not know a field drops it and reads the record without it (this build’s, on a key from a later one – the mirror of a build before the field on this one); a pre-type peer drops the record whole (above)', () => {
+    // The fixture as this build writes it: the sources project no time (0, none) and the field
+    // is left out – the bytes the build that introduced the type wrote.
+    expect(extensionFixture.extensions.every((e) => !('installedAt' in e))).toBe(true)
+    const local = collectLocal(withExtensions(), extensionFixture.scope)
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, local, extensionFixture.now).records })
+    ).toBe(extensionFixture.plaintext)
+    const atZero = collectLocal(
+      {
+        ...withExtensions(),
+        extensions: extensionFixture.extensions.map((e) => ({ ...e, installedAt: 0 }))
+      },
+      extensionFixture.scope
+    )
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, atZero, extensionFixture.now).records })
+    ).toBe(extensionFixture.plaintext)
+    // The same sources with the install's time held (a hand install at the fixture's `now`):
+    // the field travels after the three, the record hashes as an edit of the fixture's.
+    const held = collectLocal(
+      {
+        ...withExtensions(),
+        extensions: extensionFixture.extensions.map((e) => ({
+          ...e,
+          installedAt: extensionFixture.now
+        }))
+      },
+      extensionFixture.scope
+    )
+    const payload = JSON.parse(extensionFixture.plaintext) as { records: SyncRecord[] }
+    for (const r of payload.records) {
+      const data = held.get(r.id)!.data as Record<string, unknown>
+      expect(Object.keys(data)).toEqual(['store', 'enabled', 'toolbarPinned', 'installedAt'])
+      expect(data.installedAt).toBe(extensionFixture.now)
+      expect(hashData(data)).not.toBe(extensionFixture.hashes[r.id])
+      // This build reads the field; a build before it reads the same record without the field –
+      // what this build does with a key it does not know – and lands the switches as before.
+      expect(readExtensionData(r.id, data)).toEqual({
+        ...(r.data as object),
+        installedAt: extensionFixture.now
+      })
+      const { installedAt: _dropped, ...asAnOlderReaderSees } = data
+      void _dropped
+      expect(readExtensionData(r.id, asAnOlderReaderSees)).toEqual(r.data)
+      expect(readExtensionData(r.id, { ...data, installedOn: 'phone', reinstalls: 2 })).toEqual(
+        readExtensionData(r.id, data)
+      )
+      expect(hashData(readExtensionData(r.id, asAnOlderReaderSees))).toBe(
+        extensionFixture.hashes[r.id]
+      )
+    }
   })
 })
 
