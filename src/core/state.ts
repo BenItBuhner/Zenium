@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  AwayAgentInfo,
   AgentServerStatus,
   AgentSkillStatus,
   AutofillUIState,
@@ -332,6 +333,7 @@ export interface StateExtras {
   webApps: InstalledWebApp[]
   sync: SyncStatus
   agents: AgentInfo[]
+  awayAgents: AwayAgentInfo[]
   agentServer: AgentServerStatus
   agentSkills: AgentSkillStatus
   updates: UpdateStatus
@@ -533,6 +535,7 @@ export class BrowserState {
       accountSignedOut: false
     },
     agents: [],
+    awayAgents: [],
     agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(this.version),
     updates: emptyUpdateStatus(this.version, {

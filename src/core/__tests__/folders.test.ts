@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type { AgentClaim } from '../agent/claims'
 import { FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
@@ -414,6 +415,33 @@ describe('the folder header menu (tabs-13)', () => {
     ])
     item(h.shown(), 'Delete Folder').click!()
     expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
+  })
+
+  it("offers Release from <agent>… on a disconnected agent's group, before Delete, and asks the chrome first", () => {
+    const h = harness()
+    const space = h.win.activeSpaceId
+    const folder = h.browser.createFolder(space, 'Billing', '📁', h.win, { rename: false })
+    h.open('https://a.test/', { folderId: folder.id })
+    const held = vi
+      .spyOn(h.browser.agents, 'heldBy')
+      .mockImplementation((id) =>
+        id === folder.id
+          ? ({ id: 'claim-1', name: 'Invoice reconciliation' } as AgentClaim)
+          : undefined
+      )
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    expect(labels(h.shown()).slice(-4)).toEqual([
+      '-',
+      'Release from Invoice reconciliation…',
+      '-',
+      'Delete Folder'
+    ])
+    h.sent.length = 0
+    item(h.shown(), 'Release from Invoice reconciliation…').click!()
+    expect(events(h, 'agent.confirmRelease')).toEqual([{ claimId: 'claim-1', folderId: folder.id }])
+    held.mockRestore()
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    expect(labels(h.shown()).some((l) => l.startsWith('Release from'))).toBe(false)
   })
 
   it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) · New Tab in Folder and offers nothing to unpack or close', () => {

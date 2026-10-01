@@ -192,6 +192,7 @@ function sidebar({
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     mods: [],
