@@ -3200,9 +3200,14 @@ export class Menus {
    * bubble's name and colour folded in, the bubble being the desktop's. Rename Group…, Colour
    * (Chrome's nine as radio items, the group's checked), New Tab in Group, Collapse or Expand
    * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
-   * group stays SAVED with their pages (TAB-16) – and Delete Group, which asks first when the
+   * group stays SAVED with their pages (TAB-16), with Undo on the toast: the item emits
+   * `folder.closeUndoable` for the chrome to run the close through its one close-with-undo
+   * (`lib/closeUndo.ts`, the phone's Close Group's path; the Design Lead's option C on
+   * TAB-16 / TAB-13), where the desktop's Close Folder calls `closeFolder` itself, toastless –
+   * and Delete Group, which asks first when the
    * group holds anything (`deleteFolderAsking`: the chrome's §9.23 prompt, as the phone's sheet
-   * and the desktop's Delete Folder ask). A saved group (its tabs closed, its pages kept) leads
+   * and the desktop's Delete Folder ask) and offers no Undo after the ask. A saved group (its
+   * tabs closed, its pages kept) leads
    * with Open Group (N Tabs) and has nothing to fold, ungroup or close; Delete Group forgets its
    * pages, asking first too. Title Case throughout (v2 §9.1). Delete Group alone
    * takes the danger ink (§6: for what destroys the user's own; Close Group destroys nothing
@@ -3233,7 +3238,10 @@ export class Menus {
     const closing: Template = live
       ? [
           { label: 'Ungroup', click: () => browser.deleteFolder(id, true) },
-          { label: `Close Group (${tabs})`, click: () => browser.closeFolder(id, win) }
+          {
+            label: `Close Group (${tabs})`,
+            click: () => browser.emit('folder.closeUndoable', { folderId: id }, win)
+          }
         ]
       : []
     return [

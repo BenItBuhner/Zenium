@@ -1501,12 +1501,20 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (exit) depart([exit])
   }
   /**
-   * "Close Group" (TAB-16): the group's tabs close – with the one Undo, as any close here – and
-   * the group stays, SAVED with their pages, on the Groups pane; the core's `folder.close`.
+   * "Close Group" (TAB-16): the group's tabs close – with the one Undo, as any close here, the
+   * toast in the group's words, "<Name> tab group closed and saved" (the tablet's Close Group
+   * says the same through `folder.closeUndoable`) – and the group stays, SAVED with their pages,
+   * on the Groups pane; the core's `folder.close`.
    */
   const closeGroup = (folder: Folder): void => {
     departGroup(folder)
-    undoable(liveMembersOf(folder.id), () => run('folder.close', { folderId: folder.id }))
+    closeWithUndo({
+      tabs: liveMembersOf(folder.id),
+      settings: state.settings,
+      activeTabId: active?.id ?? null,
+      close: () => run('folder.close', { folderId: folder.id }),
+      group: folder
+    })
   }
   // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state, a group's
   // private members counting for nothing (a group with pages saved and private tabs alone live
@@ -1518,9 +1526,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // The header's count on the Groups pane: every group listed, open, saved or empty.
   const groupCount = rows.open.length + rows.saved.length
   /**
-   * "Delete Group": the group's record goes, its live tabs closing with it (undoable, loose) or
-   * its saved pages forgotten. It asks first (§9.23, `DeleteGroupSheet`) when there is anything
-   * to lose; an empty group just goes.
+   * "Delete Group": the group's record goes, its live tabs closing with it – each to Recently
+   * Closed, with no Undo on a toast after the ask (TAB-13 / TAB-16, the Design Lead's option C:
+   * Undo for Close, a confirmation for Delete, never both) – or its saved pages forgotten. It
+   * asks first (§9.23, `DeleteGroupSheet`) when there is anything to lose; an empty group just
+   * goes.
    */
   const deleteGroupAsked = (row: GroupRow): void => {
     if (row.count > 0) setSheet({ kind: 'delete-group', folderId: row.folder.id })
@@ -1538,8 +1548,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       remove()
       return
     }
+    // The card's visible departure, then the deletion itself: the prompt was the guard, so no
+    // `closeWithUndo` here – the tabs go to Recently Closed and the toast stays away.
     departGroup(row.folder)
-    undoable(live, remove)
+    remove()
   }
   /**
    * The Groups pane's tap (TAB-16): the group is shown in the Tabs pane, expanded and scrolled

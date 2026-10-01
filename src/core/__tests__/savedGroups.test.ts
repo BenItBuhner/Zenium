@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import type {
   FormFactor,
@@ -772,6 +772,50 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     return { folder, a, b }
   }
   const items = (h: Harness): MenuItemTemplate[] => h.shown().filter((i) => i.type !== 'separator')
+  /**
+   * The touch host's Close Group pick closes nothing itself: it emits `folder.closeUndoable`
+   * for the chrome's one close-with-undo (the phone's path, `lib/closeUndo.ts`; TAB-16, the
+   * Design Lead's option C), which answers with `folder.close` – done here as the chrome does.
+   */
+  const closeGroup = (h: Harness, folder: string, label = 'Close Group (2 Tabs)'): void => {
+    const before = h.sent.length
+    click(h.shown(), label)
+    expect(
+      h.sent
+        .slice(before)
+        .filter((e) => e.name === 'folder.closeUndoable')
+        .map((e) => e.payload)
+    ).toEqual([{ folderId: folder }])
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
+  }
+
+  it('Close Group (N Tabs) emits folder.closeUndoable with the group’s id and closes nothing itself (TAB-16, option C)', () => {
+    const h = harness('tablet', false)
+    const m = h.browser.state.model
+    const { folder, a, b } = trip(h)
+    const closeFolder = vi.spyOn(h.browser, 'closeFolder')
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    h.sent.length = 0
+    click(h.shown(), 'Close Group (2 Tabs)')
+    expect(h.sent.map((e) => [e.name, e.payload])).toEqual([
+      ['folder.closeUndoable', { folderId: folder }]
+    ])
+    // The core's close is the chrome's to ask for (`folder.close`), once its undo is armed.
+    expect(closeFolder).not.toHaveBeenCalled()
+    expect(m.tabs[a]).toBeDefined()
+    expect(m.tabs[b]).toBeDefined()
+    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
+    // Ungroup and Delete Group keep their paths: the core's own, and the ask.
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    h.sent.length = 0
+    click(h.shown(), 'Delete Group')
+    expect(h.sent.map((e) => e.name)).toEqual(['folder.confirmDelete'])
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'Ungroup')
+    expect(m.folders[folder]).toBeUndefined()
+    expect(m.tabs[a]?.folderId ?? null).toBeNull()
+    expect(h.sent.filter((e) => e.name === 'folder.closeUndoable')).toEqual([])
+  })
 
   it('lists Chrome’s group items in Title Case, Delete Group alone in the danger ink', () => {
     const h = harness('tablet', false)
@@ -832,7 +876,7 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     const m = h.browser.state.model
     const { folder, a, b } = trip(h)
     h.browser.menus.showFolderContextMenu(folder, h.win)
-    click(h.shown(), 'Close Group (2 Tabs)')
+    closeGroup(h, folder)
     expect(m.tabs[a]).toBeUndefined()
     expect(m.tabs[b]).toBeUndefined()
     expect(isSavedFolder(m, m.folders[folder])).toBe(true)
@@ -898,7 +942,7 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     const m = h.browser.state.model
     const { folder } = trip(h)
     h.browser.menus.showFolderContextMenu(folder, h.win)
-    click(h.shown(), 'Close Group (2 Tabs)')
+    closeGroup(h, folder)
     expect(isSavedFolder(m, m.folders[folder])).toBe(true)
     h.sent.length = 0
     h.browser.menus.showFolderContextMenu(folder, h.win)
@@ -927,6 +971,24 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     // The desktop's has no Rename or Collapse / Expand at all (each a control the row has); the
     // touch host's group menu above keeps them.
     expect(labels(h.shown()).some((l) => /^(Rename|Collapse|Expand) /.test(l))).toBe(false)
+  })
+
+  it('the desktop’s Close Folder (N Tabs) calls the core’s closeFolder itself and emits no folder.closeUndoable (the touch hosts’ path is theirs alone)', () => {
+    const h = harness('desktop', false)
+    const m = h.browser.state.model
+    const { folder, a, b } = trip(h)
+    const closeFolder = vi.spyOn(h.browser, 'closeFolder')
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    h.sent.length = 0
+    click(h.shown(), 'Close Folder (2 Tabs)')
+    // The pin that fails should `showFolderContextMenu`'s Close Folder stop calling `closeFolder`:
+    // the core closes the folder at the click, no event asks the chrome to.
+    expect(closeFolder).toHaveBeenCalledTimes(1)
+    expect(closeFolder).toHaveBeenCalledWith(folder, h.win)
+    expect(h.sent.filter((e) => e.name === 'folder.closeUndoable')).toEqual([])
+    expect(m.tabs[a]).toBeUndefined()
+    expect(m.tabs[b]).toBeUndefined()
+    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
   })
 })
 
@@ -986,7 +1048,14 @@ describe('private browsing and the space’s groups (a private group named on no
     h.browser.tabs.moveToFolder(attached, trip)
     h.browser.menus.showFolderContextMenu(trip, h.win)
     expect(labels(h.shown())).toContain('Close Group (2 Tabs)')
+    // The pick asks the chrome for the undoable close (`folder.closeUndoable`); the chrome
+    // answers with the core's `folder.close`, whose count is the regular members'.
+    h.sent.length = 0
     click(h.shown(), 'Close Group (2 Tabs)')
+    expect(h.sent.map((e) => [e.name, e.payload])).toEqual([
+      ['folder.closeUndoable', { folderId: trip }]
+    ])
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: trip })
     expect(m.folders[trip].savedTabs?.map((t) => t.url)).toEqual([
       'https://a.test/',
       'https://b.test/'
