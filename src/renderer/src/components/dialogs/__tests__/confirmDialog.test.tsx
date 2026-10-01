@@ -1644,7 +1644,7 @@ describe('the chrome and the motion (main.css)', () => {
       /@media \(prefers-reduced-motion: reduce\) \{ \.zen-animate-pop, \.zen-animate-in, \.zen-animate-fade \{ animation: zen-fade 120ms var\(--zen-ease\) !important; \}/
     )
     expect(bare).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{ \.zen-frame-dialogs:not\(\[data-sheet\]\) \.zen-frame-dialogs-slot > \[data-leaving\], \.zen-frame-dialogs:not\(\[data-sheet\]\) \.zen-frame-scrim\[data-leaving\] \{ animation: zen-fade-out 120ms var\(--zen-ease\) forwards !important; \}/
+      /@media \(prefers-reduced-motion: reduce\) \{ \.zen-frame-dialogs:not\(\[data-sheet\]\) \.zen-frame-dialogs-slot > \[data-leaving\], \.zen-frame-dialogs:not\(\[data-sheet\]\) \.zen-frame-scrim\[data-leaving\] \{ animation: zen-fade-out var\(--zen-motion-state\) var\(--zen-ease\) forwards !important; \}/
     )
     // Each hosted root is its own stacking context, ranked by the slot (§9.24).
     expect(rule('.zen-frame-dialogs-slot > *')).toContain('isolation: isolate')
