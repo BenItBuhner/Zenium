@@ -25,7 +25,7 @@ export const SHARE_ROW_KEY = 'row.share'
  */
 export const SHARE_SEAM_GUARD_MS = 4000
 
-/** The outgoing content's fade (§11's leave: the state token, 120 ms); the incoming rises over 250 ms (`main.css`). */
+/** The outgoing content's fade (§11's leave: the state token, 120 ms); the incoming rises on the pop token (180 ms, `main.css`). */
 export const SHARE_SEAM_OUT_MS = MOTION_STATE_MS
 
 /**

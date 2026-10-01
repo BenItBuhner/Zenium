@@ -453,7 +453,7 @@ describe('the well (main.css): the words on the handover alone', () => {
     expect(words).toContain('opacity: var(--zen-ntp-pill, 0) !important')
     expect(words).toContain('pointer-events: none')
     // The entrance fade that made the rule important: the pill's content class is an animation.
-    expect(rule('.zen-animate-fade')).toMatch(/animation: zen-fade \d+ms/)
+    expect(rule('.zen-animate-fade')).toMatch(/animation: zen-fade (\d+ms|var\(--zen-motion-\w+\))/)
   })
 })
 

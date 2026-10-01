@@ -3182,7 +3182,7 @@
 }
 @layer components {
   .zen-animate-in {
-    animation: zen-fade-in 160ms var(--zen-ease);
+    animation: zen-fade-in var(--zen-motion-pop) var(--zen-ease);
   }
   /*
    * The desktop panels' appearances (v2 §11.3: they drop the pop's scale and the drop's travel
@@ -3943,10 +3943,10 @@
 }
 @layer components {
   .zen-sheet-in {
-    animation: zen-sheet-in 220ms var(--zen-ease);
+    animation: zen-sheet-in var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-animate-fade {
-    animation: zen-fade 160ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-phone-bar {
     background: transparent;
@@ -4048,11 +4048,11 @@
     background: var(--zen-panel-bg);
     box-shadow: var(--zen-shadow-1);
     transform-origin: 0 50%;
-    animation: zen-field-grow 220ms var(--zen-ease);
+    animation: zen-field-grow var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-omnibox-field > * {
     position: relative;
-    animation: zen-fade 220ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-pop) var(--zen-ease);
   }
   /* Rows sit 4 px inside the sheet: concentric with its corners whatever the frame radius is. */
   .zen-suggestion-sheet {
@@ -5608,8 +5608,8 @@
   /*
    * The menu-to-panel seam (§9.38's hand-off; `MenuSheet.tsx`, `lib/shareSeam.ts`): the app
    * menu's sheet becomes the share panel's – one chassis. The panel's rows and preview rise over
-   * §11's 250 ms as the menu's rows and title, drawn once more in absolute layers over them, fade
-   * out over §11's 120 ms; the chassis measures its new detents from the panel's rows alone (the
+   * the pop's 180 ms as the menu's rows and title, drawn once more in absolute layers over them,
+   * fade out over §11's 120 ms; the chassis measures its new detents from the panel's rows alone (the
    * layers take no height of their own) and re-detents on its spring. The rows' layer fills the
    * body while the sheet is still the menu's height, clipped to it and inert, its rows shifted
    * by the offset the list was scrolled to when Share was tapped (the chassis starts new
@@ -5641,7 +5641,7 @@
     animation: none;
   }
   .zen-share-seam-in {
-    animation: zen-fade 250ms var(--zen-ease) both;
+    animation: zen-fade var(--zen-motion-pop) var(--zen-ease) both;
   }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
@@ -8696,7 +8696,7 @@
   /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */
   :root[data-form-factor='phone'] .zen-ntp-icon {
     opacity: 0;
-    transition: opacity 160ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-ntp-icon-loaded {
     opacity: 1;
@@ -9213,7 +9213,7 @@
    * The pill's slot while the field is the page's: the well, filling in with the pill's tint and
    * words as the scroll hands the field over (`--zen-ntp-pill`), so that at the landing the pill
    * is whole and the double has nothing left to draw. The handover is the words' one source of
-   * opacity, hence the `!important`: the pill's content arrives on a 160 ms entrance fade
+   * opacity, hence the `!important`: the pill's content arrives on the pop's entrance fade
    * (`zen-animate-fade`), and the bar is mounted again as a closing or a pull begins (the shell
    * takes it down while the omnibox is open), so that fade replays under the field coming home
    * – and an animation's value outranks a plain declaration, so for its length the well's words
@@ -9232,7 +9232,7 @@
     pointer-events: none;
   }
   /*
-   * The omnibox under the morph: the sheet fades in on the value rather than its own 160 ms,
+   * The omnibox under the morph: the sheet fades in on the value rather than its own pop,
    * from four tenths of the way (FAKEBOX_SHEET_FROM: the page is nearly gone by then, so the
    * suggestions rise in under the arriving field rather than over the tiles); its field's
    * backdrop and content are the double's until the field lands – the field draws nothing of
@@ -9377,7 +9377,7 @@
    * the ride and their own 120 ms transitions are off while the value drives them, so no frame
    * lags the spring and the landing hands over without a step. The pill stays where it is: its
    * words go with the buttons – the one source of their opacity, hence the `!important`: the
-   * bar is mounted again as a closing begins and the words' 160 ms entrance fade would replay
+   * bar is mounted again as a closing begins and the words' entrance fade (the pop) would replay
    * over the ride (the field morph's `.zen-pill-away` lesson) – and its fill leaves over the
    * second half beneath the field's backdrop, which is opaque over it by then, so no frame
    * shows a seam at the pill's edge. Inert meanwhile: the omnibox's sheet is over the bar, and
@@ -12178,10 +12178,10 @@
  * sit over that inline value for as long as the pane lives – the finger would move nothing.
  */
 .zen-settings-drill-in[data-from='right'] {
-  animation: zen-settings-enter-right 240ms var(--zen-ease);
+  animation: zen-settings-enter-right var(--zen-motion-pop) var(--zen-ease);
 }
 .zen-settings-drill-in[data-from='left'] {
-  animation: zen-settings-enter-left 240ms var(--zen-ease);
+  animation: zen-settings-enter-left var(--zen-motion-pop) var(--zen-ease);
 }
 @keyframes zen-settings-enter-right {
   from {
