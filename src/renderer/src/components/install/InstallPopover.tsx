@@ -120,8 +120,9 @@ function hovered(el: Element): boolean {
  * inside it – the user is reading it or acting on it – and resumed with what was left once both
  * have gone, at least the band's moment (`BAND_CLOCK_RESUME_FLOOR_MS`, the house's rule for a
  * message let go); run out, `expire` – the light dismissal's leave. The popover the user opened
- * has no clock (`armed` false): it stays until the focus leaves it. The core's own clock behind
- * `webapp.bannerHide` retires with #735; until it does it may still take a popover down.
+ * has no clock (`armed` false): it stays until the focus leaves it. The core runs no clock of
+ * its own for the banner (#735: one offer, one clock – this one); `webapp.bannerHide` is its
+ * take-down for other causes.
  */
 function useOfferClock(armed: boolean, expire: () => void): void {
   const latest = useRef(expire)
