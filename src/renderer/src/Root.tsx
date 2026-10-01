@@ -9,6 +9,7 @@ import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
 import { MagicStackCustomizeLayer } from './components/newtab/MagicStack'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
+import { ShareChooserLayer } from './components/share/ShareChooserSheet'
 import { QrCodeLayer } from './components/qr/QrCodeSheet'
 import { QrScanLayer } from './components/qr/QrScanSheet'
 import { SharePanelLayer } from './components/share/SharePanelSheet'
@@ -48,6 +49,7 @@ export function Root(): JSX.Element {
       <MediaHubLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
+      <ShareChooserLayer />
       <SharePanelLayer />
       <VoiceSearchLayer />
       <QrScanLayer />

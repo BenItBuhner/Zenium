@@ -19,7 +19,11 @@ export function TabSet({
   tabs: readonly Tab[]
   children: ReactNode
 }): JSX.Element {
-  const ids = useMemo(() => tabs.map((t) => t.id), [tabs])
+  // The ids keep their identity while their sequence holds (the panel builds `tabs` afresh on
+  // every render), so the rows' context does not change under them when a tab's other fields do.
+  const sequence = tabs.map((t) => t.id).join('\n')
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the ids are compared by content
+  const ids = useMemo(() => tabs.map((t) => t.id), [sequence])
   return <TabSetContext.Provider value={ids}>{children}</TabSetContext.Provider>
 }
 

@@ -3,6 +3,7 @@ import { buildSearchUrl } from '../../shared/search'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import { folderTabs } from '../model'
+import { describeDialog } from '../pageDialogs'
 import type { AgentCapture, InputModifier, TabView } from '../platform'
 import {
   deepSnapshot,
@@ -15,13 +16,13 @@ import {
 } from './frames'
 import { summarize } from './diagnostics'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
+import { NAME_YOURSELF } from './naming'
 import { pageCall, type PageLocation } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
 import {
   describeIdle,
   FOREGROUND_LEASE_MS,
-  GHOST_IDLE_MS,
   looksLikeStatements,
   sleep,
   textError,
@@ -58,6 +59,8 @@ export interface AgentTool {
   definition: ToolDefinition
   /** Runs arbitrary JavaScript – hidden when scripts are disabled in Settings. */
   scripting?: boolean
+  /** Listed only where the host has this capability. */
+  needs?: 'agentDialogs'
   run(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult>
 }
 
@@ -97,7 +100,9 @@ export const ARG_ALIASES: Record<string, string[]> = {
   textGone: ['text_gone', 'gone', 'disappears'],
   ignoreCache: ['hard', 'ignore_cache', 'bypassCache'],
   background: ['inBackground', 'hidden'],
-  submit: ['enter', 'pressEnter']
+  submit: ['enter', 'pressEnter'],
+  accept: ['accepted', 'ok', 'confirm'],
+  promptText: ['prompt_text', 'answer', 'response', 'reply']
 }
 
 /** The first present value among an argument's own name and its aliases. */
@@ -670,7 +675,7 @@ function tabLine(ctx: ToolContext, t: Tab, scope: 'own' | 'all'): string {
   if (scope === 'all') {
     const owner = ctx.agents.describeOwner(ctx.session, t)
     if (owner) flags.push(owner)
-    if (ctx.browser.tabs.activeTabFor(ctx.agents.agentWindow())?.id === t.id)
+    if (ctx.browser.tabs.activeTabFor(ctx.browser.tabs.windowFor(t.id))?.id === t.id)
       flags.push("user's active tab")
   }
   return `- ${t.id} ${JSON.stringify(titleOf(t).slice(0, 80))} ${t.url}${flags.length ? ` [${flags.join(', ')}]` : ''}`
@@ -683,6 +688,8 @@ function groupOwnerLabel(ctx: ToolContext, g: Folder): string | null {
     return owner.id === ctx.session.id
       ? 'yours'
       : `owned by ${JSON.stringify(owner.name)}${ctx.agents.ghostLabel(owner)}`
+  const held = ctx.agents.heldBy(g.id)
+  if (held) return `owned by ${JSON.stringify(held.name)}, away – kept for it`
   if (ctx.agents.isOrphan(g.id)) {
     const was = ctx.agents.orphanWas(g.id)
     return was ? `orphaned, was ${JSON.stringify(was)}` : 'orphaned'
@@ -804,6 +811,24 @@ function ownOrphansLine(ctx: ToolContext): string[] {
 // Tools: status, session, groups
 // ---------------------------------------------------------------------------
 
+/** Whether the agent named itself, and how it gets its session back after a lost connection. */
+function sessionLine(ctx: ToolContext): string {
+  const claim = ctx.agents.claimOf(ctx.session)
+  if (claim)
+    return `Your session ${JSON.stringify(claim.name)} is durable: your groups and tabs stay yours across reconnects, restarts and dropped connections until you end it with zen_session {"action":"end"}. Your session key is ${claim.key} – if a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"${claim.key}"} brings them back.`
+  return ctx.agents.requireName
+    ? `You have not started your session yet: ${NAME_YOURSELF}`
+    : 'Your session is not named: zen_session {"action":"start","name":"…"} makes it durable.'
+}
+
+/** ", quiet 5 min – its groups are adoptable" for an unnamed agent gone quiet; empty otherwise. */
+function ghostNote(ctx: ToolContext, sessionId: string): string {
+  const o = ctx.agents.session(sessionId)
+  return o && ctx.agents.isGhost(o)
+    ? `, quiet ${describeIdle(ctx.agents.idleFor(o))} – its groups are adoptable`
+    : ''
+}
+
 function statusText(ctx: ToolContext): string {
   const s = ctx.session
   const others = ctx.agents.list().filter((a) => a.id !== s.id)
@@ -812,6 +837,7 @@ function statusText(ctx: ToolContext): string {
   const groups = ctx.agents.groupsOf(s).length
   return [
     `You are ${JSON.stringify(s.name)} (session ${s.id}, colour ${s.color}) in ${s.mode} mode. ${leaseLine(ctx)}`,
+    sessionLine(ctx),
     '',
     `Your groups (${groups}) and tabs (${own}) – id "title" url [flags]:`,
     listOwnTabs(ctx),
@@ -821,7 +847,7 @@ function statusText(ctx: ToolContext): string {
     ...(others.length
       ? others.map(
           (a) =>
-            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}${Date.now() - a.lastActiveAt >= GHOST_IDLE_MS ? `, quiet ${describeIdle(Date.now() - a.lastActiveAt)} – its groups are adoptable` : ''}`
+            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}${ghostNote(ctx, a.id)}`
         )
       : ['(none)']),
     '',
@@ -846,9 +872,20 @@ const zenStatus: AgentTool = {
   }
 }
 
-const SESSION_ACTIONS = ['status', 'end', 'rename'] as const
+const SESSION_ACTIONS = ['start', 'resume', 'status', 'end', 'rename'] as const
 type SessionAction = (typeof SESSION_ACTIONS)[number]
 const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
+  start: 'start',
+  begin: 'start',
+  new: 'start',
+  create: 'start',
+  open: 'start',
+  register: 'start',
+  resume: 'resume',
+  reclaim: 'resume',
+  restore: 'resume',
+  reattach: 'resume',
+  reconnect: 'resume',
   status: 'status',
   info: 'status',
   whoami: 'status',
@@ -869,16 +906,21 @@ const zenSession: AgentTool = {
     name: 'zen_session',
     title: 'Your session',
     description:
-      'Your session in this browser. action "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt (zen_groups adopt). "rename": change the name shown on your cursor, badges and home group (name).',
+      'Your session in this browser. Call {"action":"start","name":"…"} first: name yourself after the task you are doing (e.g. "Invoice reconciliation", "PR 741 review") – generic names such as "Agent", "Claude" or "Cursor" are refused, and nothing but zen_status works until you have started. A started session is durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections, and no other agent can adopt them, until you end it; the answer gives your session key. "resume" {key}: carry your session over to this connection after a reconnect that lost it (the key from start or zen_status). "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt. "rename" {name}: change your name (the same rules as start).',
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...SESSION_ACTIONS] },
+        name: {
+          type: 'string',
+          description:
+            'start, rename: a specific, descriptive name for what you are doing (6–48 characters)'
+        },
+        key: { type: 'string', description: 'resume: your session key ("zk_…")' },
         closeTabs: {
           type: 'boolean',
           description:
             'end: close your groups and their tabs (default: leave them as orphaned groups)'
-        },
-        name: { type: 'string', description: 'rename: your new name' }
+        }
       },
       ['action']
     ),
@@ -894,8 +936,20 @@ const zenSession: AgentTool = {
       )
     const s = ctx.session
     if (action === 'status') return text(statusText(ctx))
+    if (action === 'start') {
+      const claim = ctx.agents.startClaim(s, str(args, 'name') ?? '')
+      return text(
+        `Session started as ${JSON.stringify(claim.name)}. Your groups and tabs are yours until you end the session with zen_session {"action":"end"} – reconnects, browser restarts and dropped connections do not change that, and no other agent can take them. Your session key is ${claim.key}: keep it for the whole task. If a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"${claim.key}"} brings them back – never start a new session instead.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      )
+    }
+    if (action === 'resume') {
+      const claim = ctx.agents.resumeClaim(s, str(args, 'key'))
+      return text(
+        `Resumed your session ${JSON.stringify(claim.name)} on this connection. Refs from before are stale: browser_snapshot before acting.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      )
+    }
     if (action === 'rename') {
-      const name = need(args, 'name', 'the new name, e.g. "Research bot"')
+      const name = need(args, 'name', 'the new name, e.g. "Invoice reconciliation"')
       const before = s.name
       ctx.agents.rename(s, name)
       const home = s.homeGroupId ? ctx.browser.state.model.folders[s.homeGroupId] : undefined
@@ -906,8 +960,9 @@ const zenSession: AgentTool = {
     const closeTabs = bool(args, 'closeTabs')
     const groups = ctx.agents.groupsOf(s)
     const { groups: n, tabs } = ctx.agents.endSession(s, closeTabs)
-    const stays =
-      'Your connection stays open: the next call starts a fresh session under the same id (a new home group on first use), so there is nothing to reconnect.'
+    const stays = ctx.agents.requireName
+      ? 'Your connection stays open: zen_session {"action":"start","name":"…"} starts a new session on it when you have more to do.'
+      : 'Your connection stays open: the next call starts a fresh session under the same id (a new home group on first use), so there is nothing to reconnect.'
     if (!n) return text(`Session ended. You had no groups; nothing was left behind. ${stays}`)
     return text(
       closeTabs
@@ -946,7 +1001,7 @@ const zenGroups: AgentTool = {
   definition: {
     name: 'zen_groups',
     title: 'Your tab groups',
-    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent is gone) with all its tabs – also a group of an agent quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min (its client dropped, most likely), and with force: true any other agent's group when the user asked you to take it over (that agent is told); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
+    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent ended its session and left it) with all its tabs – a named agent's groups are never adoptable, not even while it is away or with force (force only applies to an unnamed legacy session's group, when the user asked); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...GROUP_ACTIONS] },
@@ -1592,6 +1647,37 @@ const browserReload: AgentTool = {
     ctx.browser.tabs.reload(tab.id, bool(args, 'ignoreCache'))
     await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
     return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Reloaded.')
+  }
+}
+
+const browserHandleDialog: AgentTool = {
+  needs: 'agentDialogs',
+  definition: {
+    name: 'browser_handle_dialog',
+    title: 'Answer a page dialog',
+    description:
+      'Answer the dialog a page opened on one of your tabs (alert, confirm, prompt or "Leave site?"): the page is blocked until it is answered, so a call that runs into one returns with it, and page tools refuse the tab until then. accept: true presses OK (default), false Cancel; promptText is what a prompt receives. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Returns a snapshot of the page afterwards.',
+    inputSchema: schema(
+      {
+        tabId: TAB_ID,
+        accept: { type: 'boolean', description: 'OK (true, default) or Cancel (false)' },
+        promptText: { type: 'string', description: 'prompt: the text to answer with' }
+      },
+      []
+    ),
+    annotations: { openWorldHint: true }
+  },
+  async run(ctx, args) {
+    const tab = targetTab(ctx, args)
+    const raw = pick(args, 'accept')
+    const accept = raw === undefined ? true : bool(args, 'accept')
+    const answered = ctx.agents.answerDialog(tab.id, accept, str(args, 'promptText'))
+    await sleep(150)
+    const said = `Answered the ${answered.kind === 'beforeunload' ? '"Leave site?"' : answered.kind} dialog (${JSON.stringify(answered.message.slice(0, 120))}) with ${accept ? 'OK' : 'Cancel'}.`
+    const next = ctx.agents.pendingDialog(tab.id)
+    if (next) return text(`${said} The page opened another one: ${describeDialog(next)}.`)
+    const view = await ctx.agents.prepare(ctx.session, tab.id, { activate: false })
+    return pageResult(ctx, tab, view, said)
   }
 }
 
@@ -2282,6 +2368,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserTakeScreenshot,
   browserReadPage,
   browserEvaluate,
+  browserHandleDialog,
   zenGroups,
   zenSession,
   zenSpaces,
@@ -2294,17 +2381,24 @@ export const AGENT_TOOLS: AgentTool[] = [
  * is how many other agents are connected right now – with any, background mode is the
  * recommendation.
  */
-export function agentInstructions(mode: AgentMode, allowScripts: boolean, others = 0): string {
+export function agentInstructions(
+  mode: AgentMode,
+  allowScripts: boolean,
+  others = 0,
+  agentDialogs = true
+): string {
   const company =
     others > 0
       ? `${others} other agent${others === 1 ? ' is' : 's are'} connected right now`
       : 'no other agent is connected right now, but one may join at any time'
   return [
     "You are controlling the user's Zenium browser (Chromium) through its built-in MCP server. The user and other agents share this browser, and every agent works in tab groups of its own, so:",
+    `- Name yourself first. zen_session {"action":"start","name":"…"} with a specific name for your task (e.g. "Invoice reconciliation", "PR 741 review"; "Agent", "Claude" or your client's name are refused) – nothing but zen_status works before. Your session is then durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections until you end it. Keep the session key the answer gives you for the whole task; if a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"…"} brings them back – never start a new session instead.`,
     '- Address everything by id. Every page tool takes tabId – a tab id from browser_tabs (a unique prefix is enough); there is no current tab, and list positions are refused because they shift whenever another agent or the user opens or closes a tab. Only while you own exactly one tab may you omit tabId.',
     '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
-    `- Never close, move or navigate what you did not create. A group whose agent is gone is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} if you are continuing that work, otherwise leave it. zen_groups {"action":"adopt"} without a groupId takes back every orphaned group a session with your name left (after a reconnect or an end without closeTabs). An agent quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min counts as gone; a working agent's group is taken only with force: true, when the user asked you to.`,
+    `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
+    `${agentDialogs ? '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',

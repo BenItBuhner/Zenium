@@ -552,9 +552,15 @@ interface MenuDraft {
  * over the address 13 in the deemphasised ink, one line each. A tap expands the address to its
  * full length (the row grows; the sheet measures its detents again); a long-press copies it, the
  * host's toast or Android 13's clipboard chip saying so. The title names the sheet
- * (`aria-labelledby`).
+ * (`aria-labelledby`). The share chooser opens on the same header for a shared link (MW-63).
  */
-function LinkHeader({ header, titleId }: { header: MenuHeader; titleId: string }): JSX.Element {
+export function LinkHeader({
+  header,
+  titleId
+}: {
+  header: MenuHeader
+  titleId: string
+}): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const press = useLongPress(() =>
     run('clipboard.writeText', { text: header.url, confirmation: header.copied })

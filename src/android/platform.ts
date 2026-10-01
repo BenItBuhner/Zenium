@@ -247,7 +247,9 @@ export function androidCapabilities({
     caretBrowsing: false,
     // The chrome lies under the page views: `Host.kt` answers `view.shown` from the view's own
     // drawn frame (Q1, `views.ts` `askShown`), and the chrome's stand-ins leave on that answer.
-    placementAnswered: true
+    placementAnswered: true,
+    // Kotlin's WebChromeClient answers page dialogs itself, so none reaches an agent yet.
+    agentDialogs: false
   }
 }
 

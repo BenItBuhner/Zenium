@@ -168,7 +168,7 @@ describe('the desktop pane', () => {
     const browsers = rowOf(el, 'import-browser')
     expect(browsers.classList.contains('zen-settings-control-row')).toBe(true)
     expect(browsers.querySelector('.zen-settings-label')?.textContent).toBe(
-      'Bookmarks, history and passwords'
+      'Bookmarks, history, passwords and addresses'
     )
     expect(browsers.querySelector('button')?.textContent).toBe('Import…')
     expect(rowOf(el, 'import-file-dialog').querySelector('button')?.textContent).toBe(

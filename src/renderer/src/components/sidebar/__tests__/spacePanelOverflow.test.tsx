@@ -123,6 +123,7 @@ function sidebar(specs: SpaceSpec[], activeSpaceId = specs[0]!.id): void {
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     mods: [],

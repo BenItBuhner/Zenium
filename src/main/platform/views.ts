@@ -88,7 +88,7 @@ import { IMAGE_THUMBNAIL_WORLD_ID } from '../../shared/privateWorld'
 import { PrivateWorldRelay } from './privateWorld'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
-import { awaitFirstPaint, frameDrawn, hasPainted } from './firstPaint'
+import { awaitFirstPaint, frameDrawn, hasPainted, shownPainted } from './firstPaint'
 import {
   emulatedColorScheme,
   emulatedMediaParams,
@@ -922,8 +922,9 @@ export class ElectronTabView implements TabView {
   async askDialog(call: PageDialogCall, frameUrl: string): Promise<PageDialogAnswer> {
     if (this.wc.isDestroyed()) return DISMISSED_ANSWER
     // A dialog in a window the user is not in flashes its taskbar button until they come
-    // (os-19); the window in front is left alone.
-    if (this.host) flashUntilFocused(this.host.win)
+    // (os-19); the window in front is left alone. A page an agent drives off screen asks the
+    // agent, never the user.
+    if (this.host && !this.agentDriven) flashUntilFocused(this.host.win)
     const response: PageDialogResponse = await this.events.onDialog({
       kind: call.kind,
       message: call.message,
@@ -963,8 +964,8 @@ export class ElectronTabView implements TabView {
     const reload = !check && (host ? host.reload : page?.navigationType === 'reload')
     // The question is a dialog too: a background window flashes for it (os-19). The core brings
     // the window to the front for the tab-modal question; where the OS refuses the focus, the
-    // flash stands until the user comes.
-    if (this.host) flashUntilFocused(this.host.win)
+    // flash stands until the user comes. An agent's page leaves without asking anyone.
+    if (this.host && !this.agentDriven) flashUntilFocused(this.host.win)
     void this.events.onLeaveSite(reload).then((leave) => {
       if (check) {
         check.settle(leave)
@@ -2360,6 +2361,18 @@ export class ElectronTabView implements TabView {
     return frameDrawn(this.wc)
   }
 
+  /**
+   * The page's word that the document it is to show has a frame on screen (`TabView.
+   * shownPainted`; `firstPaint.ts`): the frame word and the document's first `paint` entry
+   * together, asked of the committed document now or of the one a woken tab's load commits
+   * next. Offered, the core shows a tab switched to or woken on the activate commit at the
+   * frame's last reported rect, the page left in front standing over it until this word or the
+   * ceiling (`ZenWindow.showOnCommit`, W8-P0).
+   */
+  shownPainted(): Promise<number> {
+    return shownPainted(this.wc)
+  }
+
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
   executeIsolatedJavaScript(code: string): Promise<unknown> {
     return this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }], true)
@@ -3453,6 +3466,15 @@ export interface SaveAsDownloads {
 
 /** Creates `WebContentsView`s and maps their web contents back to tabs. */
 export class ElectronTabViewHost implements TabViewHost {
+  /**
+   * The core shows a tab switched to or woken on the activate commit, at the frame's last
+   * reported rect, under the page it replaces until the shown page's word that it has painted
+   * (`ElectronTabView.shownPainted`) or the ceiling (`ZenWindow.showOnCommit`, W8-P0). The
+   * desktop's views bear it: they composite above the chrome in the window's z-order, the page
+   * left in front raised over the shown one is exactly the stand-in, and nothing of the chrome's
+   * own cover protocol stands between a view's show and its frame.
+   */
+  readonly showsOnCommit = true
   private readonly byWebContentsId = new Map<number, ElectronTabView>()
   private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()

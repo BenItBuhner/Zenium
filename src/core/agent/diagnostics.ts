@@ -35,13 +35,17 @@ export interface SessionCounters {
   closed: number
   /** Requests with a session id nothing could be made of (no valid token): the 404s. */
   unknown: number
+  /** `zen_session start`: agents that named themselves and got a durable session. */
+  claimed: number
+  /** Durable sessions put on a (new) connection: start, resume, renewal, resurrection. */
+  rebound: number
 }
 
 export interface DiagnosticsSnapshot {
   startedAt: number
   uptimeMs: number
   sessions: SessionCounters
-  calls: { total: number; errors: number; inFlight: number }
+  calls: { total: number; errors: number; inFlight: number; timedOut: number }
   tools: Record<string, ToolTiming>
   recentErrors: { at: number; tool: string; message: string }[]
 }
@@ -80,9 +84,12 @@ export class Diagnostics {
     resumed: 0,
     resurrected: 0,
     closed: 0,
-    unknown: 0
+    unknown: 0,
+    claimed: 0,
+    rebound: 0
   }
   private total = 0
+  private timedOut = 0
   private failed = 0
   private inFlight = 0
   private readonly tools = new Map<string, Samples>()
@@ -113,6 +120,11 @@ export class Diagnostics {
     }
   }
 
+  /** A call ran into the deadline and was abandoned (it is counted as an error by `begin`). */
+  noteTimeout(): void {
+    this.timedOut++
+  }
+
   snapshot(live: { live: number; parked: number }): DiagnosticsSnapshot {
     const tools: Record<string, ToolTiming> = {}
     for (const [name, s] of [...this.tools].sort(([a], [b]) => a.localeCompare(b))) {
@@ -128,7 +140,12 @@ export class Diagnostics {
       startedAt: this.startedAt,
       uptimeMs: Math.max(0, this.clock() - this.startedAt),
       sessions: { ...live, ...this.sessions },
-      calls: { total: this.total, errors: this.failed, inFlight: this.inFlight },
+      calls: {
+        total: this.total,
+        errors: this.failed,
+        inFlight: this.inFlight,
+        timedOut: this.timedOut
+      },
       tools,
       recentErrors: [...this.errors]
     }
@@ -154,7 +171,7 @@ export function summarize(d: DiagnosticsSnapshot): string {
   return (
     `up ${formatDuration(d.uptimeMs)}; sessions ${s.live} live (${s.parked} parked), ` +
     `${s.created} created, ${s.ended} ended, ${s.resurrected} resumed after loss, ${s.unknown} unknown; ` +
-    `calls ${d.calls.total} (${d.calls.errors} errors, ${d.calls.inFlight} running)` +
+    `calls ${d.calls.total} (${d.calls.errors} errors, ${d.calls.timedOut} timed out, ${d.calls.inFlight} running)` +
     (slowest.length ? `; slowest: ${slowest.join(', ')}` : '')
   )
 }

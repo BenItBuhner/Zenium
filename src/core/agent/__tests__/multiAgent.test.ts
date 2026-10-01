@@ -1073,7 +1073,7 @@ describe('compatibility paths', () => {
       /use one of "list", "create", "rename", "close", "adopt"/
     )
     expect(textOf(await fake.call(A, 'zen_session', { action: 'explode' }))).toMatch(
-      /use one of "status", "end", "rename"/
+      /use one of "start", "resume", "status", "end", "rename"/
     )
   })
 

@@ -1,0 +1,129 @@
+name: Android tab wake perf
+
+# Waking a SLEEPING tab from the phone's overview, profiled and asserted (W6-S26-b): TabWakePerfDemo
+# puts a heavy loopback page to sleep through the core's own path (`tab.unload`), taps its card in
+# the overview and records every frame of the app's window (`Window.OnFrameMetricsAvailableListener`:
+# the stages of each frame and its vsync) through the close morph and on to the page's load, then
+# the same tap followed by the way out while the page still loads – the pull on the pill back to
+# the overview and the system's predictive back – in three states of the tab: WARM (the control),
+# SLEEPING with the host's spare page view on (the fix: `TabHost.warm` builds the next wake's
+# WebView on a still moment, `TabHost.create` hands it over) and COLD with the spare off (the
+# before-reading on the same run). Beside the window's frames: the harness's `dumpsys gfxinfo
+# framestats` and the WebViews' Chromium trace per scene (`traceFrames`), and a Perfetto trace of
+# the device across the sequence (sched, gfx, view, input, webview, dalvik, the frame timeline)
+# cut per scene by android-perf-trace.py in the post-script, with the host's own `zen:TabHost.*`
+# marks placed against the scenes and the measured windows by android-tab-wake-spans.py. The
+# claims are `PASS` / `FAIL` lines in tab-wake-findings.txt – the deterministic ones: every
+# sleeping wake took the spare with `create` at or under 2 ms on the UI thread, the spare dropped
+# by a memory trim and with its renderer, one spare's PSS within its cap – and the trace's two
+# (tab-wake-spans.md): `create` under the same cap, no spare built inside a measured switch
+# window. Every frame-time comparison (the switch, the way out, the show, the first paint, the
+# load; sleeping and cold against warm) is a `FACT` line where the warm control cannot hold 60 fps
+# (this lane's software GPU): printed with its ratio against max(the control's longest frame, the
+# run's all-frames p95), never asserted, because a ratio rule over two single frames failed one
+# run in three on the host GL pipe and taught nothing. `assert` makes a failed claim fail the run;
+# a FACT line never does. The measured scenes run before the recorder rolls;
+# the recorded part is one sleeping wake. The app's startup sweeps are held for the run
+# (`holdBackgroundWork`). API 34, the phone lane. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail the run on a failed PASS / FAIL claim (off reports them)
+        type: boolean
+        default: true
+      record:
+        description: Record the screen too (the encoder is a load of its own on the emulator; off for the numbers)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tab-wake-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    name: Tab wake perf (light)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabWakePerfDemo
+        DEMO_DIR=tab-wake-perf
+        DEMO_OUT=artifacts/android-tab-wake-perf
+        DEMO_THEME=light
+        DEMO_VIDEO=android-tab-wake-perf-light.mp4
+        DEMO_RECORD=${{ (github.event_name == 'workflow_dispatch' && inputs.record == false) && '0' || '1' }}
+        DEMO_ARGS=-e holdBackgroundWork true -e assert ${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
+        DEMO_HANDSHAKE_S=420
+        DEMO_PERFETTO_CONFIG=.github/scripts/android-tab-wake-perf.pbtx
+      post-script: |
+        python3 -m pip install --quiet --disable-pip-version-check perfetto
+        out=artifacts/android-tab-wake-perf
+        assert=${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
+        trace=$(ls "$out"/zen-*.pftrace 2>/dev/null | head -n 1 || true)
+        if [ -n "$trace" ] && [ -f "$out/scenes.txt" ]; then
+          python3 .github/scripts/android-perf-trace.py "$trace" "$out/scenes.txt" --json "$out/perfetto.json" > "$out/perfetto-report.md" 2>&1 || echo "::warning::the Perfetto reader failed"
+          python3 .github/scripts/android-tab-wake-spans.py "$trace" "$out/scenes.txt" --windows "$out/windows.txt" --cap-ms 2 > "$out/tab-wake-spans.md" 2>&1 || echo "::warning::the span reader failed"
+          { echo '## The system (Perfetto)'; echo; cat "$out/perfetto-report.md"; echo; cat "$out/tab-wake-spans.md"; } >> "$GITHUB_STEP_SUMMARY" || true
+        else
+          echo "::notice::no Perfetto trace or scenes.txt to read"
+        fi
+        if [ -f "$out/tab-wake-findings.txt" ]; then
+          { echo '## The driver (tab-wake-findings.txt)'; echo; echo '```'; cat "$out/tab-wake-findings.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+        # The trace's two claims fail the run as the driver's do; a FACT line never does.
+        if [ "$assert" = "true" ] && [ -f "$out/tab-wake-spans.md" ] && grep -q '^FAIL ' "$out/tab-wake-spans.md"; then
+          grep '^FAIL ' "$out/tab-wake-spans.md" | sed 's/^/::error::the trace: /'
+          exit 1
+        fi
+      artifact-name: android-tab-wake-perf-light
+      artifact-path: artifacts/android-tab-wake-perf/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed.
+  profile-again:
+    name: Tab wake perf (light), second boot
+    needs: profile
+    if: ${{ failure() && needs.profile.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabWakePerfDemo
+        DEMO_DIR=tab-wake-perf
+        DEMO_OUT=artifacts/android-tab-wake-perf
+        DEMO_THEME=light
+        DEMO_VIDEO=android-tab-wake-perf-light.mp4
+        DEMO_RECORD=${{ (github.event_name == 'workflow_dispatch' && inputs.record == false) && '0' || '1' }}
+        DEMO_ARGS=-e holdBackgroundWork true -e assert ${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
+        DEMO_HANDSHAKE_S=420
+        DEMO_PERFETTO_CONFIG=.github/scripts/android-tab-wake-perf.pbtx
+      post-script: |
+        python3 -m pip install --quiet --disable-pip-version-check perfetto
+        out=artifacts/android-tab-wake-perf
+        assert=${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
+        trace=$(ls "$out"/zen-*.pftrace 2>/dev/null | head -n 1 || true)
+        if [ -n "$trace" ] && [ -f "$out/scenes.txt" ]; then
+          python3 .github/scripts/android-perf-trace.py "$trace" "$out/scenes.txt" --json "$out/perfetto.json" > "$out/perfetto-report.md" 2>&1 || echo "::warning::the Perfetto reader failed"
+          python3 .github/scripts/android-tab-wake-spans.py "$trace" "$out/scenes.txt" --windows "$out/windows.txt" --cap-ms 2 > "$out/tab-wake-spans.md" 2>&1 || echo "::warning::the span reader failed"
+          { echo '## The system (Perfetto)'; echo; cat "$out/perfetto-report.md"; echo; cat "$out/tab-wake-spans.md"; } >> "$GITHUB_STEP_SUMMARY" || true
+        else
+          echo "::notice::no Perfetto trace or scenes.txt to read"
+        fi
+        if [ -f "$out/tab-wake-findings.txt" ]; then
+          { echo '## The driver (tab-wake-findings.txt)'; echo; echo '```'; cat "$out/tab-wake-findings.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+        # The trace's two claims fail the run as the driver's do; a FACT line never does.
+        if [ "$assert" = "true" ] && [ -f "$out/tab-wake-spans.md" ] && grep -q '^FAIL ' "$out/tab-wake-spans.md"; then
+          grep '^FAIL ' "$out/tab-wake-spans.md" | sed 's/^/::error::the trace: /'
+          exit 1
+        fi
+      artifact-name: android-tab-wake-perf-light-second-boot
+      artifact-path: artifacts/android-tab-wake-perf/
+      timeout-minutes: 60

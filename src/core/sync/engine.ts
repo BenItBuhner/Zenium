@@ -1,4 +1,7 @@
 import type {
+  AccountErrorKind,
+  SyncAccountLink,
+  SyncAccountLinkFailure,
   SyncDevice,
   SyncDeviceTabs,
   SyncScope,
@@ -102,19 +105,39 @@ import {
   webDavFolderName,
   webDavFolderUrl
 } from './webdav'
+import {
+  ACCOUNT_VERSION_POLL_MS,
+  AccountClient,
+  AccountSession,
+  AccountTransport,
+  forgetAccountSecrets,
+  isAccountError,
+  isSignedOut,
+  linkDevice,
+  type AccountGrant,
+  type AccountLinkResult
+} from './account'
+import { accountEndpoints } from './accountEndpoints'
 
 interface Persisted {
   version: 1
   enabled: boolean
   /**
    * Where the folder is: the host's path or tree URI with the folder transport, the
-   * `zenium-sync` directory's URL with the WebDAV one (ID-32; the status shows it as it is).
+   * `zenium-sync` directory's URL with the WebDAV one (ID-32; the status shows it as it is), the
+   * account service's URL with the Zenium account.
    */
   folder: string | null
   /** How `folder` is reached; absent in a `sync.json` from before ID-32 (the folder transport). */
   transport?: SyncTransportKind
   /** The WebDAV server's settings, never its app password (`Platform.secrets` keeps that). */
   webdav?: WebDavSyncSettings | null
+  /**
+   * The Zenium account signed in to, never its tokens (`Platform.secrets` keeps the refresh
+   * token): set from the approved sign-in on, before setup too – the passphrase step comes after
+   * the sign-in, and a restart in between keeps the sign-in.
+   */
+  account?: { email: string } | null
   /** Base64 scrypt key (derived once from the passphrase). */
   key: string | null
   salt: string | null
@@ -174,11 +197,24 @@ const FIRST_SYNC_DELAY_MS = 1_500
  * locked by another client) is run again after the push debounce before it is shown as an error.
  */
 export const WEBDAV_CONFLICT_RETRIES = 3
+/**
+ * Through the Zenium account the version poll (`AccountTransport.watch`) is what brings another
+ * device's change in; the engine's own poll is only the net under it, this often at most.
+ */
+export const ACCOUNT_ROUND_POLL_MS = 5 * 60_000
+/**
+ * Through the Zenium account a round whose device file would say what the last one said does
+ * not write it (every write bumps the version every other device polls, and each would answer
+ * with a round of its own – for ever); the file is written anyway this often, so the others'
+ * "last seen" keeps moving.
+ */
+export const DEVICE_FILE_HEARTBEAT_MS = 10 * 60_000
 
-/** What a device connects to: the host's folder, or a WebDAV server with its app password. */
+/** What a device connects to: the host's folder, a WebDAV server with its app password, or the account. */
 type SyncTarget =
   | { transport: 'folder'; folder: string }
   | { transport: 'webdav'; settings: WebDavSyncSettings; password: string }
+  | { transport: 'account'; session: AccountSession }
 
 export const FOLDER_LOST_MESSAGE =
   'The sync folder is no longer accessible. Choose it again to keep syncing.'
@@ -187,6 +223,27 @@ export const OTHER_PASSPHRASE_FOLDER_MESSAGE =
   'That folder holds sync data set up with a different passphrase. Turn sync off and set it up again to use it.'
 export const SEND_TAB_UNKNOWN_DEVICE_MESSAGE = 'That device is no longer in your sync folder.'
 export const SEND_TAB_NOT_A_PAGE_MESSAGE = 'Only web pages can be sent to your devices.'
+export const ACCOUNT_SIGN_IN_FIRST_MESSAGE = 'Sign in to your Zenium account first.'
+export const OTHER_PASSPHRASE_ACCOUNT_MESSAGE =
+  'That account holds sync data set up with a different passphrase. Turn sync off and set it up again to use it.'
+
+/** An account error as a toast says it (the engine's own sentences; the settings page has its own words). */
+export function accountErrorMessage(kind: AccountErrorKind): string {
+  switch (kind) {
+    case 'signed-out':
+      return 'You were signed out of your Zenium account.'
+    case 'quota':
+      return 'Your Zenium account’s sync storage is full.'
+    case 'too-large':
+      return 'This is too large to sync.'
+    case 'rate-limited':
+      return 'Too many requests to your Zenium account. Try again in a moment.'
+    case 'unavailable':
+      return 'Your Zenium account could not be reached.'
+    case 'refused':
+      return 'Your Zenium account did not accept the request.'
+  }
+}
 
 type Timer = ReturnType<typeof setTimeout>
 
@@ -237,8 +294,21 @@ export class SyncEngine implements SyncHost {
   private applyingHistory = false
   private syncing = false
   private lastError: string | null = null
-  /** The class of `lastError` when the WebDAV transport raised it (`SyncStatus.lastErrorKind`). */
-  private lastErrorKind: WebDavErrorKind | null = null
+  /** The class of `lastError` when the WebDAV or account transport raised it (`SyncStatus.lastErrorKind`). */
+  private lastErrorKind: WebDavErrorKind | AccountErrorKind | null = null
+  /** The device's account sign-in, made on first use; replaced whole by a new sign-in. */
+  private accountSession: AccountSession | null = null
+  /** The sign-in under way (`SyncStatus.accountLink`), and what cancels it. */
+  private accountLink: SyncAccountLink | null = null
+  private linkController: AbortController | null = null
+  private accountLinkFailure: SyncAccountLinkFailure | null = null
+  /**
+   * The account service ended the sign-in (`SyncStatus.accountSignedOut`): as `authRefused`, the
+   * timers are stopped and `run()` sends nothing until the user signs in again.
+   */
+  private accountSignedOut = false
+  /** The device file as last written through the account (`DEVICE_FILE_HEARTBEAT_MS`). */
+  private published: { hash: string; at: number } | null = null
   private folderLost = false
   private folderName: string | null = null
   /**
@@ -290,11 +360,14 @@ export class SyncEngine implements SyncHost {
     const declined = readDeclinedExtensions(this.data.declinedExtensions)
     if (declined) this.data.declinedExtensions = declined
     else delete this.data.declinedExtensions
-    // A WebDAV device without its settings (a hand-edited store) is a folder device.
-    if (this.data.transport !== 'webdav' || !this.data.webdav) {
-      this.data.transport = 'folder'
-      this.data.webdav = null
+    if (typeof this.data.account?.email !== 'string') this.data.account = null
+    // A WebDAV device without its settings, or an account device without its account (a
+    // hand-edited store), is a folder device.
+    const transport = this.data.transport
+    if (!(transport === 'account' && this.data.account)) {
+      if (transport !== 'webdav' || !this.data.webdav) this.data.transport = 'folder'
     }
+    if (this.data.transport !== 'webdav') this.data.webdav = null
     if (this.data.key) this.key = fromBase64(this.data.key)
   }
 
@@ -364,7 +437,9 @@ export class SyncEngine implements SyncHost {
           ? null
           : this.data.transport === 'webdav' && this.data.webdav
             ? webDavFolderName(this.data.webdav)
-            : (this.folderName ?? this.data.folder),
+            : this.data.transport === 'account' && this.data.account
+              ? this.data.account.email
+              : (this.folderName ?? this.data.folder),
       folderLost: this.folderLost,
       deviceId: this.data.deviceId,
       deviceName: this.data.deviceName,
@@ -379,13 +454,23 @@ export class SyncEngine implements SyncHost {
       transport: this.data.transport ?? 'folder',
       webdav: this.data.webdav ?? null,
       webdavAvailable: this.webdavAvailable(),
-      authRefused: this.authRefused
+      authRefused: this.authRefused,
+      accountAvailable: this.accountAvailable(),
+      account: this.data.account ?? null,
+      accountLink: this.accountLink,
+      accountLinkFailure: this.accountLinkFailure,
+      accountSignedOut: this.accountSignedOut
     }
   }
 
   /** A WebDAV server takes a fetch that speaks its methods and a store for its app password. */
   private webdavAvailable(): boolean {
     return Boolean(this.host.fetch && this.browser.platform.secrets)
+  }
+
+  /** The account takes the same: a fetch that reaches the service, a store for the refresh token. */
+  private accountAvailable(): boolean {
+    return this.webdavAvailable()
   }
 
   // ---------------------------------------------------------------------------
@@ -422,6 +507,13 @@ export class SyncEngine implements SyncHost {
    * come back typed (`SyncSetupRefusal`) for the chrome to say in its words – no method or status
    * of the protocol reaches a sentence (§9.33); the folder transport's refusals are toasted as
    * before.
+   *
+   * With `transport: 'account'` the home is the Zenium account the device signed in to before
+   * (`startAccountLink`: the refresh token is in the store already, the account in `sync.json`):
+   * nothing is stored here, the account's documents are read as a folder's, and the sign-in is
+   * kept through the disconnect (`keepAccount`). The service's refusal comes back typed
+   * (`reason: 'account'`); a sign-in it has ended is forgotten with it, for the chrome to offer
+   * the sign-in again. Any other setup signs a device that had signed in out of the account.
    */
   async setup(
     opts: {
@@ -450,6 +542,12 @@ export class SyncEngine implements SyncHost {
       }
       const { password, ...settings } = opts.webdav
       target = { transport: 'webdav', settings, password }
+    } else if (opts.transport === 'account') {
+      if (!this.accountAvailable() || !this.data.account) {
+        this.browser.toast(ACCOUNT_SIGN_IN_FIRST_MESSAGE, 'error', win)
+        return null
+      }
+      target = { transport: 'account', session: this.session() }
     } else {
       target = { transport: 'folder', folder: opts.folder }
     }
@@ -501,6 +599,13 @@ export class SyncEngine implements SyncHost {
       } catch (error) {
         if (target.transport === 'webdav' && isWebDavError(error))
           return { reason: 'server', kind: error.kind, status: error.status }
+        if (target.transport === 'account' && isAccountError(error)) {
+          if (error.kind === 'signed-out') {
+            this.forgetAccount()
+            this.persist()
+          }
+          return { reason: 'account', kind: error.kind }
+        }
         this.browser.toast(this.describe(error), 'error', win)
         return null
       }
@@ -517,12 +622,20 @@ export class SyncEngine implements SyncHost {
       // The point of no return: the password in the store is the new setup's, and the disconnect
       // leaves it there (`keepSecret`); every other disconnect forgets it.
       kept = true
-      this.disconnect(false, { keepSecret: target.transport === 'webdav' })
+      this.disconnect(false, {
+        keepSecret: target.transport === 'webdav',
+        keepAccount: target.transport === 'account'
+      })
       this.key = key
       this.data = {
         ...this.data,
         enabled: true,
-        folder: target.transport === 'folder' ? target.folder : webDavFolderUrl(target.settings),
+        folder:
+          target.transport === 'folder'
+            ? target.folder
+            : target.transport === 'webdav'
+              ? webDavFolderUrl(target.settings)
+              : target.session.client.endpoints.cloudUrl,
         transport: target.transport,
         webdav: target.transport === 'webdav' ? target.settings : null,
         key: toBase64(key),
@@ -541,6 +654,7 @@ export class SyncEngine implements SyncHost {
       if (this.data.scope.history) this.startSeed(Date.now())
       this.persist()
       this.attach(transport)
+      if (target.transport === 'account') this.renameAccountDevice()
     } finally {
       // Refused after the store took the password – by the server, the passphrase, a throw:
       // the store back to what it held, so a refused setup leaves nothing behind on either side.
@@ -581,6 +695,197 @@ export class SyncEngine implements SyncHost {
     await this.connect(password)
     await this.syncNow()
     return null
+  }
+
+  // ---------------------------------------------------------------------------
+  // The Zenium account
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sign this device in to the Zenium account (`account.ts`'s `linkDevice`): the sign-in page
+   * opens in a new tab of `win`'s – the browser itself is where the user signs in – and its code
+   * is in the status for the chrome to show beside it. Resolves once the code is shown, or the
+   * start failed (`accountLinkFailure`); the approval is awaited in the background, every
+   * `interval` seconds, until it comes, the code expires or `cancelAccountLink`. Offered before
+   * setup – the passphrase step follows the approval – and to a device the service signed out
+   * (`accountSignedOut`), which syncs again once it is approved. A device syncing through a
+   * folder, a server or a sign-in the service still takes has nothing to sign in to.
+   */
+  async startAccountLink(win: ZenWindow): Promise<void> {
+    if (!this.accountAvailable()) {
+      this.browser.toast('The Zenium account is not available on this device.', 'error', win)
+      return
+    }
+    // Syncing through a folder or a server, or through a sign-in that still holds: nothing to
+    // sign in to (a second approval would replace a live refresh token in the store).
+    if (this.data.enabled && (this.data.transport !== 'account' || !this.accountSignedOut)) return
+    this.cancelAccountLink()
+    const controller = new AbortController()
+    this.linkController = controller
+    this.accountLinkFailure = null
+    this.browser.state.commitVolatile()
+    let shown = (): void => undefined
+    const codeShown = new Promise<void>((resolve) => (shown = resolve))
+    void this.runAccountLink(controller, win, shown).finally(shown)
+    await codeShown
+  }
+
+  /** Stop waiting for the sign-in under way; a later approval of its code is signed out again. */
+  cancelAccountLink(): void {
+    this.linkController?.abort()
+    this.linkController = null
+    if (this.accountLink) {
+      this.accountLink = null
+      this.browser.state.commitVolatile()
+    }
+  }
+
+  /**
+   * Sign out of the Zenium account: a device syncing through it turns sync off (`disconnect`,
+   * which forgets the sign-in at the service and in the store); a device that signed in and
+   * never set up only forgets the sign-in.
+   */
+  signOutAccount(): void {
+    if (this.data.enabled && this.data.transport === 'account') {
+      this.disconnect(false)
+      return
+    }
+    this.cancelAccountLink()
+    if (!this.data.account) return
+    this.forgetAccount()
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  private async runAccountLink(
+    controller: AbortController,
+    win: ZenWindow,
+    shown: () => void
+  ): Promise<void> {
+    let result: AccountLinkResult | null = null
+    let failure: SyncAccountLinkFailure | null = null
+    try {
+      result = await linkDevice(this.accountClient(), this.browser.platform.secrets!, {
+        deviceName: this.data.deviceName,
+        kind: this.host.deviceKind?.() ?? 'desktop',
+        signal: controller.signal,
+        onCode: (start) => {
+          this.accountLink = {
+            userCode: start.userCode,
+            verificationUrl: start.verificationUriComplete,
+            expiresAt: start.expiresAt
+          }
+          this.browser.state.commitVolatile()
+          this.browser.tabs.createTab({ url: start.verificationUriComplete, active: true }, win)
+          shown()
+        }
+      })
+    } catch (error) {
+      failure =
+        isAccountError(error) && error.kind === 'rate-limited' ? 'rate-limited' : 'unavailable'
+    }
+    // Cancelled, or another sign-in took its place: that one owns the status now.
+    if (this.linkController !== controller) return
+    this.linkController = null
+    this.accountLink = null
+    if (result?.status === 'expired') failure = 'expired'
+    else if (result?.status === 'secrets') failure = 'secrets'
+    this.accountLinkFailure = failure
+    if (result?.status === 'approved') await this.accountApproved(result.grant, win)
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * An approved sign-in (its refresh token in the store already): the session from now on.
+   * Before setup the account is only noted – the passphrase step is next. A device the service
+   * had signed out connects again and syncs; signed in to ANOTHER account, it first checks that
+   * the key opens what that account holds (as `setFolder` does for a folder) and, if not, signs
+   * that account out again – the data stays where it was.
+   */
+  private async accountApproved(grant: AccountGrant, win: ZenWindow): Promise<void> {
+    const session = this.newSession()
+    session.adopt(grant)
+    this.accountSession = session
+    if (!(this.data.enabled && this.data.transport === 'account' && this.key)) {
+      this.data.account = { email: grant.email }
+      this.persist()
+      return
+    }
+    if (this.data.account?.email !== grant.email) {
+      try {
+        const others = (
+          await readDeviceFiles(this.openTransport({ transport: 'account', session }))
+        ).filter((f) => f.deviceId !== this.data.deviceId)
+        if (others.length) await decryptJson(this.key, others[0].envelope)
+      } catch (error) {
+        this.browser.toast(
+          isAccountError(error)
+            ? accountErrorMessage(error.kind)
+            : OTHER_PASSPHRASE_ACCOUNT_MESSAGE,
+          'error',
+          win
+        )
+        this.accountSession = null
+        void session.signOut().catch(() => undefined)
+        void forgetAccountSecrets(this.browser.platform.secrets)
+        return
+      }
+      // Another account holds none of this device's pages: the open buffer is written again.
+      this.data.history.written = 0
+      this.data.history.pages = []
+      this.data.openTabsHash = null
+    }
+    this.data.account = { email: grant.email }
+    this.accountSignedOut = false
+    this.lastError = null
+    this.lastErrorKind = null
+    this.persist()
+    await this.connect()
+    await this.syncNow()
+  }
+
+  private accountClient(): AccountClient {
+    return new AccountClient(accountEndpoints(), this.host.fetch!)
+  }
+
+  private newSession(): AccountSession {
+    return new AccountSession(this.accountClient(), this.browser.platform.secrets!, {
+      onGrant: (grant) => {
+        if (!this.data.account || this.data.account.email === grant.email) return
+        this.data.account = { email: grant.email }
+        this.persist()
+        this.browser.state.commitVolatile()
+      }
+    })
+  }
+
+  /** The device's sign-in, made on first use (the refresh token is read from the store then). */
+  private session(): AccountSession {
+    this.accountSession ??= this.newSession()
+    return this.accountSession
+  }
+
+  /**
+   * Forget the account at the service and here, best effort: the refresh token is read into the
+   * session's memory; once `after` settles (a wipe still writing through the session) the
+   * service signs the device out (`devices:signOut`, so no device is left at the service
+   * holding a live session); then the token leaves the store, whatever the service answered –
+   * a sign-out the service never heard (offline) leaves a session the account's device list
+   * still shows, and the website's Sign out or the daily purge is the way to end it.
+   */
+  private forgetAccount(after: Promise<unknown> = Promise.resolve()): void {
+    this.cancelAccountLink()
+    const session = this.accountSession ?? (this.accountAvailable() ? this.newSession() : null)
+    this.accountSession = null
+    this.data.account = null
+    this.accountSignedOut = false
+    const secrets = this.browser.platform.secrets
+    void (async () => {
+      await session?.load()
+      await after
+      await session?.signOut().catch(() => undefined)
+      await forgetAccountSecrets(secrets)
+    })()
   }
 
   /**
@@ -644,11 +949,24 @@ export class SyncEngine implements SyncHost {
     this.schedulePush()
   }
 
+  /** The device's name; the account's list of devices (its website) takes it too, best effort. */
   setDeviceName(name: string): void {
     this.data.deviceName = name.trim() || this.host.deviceNameDefault()
     this.persist()
     this.browser.state.commitVolatile()
     this.schedulePush()
+    this.renameAccountDevice()
+  }
+
+  /**
+   * The account's list of devices takes the sync name, best effort: the session was named at
+   * sign-in, before the person chose one.
+   */
+  private renameAccountDevice(): void {
+    if (this.data.account && this.accountAvailable() && !this.accountSignedOut)
+      void this.session()
+        .mutation('devices:rename', { name: this.data.deviceName })
+        .catch(() => undefined)
   }
 
   /**
@@ -683,8 +1001,9 @@ export class SyncEngine implements SyncHost {
       }
       this.stopTransport()
       // A WebDAV device pointed at a folder of the host's leaves the server: its app password
-      // has no further use here.
+      // has no further use here. An account device leaves the account the same way, signed out.
       if (this.data.transport === 'webdav') this.forgetWebDavPassword()
+      if (this.data.transport === 'account' || this.data.account) this.forgetAccount()
       this.data.folder = folder
       this.data.transport = 'folder'
       this.data.webdav = null
@@ -711,12 +1030,25 @@ export class SyncEngine implements SyncHost {
    * already holds the next setup's: `setup` is the one caller that passes it (it stores before it
    * disconnects); the user's turn-off (`sync.disconnect`, with or without the wipe) passes nothing
    * and forgets, as `setFolder` forgets on its own when a server device goes back to a folder.
+   *
+   * The Zenium account is forgotten the same way – signed out at the service once the wipe, if
+   * any, is through, its refresh token out of the store – unless `keepAccount` says the next
+   * setup is the account's (`setup` again, the one caller that passes it).
    */
-  disconnect(wipeRemote: boolean, options: { keepSecret?: boolean } = {}): void {
+  disconnect(
+    wipeRemote: boolean,
+    options: { keepSecret?: boolean; keepAccount?: boolean } = {}
+  ): void {
     const transport = this.transport
-    if (wipeRemote && transport) void this.removeOwnDocuments(transport).catch(() => undefined)
+    const wiped =
+      wipeRemote && transport
+        ? this.removeOwnDocuments(transport).catch(() => undefined)
+        : Promise.resolve()
     this.stopTransport()
     if (this.data.transport === 'webdav' && !options.keepSecret) this.forgetWebDavPassword()
+    const account = options.keepAccount ? (this.data.account ?? null) : null
+    if ((this.data.transport === 'account' || this.data.account) && !options.keepAccount)
+      this.forgetAccount(wiped)
     this.key = null
     this.data = {
       ...this.data,
@@ -724,6 +1056,7 @@ export class SyncEngine implements SyncHost {
       folder: null,
       transport: 'folder',
       webdav: null,
+      account,
       key: null,
       meta: {},
       pendingMerge: false,
@@ -738,6 +1071,7 @@ export class SyncEngine implements SyncHost {
     this.folderLost = false
     this.folderName = null
     this.authRefused = false
+    this.accountSignedOut = false
     this.conflictRetries = 0
     if (this.remoteTabs.size) {
       this.remoteTabs.clear()
@@ -804,7 +1138,9 @@ export class SyncEngine implements SyncHost {
       this.browser.toast(
         isFolderLost(error)
           ? FOLDER_LOST_MESSAGE
-          : `Could not send the tab: ${this.describe(error)}`,
+          : isAccountError(error)
+            ? `Could not send the tab. ${accountErrorMessage(error.kind)}`
+            : `Could not send the tab: ${this.describe(error)}`,
         'error',
         win
       )
@@ -816,11 +1152,24 @@ export class SyncEngine implements SyncHost {
   // ---------------------------------------------------------------------------
 
   /**
-   * The transport for a target: the host's folder transport, or the shared WebDAV one over the
-   * host's fetch (`webdavAvailable` was checked by whoever chose the target).
+   * The transport for a target: the host's folder transport, or the shared WebDAV or account one
+   * over the host's fetch (`webdavAvailable` / `accountAvailable` was checked by whoever chose
+   * the target). The account's version poll keeps the host's pace where the host has a
+   * foreground (Android: its poll's period, only while in front, and at every return to the
+   * front); elsewhere it asks every `ACCOUNT_VERSION_POLL_MS`.
    */
   private openTransport(target: SyncTarget): SyncTransport {
     if (target.transport === 'folder') return this.host.createTransport(target.folder)
+    if (target.transport === 'account') {
+      const host = this.host
+      return new AccountTransport(target.session, {
+        versionPollMs: host.foreground
+          ? (host.pollMs ?? ACCOUNT_VERSION_POLL_MS)
+          : ACCOUNT_VERSION_POLL_MS,
+        ...(host.foreground ? { foreground: () => host.foreground!() } : {}),
+        ...(host.onForeground ? { onForeground: (l: () => void) => host.onForeground!(l) } : {})
+      })
+    }
     return new WebDavTransport({ ...target.settings, password: target.password }, this.host.fetch!)
   }
 
@@ -852,6 +1201,17 @@ export class SyncEngine implements SyncHost {
       this.attach(this.openTransport({ transport: 'webdav', settings, password: secret }))
       return
     }
+    // The account's refresh token is read at the first request: a store without one ends the
+    // session there, and the round reports it as `accountSignedOut`.
+    if (this.data.transport === 'account' && this.data.account) {
+      if (!this.accountAvailable()) {
+        this.accountSignedOut = true
+        this.browser.state.commitVolatile()
+        return
+      }
+      this.attach(this.openTransport({ transport: 'account', session: this.session() }))
+      return
+    }
     if (this.data.folder !== null)
       this.attach(this.openTransport({ transport: 'folder', folder: this.data.folder }))
   }
@@ -861,8 +1221,13 @@ export class SyncEngine implements SyncHost {
     this.stopTransport()
     this.connectGeneration += 1
     this.transport = transport
+    this.published = null
     this.unwatch = transport.watch?.(() => void this.syncNow()) ?? null
-    const pollMs = this.host.pollMs ?? DEFAULT_POLL_MS
+    const hostPollMs = this.host.pollMs ?? DEFAULT_POLL_MS
+    const pollMs =
+      this.data.transport === 'account' && hostPollMs > 0
+        ? Math.max(hostPollMs, ACCOUNT_ROUND_POLL_MS)
+        : hostPollMs
     if (pollMs > 0) {
       this.pollTimer = setInterval(() => {
         if (this.host.foreground?.() === false) return
@@ -872,7 +1237,7 @@ export class SyncEngine implements SyncHost {
     this.firstSyncTimer = setTimeout(() => void this.syncNow(), FIRST_SYNC_DELAY_MS)
     this.folderName = null
     const folder = this.data.folder
-    if (this.host.folderName && folder !== null && this.data.transport !== 'webdav') {
+    if (this.host.folderName && folder !== null && this.data.transport === 'folder') {
       void this.host
         .folderName(folder)
         .then((name) => {
@@ -946,7 +1311,8 @@ export class SyncEngine implements SyncHost {
 
   private schedulePush(): void {
     // A refused sign-in holds every push too: the change waits for the new password's round.
-    if (!this.data.enabled || this.data.pendingMerge || this.authRefused) return
+    if (!this.data.enabled || this.data.pendingMerge || this.authRefused || this.accountSignedOut)
+      return
     if (this.pushTimer) clearTimeout(this.pushTimer)
     this.pushTimer = setTimeout(() => void this.syncNow(), PUSH_DEBOUNCE_MS)
   }
@@ -1157,13 +1523,15 @@ export class SyncEngine implements SyncHost {
   private async run(): Promise<void> {
     // A refused sign-in stops the rounds outright – Sync now included: a request with the dead
     // app password is what a server's brute-force protection counts (Nextcloud's: per address,
-    // 25 s delays then a block for every client behind it) – until `setWebDavPassword`.
+    // 25 s delays then a block for every client behind it) – until `setWebDavPassword`. A
+    // sign-in the account service ended holds them the same way, until the user signs in again.
     if (
       !this.data.enabled ||
       !this.transport ||
       !this.key ||
       this.data.pendingMerge ||
-      this.authRefused
+      this.authRefused ||
+      this.accountSignedOut
     )
       return
     if (this.pushTimer) {
@@ -1261,17 +1629,31 @@ export class SyncEngine implements SyncHost {
       }
       this.data.meta = local.meta
       const kind = this.host.deviceKind?.()
-      const file: DeviceFile = {
-        deviceId: this.data.deviceId,
-        deviceName: this.data.deviceName,
-        ...(kind ? { kind } : {}),
-        updatedAt: now,
-        envelope: await encryptJson(this.key, this.data.salt ?? newSalt(), {
-          v: 1,
-          records: local.records
-        } satisfies Payload)
+      // Through the account an unchanged device file waits for its heartbeat
+      // (`DEVICE_FILE_HEARTBEAT_MS`): the plaintext is compared, the ciphertext never repeats.
+      const fingerprint =
+        this.data.transport === 'account'
+          ? hashData({ records: local.records, name: this.data.deviceName, kind: kind ?? null })
+          : null
+      const published = this.published
+      if (
+        fingerprint === null ||
+        published?.hash !== fingerprint ||
+        now - published.at >= DEVICE_FILE_HEARTBEAT_MS
+      ) {
+        const file: DeviceFile = {
+          deviceId: this.data.deviceId,
+          deviceName: this.data.deviceName,
+          ...(kind ? { kind } : {}),
+          updatedAt: now,
+          envelope: await encryptJson(this.key, this.data.salt ?? newSalt(), {
+            v: 1,
+            records: local.records
+          } satisfies Payload)
+        }
+        await this.transport.write(deviceFileName(this.data.deviceId), serializeDeviceFile(file))
+        this.published = fingerprint === null ? null : { hash: fingerprint, at: now }
       }
-      await this.transport.write(deviceFileName(this.data.deviceId), serializeDeviceFile(file))
       // The documents: the folder listed once for the three.
       const names = await this.transport.list()
       await this.syncHistory(this.transport, this.key, names, now)
@@ -1295,6 +1677,18 @@ export class SyncEngine implements SyncHost {
         this.lastError = error.message
         this.lastErrorKind = error.kind
         this.stopTimers()
+      } else if (isSignedOut(error)) {
+        // The account service ended the sign-in (signed out from the website, the account
+        // deleted, a refresh refused). A round of a session a new sign-in has since replaced
+        // says nothing of the new one. Otherwise, as a refused app password: nothing more is
+        // sent until the user signs in again (`startAccountLink`), and the dead refresh token
+        // leaves the store; the account stays named for the chrome's "Sign in again".
+        if (this.accountSession && !this.accountSession.signedOut) return
+        this.accountSignedOut = true
+        this.lastError = accountErrorMessage('signed-out')
+        this.lastErrorKind = 'signed-out'
+        this.stopTimers()
+        void forgetAccountSecrets(this.browser.platform.secrets)
       } else if (
         isWebDavError(error) &&
         error.kind === 'conflict' &&
@@ -1304,6 +1698,9 @@ export class SyncEngine implements SyncHost {
         // again after the push debounce, quietly, a few times before it shows as an error.
         this.conflictRetries += 1
         this.schedulePush()
+      } else if (isAccountError(error)) {
+        this.lastError = accountErrorMessage(error.kind)
+        this.lastErrorKind = error.kind
       } else {
         this.lastError = (error as Error).message || 'Sync failed'
         this.lastErrorKind = isWebDavError(error) ? error.kind : null

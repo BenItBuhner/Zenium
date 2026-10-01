@@ -14,6 +14,7 @@ import {
 } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { landingStore, notePlacements } from '@renderer/lib/fullscreenLanding'
+import { overviewInteractive, stageStore } from '@renderer/lib/gestures/stage'
 import { phoneOnboardingCovers } from '@renderer/lib/onboarding'
 import {
   glanceRect,
@@ -185,6 +186,11 @@ export function useLayoutReporter(
   const tourUp = formFactor === 'phone' && phoneOnboardingCovers(state)
   const contentHidden =
     pageHidden(ui) || lockCover || crossingHolds || firstRunCovers(state) || tourUp
+  // Whether what covers the pages is the tab overview, open or on its way open (the phone's and
+  // the tablet's, one stage): the hide is then a switch away from them, and the host tells the
+  // pages so (`LayoutReport.switchedAway`, OS-39). The desktop never opens one: the overview
+  // stays `closed` there and the report never carries the flag.
+  const overviewOpen = stageStore.use((s) => overviewInteractive(s.overview))
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // The page-edge band's seat (motion spec §3.4, `lib/pageBand.ts`): the page is laid out under
@@ -300,6 +306,7 @@ export function useLayoutReporter(
         placements,
         glance,
         contentHidden: hidden,
+        ...(hidden && overviewOpen ? { switchedAway: true } : {}),
         sidePanel: panelOpen ? panelArea : null,
         ...(edge ? { band: edge } : {})
       }
@@ -325,6 +332,7 @@ export function useLayoutReporter(
     ui.glanceReady,
     glanceActive,
     contentHidden,
+    overviewOpen,
     lockCover,
     gap,
     band,

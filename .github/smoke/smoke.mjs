@@ -382,11 +382,13 @@ import {
   QUIT_HOLD_MS,
   QUIT_TRACE_EVERY_MS,
   exitWithin,
+  formatHoldRead,
   formatQuitTrace,
   holdReleaseRedrives,
   judgeHoldRelease,
   mainProcessState,
   probeOutcome,
+  readHold,
   unlessNoWindow,
   unlessTargetClosed
 } from './quit.mjs'
@@ -1834,8 +1836,14 @@ class Session {
    * names the chord and the duration), and they come up again only once the app has exited or
    * the hold has had its time and a margin (a downloads question or a slow teardown can keep
    * the app alive past it; a hold that ran its time quits whatever the keys do after). Returns
-   * what was seen: the hold's state, whether the exit came within the hold, and `downAt`, the
-   * key down's moment on the app's clock.
+   * what was seen: the hold's state, whether the exit came within the hold, `downAt`, the key
+   * down's moment on the app's clock, and `polls`, every read of the state.
+   *
+   * The reads are bounded (`readHold`, W8-H6): one that has not answered within
+   * HOLD_READ_BOUND_MS counts as stalled and the next goes out, so a slow round trip cannot
+   * swallow the whole hold. It did – macos-x64, run 36816729301, `visibility`: the one read in
+   * flight hung from the key down until the quit closed its target, 2.5 s later, and its
+   * closed-target fallback read as "no hold" although the hold had armed, run and quit the app.
    *
    * No exit by then is read BEFORE the keys come up (W8-F9): the chrome's `window.quitHold` and
    * the main process, one `sampleQuit` into `trace` – a hold still up says the hold's timer never
@@ -1845,11 +1853,10 @@ class Session {
    * the chord and the forced close).
    */
   async holdQuitChord(trace = []) {
+    const sentAt = Date.now()
     const down = await Promise.race([unlessTargetClosed(this.holdKeys(QUIT_COMBO)), delay(3000)])
-    const panel = await unlessTargetClosed(
-      waitFor(async () => (await this.appState()).window.quitHold, 2000, 'the hold armed', 50),
-      null
-    ).catch((e) => ({ error: String(e && e.message ? e.message : e) }))
+    const read = () => this.appState().then((st) => st.window.quitHold)
+    const { panel, polls } = await readHold(read, { since: sentAt })
     // The screen while the keys are down: "Hold ⌘Q to quit" over the page, as the Mac draws it
     // (no bring-to-front or settle first – the hold has 1500 ms, and a screencapture takes
     // most of a second of it on a runner).
@@ -1874,8 +1881,25 @@ class Session {
       panel,
       shot,
       exitedDuringHold: Boolean(exit),
-      downAt: down && typeof down === 'object' ? (down.at ?? null) : null
+      downAt: down && typeof down === 'object' ? (down.at ?? null) : null,
+      polls
     }
+  }
+
+  /**
+   * The hold's reading for a failure message (`formatHoldRead`): what `hold`, one
+   * `holdQuitChord`, polled, and the span from the key down to the first before-quit the hook
+   * recorded, measured on the app's clock from `downAt` or, when that was not read, on the
+   * harness's from `chordAt`.
+   */
+  describeHoldRead(hold, chordAt) {
+    const first = this.readEvents().find((e) => e.type === 'before-quit')
+    return formatHoldRead({
+      polls: hold.polls,
+      beforeQuitAt: first && typeof first.t === 'number' ? first.t : null,
+      downAt: hold.downAt,
+      chordAt
+    })
   }
 
   /**
@@ -2667,7 +2691,7 @@ class Session {
         )
         await this.forceClose()
         const err = new Error(
-          `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; before-quit ${beforeQuit.length ? beforeQuit.join(', ') : 'none'}; hold ${hold ? JSON.stringify(hold.panel) : 'n/a'}; trace ${formatQuitTrace(trace, chordAt)}; still ${stuck.ok ? stuck.file : 'none'}; exit after forceClose ${JSON.stringify(this.exit)})`
+          `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; before-quit ${beforeQuit.length ? beforeQuit.join(', ') : 'none'}; hold ${hold ? `${JSON.stringify(hold.panel)} (${this.describeHoldRead(hold, chordAt)})` : 'n/a'}; trace ${formatQuitTrace(trace, chordAt)}; still ${stuck.ok ? stuck.file : 'none'}; exit after forceClose ${JSON.stringify(this.exit)})`
         )
         err.detail = { trace, beforeQuit, hold, prompt: late, still: stuck.ok ? stuck.file : null }
         throw err
@@ -2685,7 +2709,11 @@ class Session {
         // the Mac's chord and Chrome's 1500 ms; and the quit must have come from the hold's end,
         // not before it (a quit at the press is the hold not running).
         if (!hold.panel || hold.panel.error || hold.panel.chord !== QUIT_HOLD_CHORD) {
-          throw new Error(`the quit chord held showed no hold: ${JSON.stringify(hold.panel)}`)
+          const err = new Error(
+            `the quit chord held showed no hold: ${JSON.stringify(hold.panel)}; ${this.describeHoldRead(hold, chordAt)}`
+          )
+          err.detail = { hold, trace }
+          throw err
         }
         if (hold.panel.durationMs !== QUIT_HOLD_MS) {
           throw new Error(`the hold runs ${hold.panel.durationMs} ms, not ${QUIT_HOLD_MS}`)
