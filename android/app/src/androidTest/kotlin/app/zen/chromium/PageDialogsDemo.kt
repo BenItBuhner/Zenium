@@ -527,8 +527,12 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             awaitIme(false, 4_000)
             return
         }
+        val hitsBefore = server.hits("/other.html")
+        val enterAt = SystemClock.uptimeMillis()
+        finding("  (s13: other.html answered $hitsBefore time(s) before ENTER)")
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
         val sheet = awaitSheet(LEAVE)
+        finding("  (s13: other.html answered ${server.hits("/other.html")} time(s) as the sheet ${if (sheet != null) "rose" else "did not rise"}, +${SystemClock.uptimeMillis() - enterAt} ms after ENTER)")
         expect("'Leave site?' rises for the typed address", sheet != null)
         if (sheet == null) {
             if (urlbarOpen()) back()
@@ -539,7 +543,22 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         expect("with Chrome's line and Cancel | Leave", sheet.text(LEAVE_LINE) != null && sheet.peer(CANCEL) != null && sheet.peer("Leave") != null)
         still("typed-leave-site")
         answer(sheet, CANCEL)
-        SystemClock.sleep(2_000)
+        // What happens to the page in the two seconds after the Cancel, as it happens: the
+        // server's count of other.html answers and the page's own address, every change timed.
+        val cancelAt = SystemClock.uptimeMillis()
+        var hits = server.hits("/other.html")
+        var seen = pageUrl()
+        finding("  (s13: +0 ms after Cancel: other.html answered $hits time(s), the page at $seen)")
+        while (SystemClock.uptimeMillis() - cancelAt < 2_000) {
+            SystemClock.sleep(100)
+            val h = server.hits("/other.html")
+            val u = pageUrl()
+            if (h != hits || u != seen) {
+                finding("  (s13: +${SystemClock.uptimeMillis() - cancelAt} ms after Cancel: other.html answered $h time(s), the page at $u)")
+                hits = h
+                seen = u
+            }
+        }
         expect("the page stayed: ${pageUrl()}, its handler still armed", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
         finding("  (the core's word on the tab after the Cancel: ${activeUrl()}; the URL field ${if (urlbarOpen()) "open" else "closed"})")
         if (urlbarOpen()) {
