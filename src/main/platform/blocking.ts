@@ -348,7 +348,10 @@ interface Waiting {
   partition: string | null
   fingerprint: string
   engine: Uint8Array
+  /** The document filters' lines: the fallback, parsed only if `documentsBin` does not read. */
   documents: string
+  /** The document filters' serialised form: what the slot deserialises. */
+  documentsBin: Uint8Array
 }
 
 /** Why the matcher is asked to rebuild: a list's text arrived, or the user changed something. */
@@ -408,15 +411,17 @@ function damagedCache(bin: string, reason: string, error?: unknown): null {
  * and exactly one build follows, reading the sets as they stand then.
  *
  * Where the work runs. The worker compiles every scope of a build in one message and writes
- * the cache files itself, after it has answered; the main thread deserialises the bytes in an
- * idle slot ({@link IdleSlot}) and adopts each scope by one reference assignment – a request in
- * flight answers from the old engine or the new one, never from nothing. One scope per slot
- * (W8-P1b): each scope's engine is its own blob, so a build of several scopes costs the main
- * thread several short stalls rather than one long one; a scope with no list compiled yet
- * takes the first idle moment, capped at {@link DESERIALISE_IDLE_CAP_MS}, and any other waits
- * for the loop to be quiet {@link IDLE_QUIET_MS}, capped at {@link IDLE_WAIT_CAP_MS} – unless
- * a scope with no list compiled yet arrives during that wait, which cuts it short (W8-P1c).
- * Bytes a newer build replaces before their slot fires are dropped unread.
+ * the cache files itself, after it has answered; the main thread deserialises the bytes – the
+ * engine's, and the document filters' serialised form, which it no longer parses from their
+ * lines (seed #45) – in an idle slot ({@link IdleSlot}) and adopts each scope by one reference
+ * assignment – a request in flight answers from the old engine or the new one, never from
+ * nothing. One scope per slot (W8-P1b): each scope's engine is its own blob, so a build of
+ * several scopes costs the main thread several short stalls rather than one long one; a scope
+ * with no list compiled yet takes the first idle moment, capped at
+ * {@link DESERIALISE_IDLE_CAP_MS}, and any other waits for the loop to be quiet
+ * {@link IDLE_QUIET_MS}, capped at {@link IDLE_WAIT_CAP_MS} – unless a scope with no list
+ * compiled yet arrives during that wait, which cuts it short (W8-P1c). Bytes a newer build
+ * replaces before their slot fires are dropped unread.
  */
 export class GhosteryTextMatcher implements TextMatcher, CspSource {
   /** The matcher of the unscoped sets: every partition no scoped text set names. */
@@ -758,7 +763,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     writeGhosteryCache(
       { ...this.cachePaths(scope.partition), fingerprint, version: this.cacheVersion },
       engine.serialize(),
-      documents.lines.join('\n')
+      documents.lines.join('\n'),
+      documents.serialize()
     )
   }
 
@@ -777,7 +783,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
         partition: item.scope.partition,
         fingerprint: item.fingerprint,
         engine: compiled.engine,
-        documents: compiled.documents
+        documents: compiled.documents,
+        documentsBin: compiled.documentsBin
       })
     }
     this.requestSlot()
@@ -838,7 +845,7 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     try {
       const compiled: Compiled = {
         engine: FiltersEngine.deserialize(item.engine),
-        documents: DocumentFilters.parse([item.documents]),
+        documents: this.documentsOf(item.partition, item.documentsBin, item.documents),
         fingerprint: item.fingerprint
       }
       this.adopt(item.partition, compiled)
@@ -848,6 +855,21 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
       console.error('[zenium] filter engine could not be adopted', error)
     }
     this.requestSlot()
+  }
+
+  /**
+   * The document filters from their serialised form – milliseconds, no line parsed – or, when
+   * the bytes do not deserialise (a blob of another `DOCUMENT_FILTERS_FORMAT`; this build's
+   * own worker never hands one over), from the lines kept beside them, parsed as every adopt
+   * did before seed #45, the damage logged once per cache path.
+   */
+  private documentsOf(partition: string | null, bytes: Uint8Array, lines: string): DocumentFilters {
+    try {
+      return DocumentFilters.deserialize(bytes)
+    } catch (error) {
+      damagedCache(this.cachePaths(partition).bin, 'document filters not deserialised', error)
+      return DocumentFilters.parse([lines])
+    }
   }
 
   private adopt(partition: string | null, compiled: Compiled): void {
@@ -877,33 +899,43 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
 
   /**
    * The cache files of one scope: the unscoped matcher's are the names every build before the
-   * scoped ones wrote (`engine.bin`, `engine.json`, `documents.txt`), a partition's carry the
-   * partition in the name.
+   * scoped ones wrote (`engine.bin`, `engine.json`, `documents.txt`; `documents.bin` since
+   * format 3), a partition's carry the partition in the name.
    */
   private cachePaths(partition: string | null): GhosteryCachePaths {
     const tag = partition === null ? '' : `.${partition.replace(/[^a-z0-9_-]/gi, '_')}`
     return {
       bin: join(this.cacheDir, `engine${tag}.bin`),
       meta: join(this.cacheDir, `engine${tag}.json`),
-      documents: join(this.cacheDir, `documents${tag}.txt`)
+      documents: join(this.cacheDir, `documents${tag}.txt`),
+      documentsBin: join(this.cacheDir, `documents${tag}.bin`)
     }
   }
 
   /**
    * One scope's cached matcher for `fingerprint`, or null – a miss, and the build compiles the
-   * lists' text instead. Every path to null: a file of the three missing; metadata that is not
+   * lists' text instead. Every path to null: a file of the four missing; metadata that is not
    * JSON or not an object; metadata of another {@link GHOSTERY_CACHE_FORMAT} (a cache an older
    * build wrote: one recompile); another fingerprint or app version (the lists moved); metadata
-   * without a well-formed digest for either file; `engine.bin` or `documents.txt` of another
-   * length or SHA-1 than the metadata names (a file left short or stale under a completed
-   * rename – a short `documents.txt`, or an empty one, would parse as a smaller set, and is
-   * never adopted); the engine's bytes not deserialising. The files are checked against their
-   * digests before any of them is deserialised or parsed. A miss that means damage – anything
+   * without a well-formed digest for a file that is read; `engine.bin` or `documents.bin` of
+   * another length or SHA-1 than the metadata names (a file left short or stale under a
+   * completed rename, never adopted); the engine's bytes not deserialising. The files are
+   * checked against their digests before any of them is deserialised or parsed. The document
+   * filters are deserialised from `documents.bin`; `documents.txt` – the lines, which parse as
+   * a smaller set when cut short – is read, checked against its digest and parsed only when
+   * the bytes do not deserialise (a blob of another `DOCUMENT_FILTERS_FORMAT`), so the start
+   * pays for the file it adopts and not for the fallback. A miss that means damage – anything
    * past the fingerprint and version – is logged once per cache path, like a failed write.
    */
   private readCache(partition: string | null, fingerprint: string): Compiled | null {
-    const { bin, meta, documents } = this.cachePaths(partition)
-    if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
+    const { bin, meta, documents, documentsBin } = this.cachePaths(partition)
+    if (
+      !existsSync(bin) ||
+      !existsSync(meta) ||
+      !existsSync(documents) ||
+      !existsSync(documentsBin)
+    )
+      return null
     let info: Partial<GhosteryCacheMeta> | null
     try {
       info = JSON.parse(readFileSync(meta, 'utf8')) as Partial<GhosteryCacheMeta> | null
@@ -917,23 +949,36 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     let documentBytes: Buffer
     try {
       engineBytes = new Uint8Array(readFileSync(bin))
-      documentBytes = readFileSync(documents)
+      documentBytes = readFileSync(documentsBin)
     } catch (error) {
       return damagedCache(bin, 'files unreadable', error)
     }
     if (!matchesCacheDigest(engineBytes, info.engine))
       return damagedCache(bin, 'engine bytes do not match the metadata')
-    if (!matchesCacheDigest(documentBytes, info.documents))
+    if (!matchesCacheDigest(documentBytes, info.documentsBin))
       return damagedCache(bin, 'document filters do not match the metadata')
+    let engine: FiltersEngine
     try {
-      return {
-        engine: FiltersEngine.deserialize(engineBytes),
-        documents: DocumentFilters.parse([documentBytes.toString('utf8')]),
-        fingerprint
-      }
+      engine = FiltersEngine.deserialize(engineBytes)
     } catch (error) {
       return damagedCache(bin, 'engine not deserialised', error)
     }
+    let filters: DocumentFilters
+    try {
+      filters = DocumentFilters.deserialize(documentBytes)
+    } catch (error) {
+      damagedCache(bin, 'document filters not deserialised', error)
+      let text: Buffer
+      try {
+        text = readFileSync(documents)
+      } catch (readError) {
+        return damagedCache(bin, 'files unreadable', readError)
+      }
+      if (!matchesCacheDigest(text, info.documents))
+        return damagedCache(bin, 'document filter lines do not match the metadata')
+      filters = DocumentFilters.parse([text.toString('utf8')])
+    }
+    return { engine, documents: filters, fingerprint }
   }
 
   /** A dropped scope's cache files go with it (a missing file is nothing to remove). */
