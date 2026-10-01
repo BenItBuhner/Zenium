@@ -900,6 +900,32 @@ abstract class DemoHarness(
     /** The overview has gone (its landmark unmounts with it); false when it still stands after `timeoutMs`. */
     protected fun awaitOverviewGone(timeoutMs: Long = 5_000): Boolean = waitForGone(OVERVIEW_LABEL, timeoutMs)
 
+    /**
+     * The overview's title – the space switcher of the cleanup spec's §1 ("● Work · 6 tabs", a
+     * button whose tap opens the Spaces sheet; in the private view a heading) – as its accessible
+     * name reads in the document right now (`overviewTitleLabel`: "Work, 6 tabs"), or null while
+     * the overview is not up. The name carries the count, so a driver asks the document for it
+     * and then the tree for the node, rather than spelling it.
+     */
+    protected fun overviewTitleLabel(): String? =
+        chromeJsString(
+            "(function(){var e=document.querySelector('$OVERVIEW_TITLE_SELECTOR');if(!e)return '';" +
+                "return e.getAttribute('aria-label')||e.textContent||''})()"
+        )?.takeIf { it.isNotEmpty() }
+
+    /** The title's node in the tree ([overviewTitleLabel]), its bounds; null while it is not up. */
+    protected fun overviewTitle(): Rect? = overviewTitleLabel()?.let { findByLabel(it) }
+
+    /** Poll for the overview's title ([overviewTitle]) for up to `timeoutMs`. */
+    protected fun awaitOverviewTitle(timeoutMs: Long = 5_000): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            overviewTitle()?.let { return it }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
     /** Poll until nothing on screen reads `label`, for up to `timeoutMs`; false when it is still there. */
     protected fun waitForGone(label: String, timeoutMs: Long = 5_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -3280,6 +3306,12 @@ abstract class DemoHarness(
         const val TABS_LABEL_PREFIX = "Tabs ("
         /** The tab overview's landmark (`OVERVIEW_LABELS.region`, shared/overviewMenu.ts). */
         const val OVERVIEW_LABEL = "Tab overview"
+        /**
+         * The overview's title in the document (TabOverview.tsx's `OverviewTitle`): the one
+         * header control that never moves, so the drivers calibrate the DOM against the tree on
+         * it ([overviewTitle]) as they did on the header's Spaces button before the cleanup spec.
+         */
+        const val OVERVIEW_TITLE_SELECTOR = "[data-testid=\"overview-title\"]"
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"

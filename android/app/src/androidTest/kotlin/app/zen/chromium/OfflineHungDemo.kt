@@ -193,10 +193,10 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         // DRAWN. The chrome holds the stage until the hero's snapshot is in (1.4 s on the
         // emulator's GPU in run 3) and a frame there takes up to a second: run 3's still, 1.5 s
         // after the tap, caught the crash page under a stage not yet painted, and the back that
-        // followed closed the overview before its first frame. The overview's own bar (Spaces,
-        // More, Done) reaches the tree only once the stage draws.
-        val drawn = overview && waitFor(OVERVIEW_SPACES_LABEL, 15_000) != null
-        claim(drawn, "the overview is drawn (its Spaces control is in the tree)")
+        // followed closed the overview before its first frame. The overview's landmark (its
+        // root, `role="region"`) reaches the tree only once the stage draws.
+        val drawn = overview && awaitOverview(15_000) != null
+        claim(drawn, "the overview is drawn (its landmark is in the tree)")
         SystemClock.sleep(1_500)
         shot("08-show-tabs-overview")
         // The back that closes the overview would walk the tab's history instead were the overview
@@ -328,8 +328,8 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         touchPageControl(SHOW_TABS_LABEL)
         val overview = awaitSurface(true, 8_000)
         claim(overview, "Show tabs after the forced race opened the tab overview (the chrome took the back)")
-        val drawn = overview && waitFor(OVERVIEW_SPACES_LABEL, 15_000) != null
-        claim(drawn, "the overview after the forced race is drawn (its Spaces control is in the tree)")
+        val drawn = overview && awaitOverview(15_000) != null
+        claim(drawn, "the overview after the forced race is drawn (its landmark is in the tree)")
         SystemClock.sleep(1_500)
         shot("17-raced-show-tabs-overview")
         if (overview) {
@@ -664,8 +664,6 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         private val OFFLINE_CODES = setOf("-106", "-105", "-109")
         private const val RELOAD_LABEL = "Reload"
         private const val SHOW_TABS_LABEL = "Show tabs"
-        /** The overview bar's Spaces control (`TabOverview.tsx`): in the tree once the overview is drawn. */
-        private const val OVERVIEW_SPACES_LABEL = "Spaces"
         private const val WAIT_LABEL = "Wait"
         private const val EXIT_LABEL = "Exit page"
         /** `connectivityMessages.ts` and `zenPages.ts`. */

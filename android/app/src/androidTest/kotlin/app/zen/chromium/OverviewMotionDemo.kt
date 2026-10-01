@@ -57,7 +57,7 @@ import kotlin.math.roundToInt
  * card), not from the accessibility tree: on the API 34 emulator that tree trails the grid by
  * seconds, and a card re-mounted under another parent (into or out of a group) was missing from
  * it for ten seconds in the first run. DOM boxes are CSS px; they are scaled by the device pixel
- * ratio and checked once against the accessibility bounds of the overview's Spaces button.
+ * ratio and checked once against the accessibility bounds of the overview's title.
  *
  * The pages come from a loopback server in this process ([DemoServer]); the profile
  * (`overview-motion-demo-state.json`) is one space with the group Research [Alpha, Beta] and the
@@ -258,8 +258,8 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         f.hold(REST)
         still("cancel-ring")
         lift("Home over the group's header", ring = true)
-        // Off the grid: the overview's own header row (the space's name and the Spaces button), above the cards.
-        val offGrid = box(SPACES)
+        // Off the grid: the overview's own header row (the title: the space's name and its count), above the cards.
+        val offGrid = box(TITLE)
         f.moveBy(0f, offGrid.exactCenterY() - header.exactCenterY(), 400)
         f.hold(900)
         still("cancel-left")
@@ -528,18 +528,18 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
     }
 
     /**
-     * Check the DOM's coordinates against the accessibility tree once: the Spaces button in the
+     * Check the DOM's coordinates against the accessibility tree once: the title in the
      * overview's header never moves, so its accessibility bounds are current. Any offset (a
      * chrome not at the window's origin) is applied to every box from then on.
      */
     private fun calibrate() {
         if (calibrated) return
-        val fromDom = domRect(SPACES) ?: return
-        val fromTree = waitFor("Spaces", 4_000) ?: return
+        val fromDom = domRect(TITLE) ?: return
+        val fromTree = awaitOverviewTitle(4_000) ?: return
         val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
         val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
         finding(
-            "coordinates: Spaces button at $fromDom from the DOM, $fromTree from the accessibility tree" +
+            "coordinates: the overview's title at $fromDom from the DOM, $fromTree from the accessibility tree" +
                 " (offset ${dx.roundToInt()}, ${dy.roundToInt()})"
         )
         if (abs(dx) <= MAX_OFFSET && abs(dy) <= MAX_OFFSET) {
@@ -956,7 +956,7 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         /** The group's header, by the accessible name the chrome gives it, matched without its count ([groupCard]). */
         private val GROUP_HEADER = groupCard("Research").selector
         private const val NEW_TAB = ".zen-overview-new"
-        private const val SPACES = "[aria-label=\"Spaces\"]"
+        private const val TITLE = OVERVIEW_TITLE_SELECTOR
         /** The names the sampler logs the group card and the New Tab card under. */
         private const val GROUP_KEY = "the group"
         private const val NEW_TAB_KEY = "the New Tab card"

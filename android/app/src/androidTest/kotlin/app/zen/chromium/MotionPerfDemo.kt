@@ -1514,7 +1514,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     /**
      * The on-screen box of the first element `selector` matches (`getBoundingClientRect` in
      * device px); the chrome fills the window, so the DOM's origin is the screen's – checked once
-     * against the accessibility tree's box of the overview's Spaces button, like OverviewMotionDemo.
+     * against the accessibility tree's box of the overview's title, like OverviewMotionDemo.
      */
     private fun domRect(selector: String): android.graphics.Rect? {
         val text = jsString(
@@ -1540,11 +1540,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private fun calibrate() {
         if (calibrated) return
         val text = jsString(
-            "(function(){var e=document.querySelector('.zen-overview [aria-label=\"Spaces\"]');if(!e)return '';var r=e.getBoundingClientRect();" +
+            "(function(){var e=document.querySelector('.zen-overview $OVERVIEW_TITLE_SELECTOR');if(!e)return '';var r=e.getBoundingClientRect();" +
                 "return JSON.stringify({x:(r.left+r.right)/2*window.devicePixelRatio,y:(r.top+r.bottom)/2*window.devicePixelRatio})})()"
         )
         if (text.isEmpty()) return
-        val fromTree = findByLabel("Spaces") ?: return
+        val fromTree = overviewTitle() ?: return
         val o = JSONObject(text)
         val dx = fromTree.exactCenterX() - o.getDouble("x").toFloat()
         val dy = fromTree.exactCenterY() - o.getDouble("y").toFloat()
@@ -1553,7 +1553,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             originX = dx
             originY = dy
         }
-        finding("coordinates: the DOM's origin is ${originX.roundToInt()}, ${originY.roundToInt()} px into the screen (Spaces button: tree $fromTree, DOM centre ${o.getDouble("x").roundToInt()}, ${o.getDouble("y").roundToInt()})")
+        finding("coordinates: the DOM's origin is ${originX.roundToInt()}, ${originY.roundToInt()} px into the screen (the overview's title: tree $fromTree, DOM centre ${o.getDouble("x").roundToInt()}, ${o.getDouble("y").roundToInt()})")
     }
 
     /** A JS expression's string result ("" when the chrome never answered or returned nothing). */

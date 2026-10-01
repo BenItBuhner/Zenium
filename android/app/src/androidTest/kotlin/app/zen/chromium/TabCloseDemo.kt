@@ -32,7 +32,7 @@ import kotlin.math.roundToInt
  *     entry restores the tab and the overview leaves on it.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
- * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
+ * accessibility bounds of the overview's title), because the WebView's accessibility
  * tree trails the software-rendered emulator by seconds. Every touch is a down and an up a
  * frame apart ([touch]), and every touch on a control is checked for having taken
  * ([touchUntil]): while the emulator's main thread is held (seven pages going away at once),
@@ -719,17 +719,17 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     }
 
     /**
-     * Check the DOM's coordinates against the accessibility tree once: the Spaces button in the
+     * Check the DOM's coordinates against the accessibility tree once: the title in the
      * overview's header never moves, so its accessibility bounds are current. Any offset (a
      * chrome not at the window's origin) is applied to every box from then on.
      */
     private fun calibrate() {
         if (calibrated) return
-        val fromDom = domRect("[aria-label=\"Spaces\"]") ?: return
-        val fromTree = waitFor("Spaces", 4_000) ?: return
+        val fromDom = domRect(OVERVIEW_TITLE_SELECTOR) ?: return
+        val fromTree = awaitOverviewTitle(4_000) ?: return
         val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
         val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
-        finding("coordinates: Spaces button at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
+        finding("coordinates: the overview's title at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
         if (abs(dx) <= MAX_OFFSET && abs(dy) <= MAX_OFFSET) {
             originX = dx
             originY = dy
