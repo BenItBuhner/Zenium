@@ -23,6 +23,13 @@ name: Android tablet layout demo
 # live in android-emulator-demo.yml; this file picks the driver, the profile, the display and the
 # colour scheme.
 on:
+  # TEMPORARY (W6-S25-b-V, the Lead's F10 still for PUI-40 / #724): this push trigger and the
+  # TextFragmentDemo environment below run the text fragment driver on the tablet lane once, so a
+  # tablet still of the selection toolbar with Copy link to highlight can be taken; reverted in the
+  # next commit, as the builder's trigger was.
+  push:
+    branches:
+      - cursor/android-pui-40-tablet-still-b2ac
   workflow_dispatch:
     inputs:
       theme:
@@ -62,10 +69,10 @@ jobs:
       # The shared driver chooses the demo and the display from its environment (see the
       # script's header).
       script-env: |
-        DEMO_CLASS=app.zen.chromium.TabletLayoutDemo
-        DEMO_DIR=tablet-demo
+        DEMO_CLASS=app.zen.chromium.TextFragmentDemo
+        DEMO_DIR=text-fragment-demo
         DEMO_OUT=artifacts/android-tablet-demo
-        DEMO_VIDEO=tablet-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_VIDEO=text-fragment-tablet-${{ inputs.theme || 'light' }}.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_DISPLAY=1280x800@160
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
@@ -84,10 +91,10 @@ jobs:
       profile: pixel_tablet
       api-level: '34'
       script-env: |
-        DEMO_CLASS=app.zen.chromium.TabletLayoutDemo
-        DEMO_DIR=tablet-demo
+        DEMO_CLASS=app.zen.chromium.TextFragmentDemo
+        DEMO_DIR=text-fragment-demo
         DEMO_OUT=artifacts/android-tablet-demo
-        DEMO_VIDEO=tablet-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_VIDEO=text-fragment-tablet-${{ inputs.theme || 'light' }}.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_DISPLAY=1280x800@160
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
