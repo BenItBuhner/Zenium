@@ -1186,9 +1186,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val tabsBefore = tabUrls().keys
         val since = SystemClock.uptimeMillis()
+        val openInTab = optionsUi?.optBoolean("open_in_tab", false) ?: (optionsUi == null)
         coreCall("extension.openOptions", """{"id":${JSONObject.quote(row.id)}}""")
         var where = ""
         var tabId: String? = null
+        // An options page opened in a tab that hands its tab off to the extension's own site at
+        // once (Zoom to Fill's `options.html` → https://zoomtofill.com/settings; compat round 27,
+        // R27-3): the site's tab is the options surface the extension chose, graded on the landing
+        // with the site named – before this the probe raced the hand-off, reading a P off the
+        // extension document the instant before it left (156) or a PARTIAL off "a tab opened but
+        // never rendered" when it had left already (113).
+        var handOff: String? = null
         val view: WebView? = poll(OPTIONS_TIMEOUT_MS, 500) {
             val sheet = popupView()
             if (sheet != null && sheet.context == "options" && rendered(sheet)) {
@@ -1200,7 +1208,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 dismissDialog()?.let { text -> Log.w(TAG, "${row.name} options: a dialog pressed away: $text") }
                 return@poll null
             }
-            val opened = urls.filterKeys { it !in tabsBefore }.entries.firstOrNull { extensionPage(it.value) }
+            val openedNow = urls.filterKeys { it !in tabsBefore }
+            val opened = openedNow.entries.firstOrNull { extensionPage(it.value) }
+                ?: openedNow.entries.firstOrNull { openInTab && webPage(it.value) }?.also { handOff = it.value }
             if (opened != null) {
                 var v: TabWebView? = null
                 instrumentation.runOnMainSync { v = host.tabs.get(opened.key) }
@@ -1211,29 +1221,55 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     return@poll tabView
                 }
             }
+            handOff = null
             null
         }
         SystemClock.sleep(1_800)
+        // The extension document read rendered and then left for the site: the landing is read.
+        if (view != null && where == "tab" && openInTab && handOff == null) {
+            val now = tabId?.let { tabUrls()[it] }
+            if (now != null && webPage(now)) {
+                handOff = now
+                poll(OPTIONS_HAND_OFF_MS, 500) { if (rendered(view)) true else null }
+            }
+        }
         snap("$slug-options")
-        val detail = JSONObject().put("page", page).put("openInTab", optionsUi?.optBoolean("open_in_tab", false) ?: (optionsUi == null)).put("where", where)
+        val detail = JSONObject().put("page", page).put("openInTab", openInTab).put("where", where)
+        handOff?.let { detail.put("handOff", it) }
         if (view != null) {
             val dom = json(tabEval(view, DOM_REPORT))
             val console = consoleOf(view)
             val uncaught = console.filter(::isUncaught)
             detail.put("dom", dom).put("console", JSONArray(console.takeLast(20)))
             if (view is ExtensionWebView) detail.put("sheet", sheetSize(view))
-            stage(
-                entry, "options",
-                if (uncaught.isEmpty()) "P" else "PARTIAL",
-                "in a $where: ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\" (${extensionPath(dom.optString("url")).take(60)})" +
-                    (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
-                detail
-            )
+            val site = handOff
+            if (site != null) {
+                // The site's own console is not the extension's: the landing drawn is the measure.
+                val drawn = dom.optInt("els") > 3 || dom.optString("text").isNotBlank()
+                stage(
+                    entry, "options",
+                    if (drawn) "P" else "PARTIAL",
+                    "in a tab the options page handed off to ${site.take(100)}" +
+                        (if (drawn) ": ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\""
+                        else ", whose document had not drawn ${OPTIONS_HAND_OFF_MS / 1000} s after the hand-off (${dom.optInt("els")} elements, readyState ${dom.optString("readyState")})") +
+                        (if (uncaught.isNotEmpty()) "; the site's uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
+                    detail
+                )
+            } else {
+                stage(
+                    entry, "options",
+                    if (uncaught.isEmpty()) "P" else "PARTIAL",
+                    "in a $where: ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\" (${extensionPath(dom.optString("url")).take(60)})" +
+                        (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
+                    detail
+                )
+            }
         } else {
             val sheet = popupView()
             val openedTabs = tabUrls().filterKeys { it !in tabsBefore }
             val opened = openedTabs.values.toList()
             detail.put("openedTabs", JSONArray(opened))
+            if (openInTab) openedTabs.values.firstOrNull { !extensionPage(it) && webPage(it) }?.let { detail.put("handOff", it) }
             if (sheet != null) detail.put("sheetDom", json(tabEval(sheet, DOM_REPORT))).put("sheetConsole", JSONArray(consoleOf(sheet).takeLast(20)))
             val seen = sheet?.let(::seenInView)
             if (sheet != null && seen != null && shownDespiteEmptyDom(seen)) {
@@ -1267,6 +1303,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 entry, "options",
                 if (sheet != null || opened.isNotEmpty()) "PARTIAL" else "F",
                 if (sheet != null) "the options sheet came up but its document stayed empty after ${OPTIONS_TIMEOUT_MS / 1000} s: ${detail.optJSONObject("sheetDom")?.toString()?.take(200)}"
+                else if (detail.has("handOff")) "the options page handed its tab off to ${detail.optString("handOff").take(100)} and the landing never rendered within ${OPTIONS_TIMEOUT_MS / 1000} s (the site's or the network's)"
                 else if (opened.isNotEmpty()) "a tab opened (${opened.joinToString().take(120)}) but never rendered within ${OPTIONS_TIMEOUT_MS / 1000} s"
                 else "no options sheet or tab within ${OPTIONS_TIMEOUT_MS / 1000} s",
                 detail
@@ -13276,6 +13313,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return presented.startsWith("chrome-extension://") && (id == null || presented.startsWith("chrome-extension://$id/", ignoreCase = true))
     }
 
+    /** A web page's URL (http or https) that is not an extension page in either spelling: where an options page handed its tab off to (R27-3). */
+    private fun webPage(url: String): Boolean =
+        (url.startsWith("https://") || url.startsWith("http://")) && !extensionPage(url)
+
     /** The path (query and fragment kept) of an extension page's URL in either spelling, for a note; the URL itself for any other. */
     private fun extensionPath(url: String): String {
         val presented = ExtensionUrls.present(url)
@@ -15034,6 +15075,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** After the action click opened a tab: how long a sheet gets to follow it before the tab is read as the click's whole answer. */
         private const val POPUP_AFTER_TAB_MS = 5_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
+        /** An options page that handed its tab off to the extension's site after it had rendered: how long the landing gets to draw (R27-3). */
+        private const val OPTIONS_HAND_OFF_MS = 10_000L
         /** A userscript manager's install landing: its install tab closing after the Install click. */
         private const val USERSCRIPT_INSTALL_MS = 15_000L
         /** The marker on the target's first document; the rest of [USERSCRIPT_EFFECT_MS] goes to the reload. */
@@ -17046,14 +17089,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:n>=5,clicks:n,indicator:ind,contextmenu:cm,shown:(document.getElementById('count')||{}).textContent||null})})()"
 
         /**
-         * PDF Editor for Chrome's `.pdffiller-button` after the `pdf-links.html` fixture's PDF
-         * links (served under the nip.io name: `isReachableByUploadApi` offers no button for a
-         * loopback, private-range or single-label host). The buttons drawn with a size, the PDF
-         * links counted, the host the page was read on.
+         * PDF Editor for Chrome's button after the `pdf-links.html` fixture's PDF links (served
+         * under the nip.io name: `isReachableByUploadApi` offers no button for a loopback,
+         * private-range or single-label host). The button's root is a class-less
+         * `<div data-pdffiller-button title="Open with pdfFiller">` (its `js/inject.js`
+         * `buildButton`: Bing strips an injected node that carries any class, so the attribute
+         * identifies and styles the root; its children `img.sendToPdfFiller-logo` and
+         * `span.sendToPdfFiller-label` keep theirs) – compat round 26 read the row F on both
+         * lanes with the button drawn on the stills because the selector asked for a class
+         * (R27-3). The roots counted, those drawn with a size, the logos as the children's
+         * witness, the PDF links, the host the page was read on.
          */
         private const val PDFFILLER_BUTTON =
-            "(function(){var btns=document.querySelectorAll('.pdffiller-button, [class*=\"pdffiller\"], [data-pdffiller-variant]');var shown=0;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}" +
-                "return JSON.stringify({pass:btns.length>0,buttons:btns.length,visible:shown,links:document.querySelectorAll('a[href*=\".pdf\"]').length,host:location.host})})()"
+            "(function(){var btns=document.querySelectorAll('[data-pdffiller-button], .pdffiller-button, [class*=\"pdffiller\"], [data-pdffiller-variant]');var shown=0;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}" +
+                "return JSON.stringify({pass:btns.length>0,buttons:btns.length,visible:shown,logos:document.querySelectorAll('.sendToPdfFiller-logo').length,links:document.querySelectorAll('a[href*=\".pdf\"]').length,host:location.host})})()"
 
         /**
          * SwiftRead's in-page menu after the action click: `#__swiftread_menu_host__` with an open
