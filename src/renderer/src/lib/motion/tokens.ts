@@ -72,13 +72,18 @@ export const SPRING_FOLLOW: SpringConfig = {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Every plain toast (`TOAST_DURATION`, `@shared/toastCard`'s `TOAST_SHOW_MS`) and every Undo
- * toast (`TOAST_UNDO_MS`). `lib/ui.ts` re-exports `TOAST_DURATION` from here for the callers
- * that always read it there. §1's table writes the plain toast at 4 000; the shipped value is
- * v2 §9.33's 2 800, and a token module changes no behaviour (W8-M1 raised the gap with the lead).
+ * Every plain toast (`TOAST_DURATION`: `@shared/toastCard`'s `TOAST_SHOW_MS`, 2 800 ms) and every
+ * Undo toast (`TOAST_UNDO_MS`, 8 000). `lib/ui.ts` re-exports `TOAST_DURATION` from here for the
+ * callers that always read it there.
  */
 export { TOAST_SHOW_MS, TOAST_UNDO_MS } from '@shared/toastCard'
 export const TOAST_DURATION: number = TOAST_SHOW_MS
+
+/**
+ * A toast with an action stands 5 000 ms, time to act on it: `lib/ui.ts`'s
+ * `TOAST_ACTION_DURATION`, held to this value by its type.
+ */
+export const TOAST_ACTION_MS = 5000
 
 /** A page-edge offer's clock (§3.2): paused under a finger, armed at the show. */
 export const BAND_CLOCK_MS = 10_000

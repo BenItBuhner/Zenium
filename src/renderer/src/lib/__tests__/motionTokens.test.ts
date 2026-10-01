@@ -17,6 +17,7 @@ import {
   SPRING_GENTLE,
   SPRING_SNAPPY,
   SPRING_STEP_CLAMP_MS,
+  TOAST_ACTION_MS,
   TOAST_DURATION,
   TOAST_UNDO_MS,
   ZEN_EASE
@@ -82,12 +83,19 @@ describe('motion tokens (§1)', () => {
     // The shipped plain toast is v2 §9.33's 2.8 s (§1's table says 4 s; the gap is the lead's).
     expect(TOAST_DURATION).toBe(TOAST_SHOW_MS)
     expect(TOAST_DURATION).toBe(2800)
+    expect(TOAST_ACTION_MS).toBe(5000)
     expect(BAND_CLOCK_MS).toBe(10_000)
   })
 
-  it('`lib/ui.ts` hands out the same TOAST_DURATION', async () => {
+  it('`lib/ui.ts` hands out the same TOAST_DURATION, and its action clock is TOAST_ACTION_MS', async () => {
     const ui = await import('../ui')
     expect(ui.TOAST_DURATION).toBe(TOAST_DURATION)
+    expect(ui.TOAST_ACTION_DURATION).toBe(TOAST_ACTION_MS)
+    // The digits stay on the export's line (Android's `V2TokensPinTest` reads them from this
+    // file), bound to the token by `satisfies`.
+    expect(read('../ui.ts')).toMatch(
+      /^export const TOAST_ACTION_DURATION = 5000 satisfies typeof TOAST_ACTION_MS$/m
+    )
   })
 
   it('the curve is main.css’s --zen-ease', () => {
@@ -169,6 +177,7 @@ describe('motion tokens (§1)', () => {
         'SPRING_GENTLE',
         'SPRING_SNAPPY',
         'SPRING_STEP_CLAMP_MS',
+        'TOAST_ACTION_MS',
         'TOAST_DURATION',
         'TOAST_SHOW_MS',
         'TOAST_UNDO_MS',
