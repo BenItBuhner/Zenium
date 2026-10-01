@@ -13,7 +13,9 @@ import { ANDROID, DESKTOP, deepItem, labels, pageHarness, pageParams } from './m
  * empty-space menu's "New Folder", and the selection menu's "New Folder…". The desktop's window
  * names as it always did – the desktop's paths are byte-equivalent by `formFactor === 'desktop'`
  * – and so does a caller with no window. The word itself is pinned once, in
- * `shared/__tests__/groupNames.test.ts`; these compare against the shared constant.
+ * `shared/__tests__/groupNames.test.ts`; these compare against the shared constant. The rows'
+ * LABELS follow the same rule (§7; the Lead's fold on #731): the touch hosts' strip and selection
+ * menus say New Group, New Live Group…, Add N Tabs to Group ▸ New Group…; the desktop's Folder.
  */
 describe('the touch hosts’ default group name (§6): "Group" on the phone and the tablet, the desktop’s "New Folder" kept', () => {
   const LINK = 'https://linked.test/'
@@ -82,21 +84,52 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
     }
   })
 
-  it('the tab strip’s empty-space menu (New Folder) and the selection menu’s New Folder… name by the host: the tablet’s sidebar makes a "Group", the desktop’s a "New Folder"', () => {
-    for (const [layout, name] of [
-      ['tablet', TOUCH_GROUP_DEFAULT_NAME],
-      ['desktop', NEW_FOLDER_NAME]
+  it('the tab strip’s empty-space menu (New Folder) and the selection menu’s New Folder… name by the host: the tablet’s sidebar makes a "Group", the desktop’s a "New Folder" – and the rows themselves say Group on the touch host (§7; the Lead’s fold on #731)', () => {
+    for (const [layout, name, newOne, live, addTo, newOneDots] of [
+      [
+        'tablet',
+        TOUCH_GROUP_DEFAULT_NAME,
+        'New Group',
+        'New Live Group…',
+        'Add 2 Tabs to Group',
+        'New Group…'
+      ],
+      [
+        'phone',
+        TOUCH_GROUP_DEFAULT_NAME,
+        'New Group',
+        'New Live Group…',
+        'Add 2 Tabs to Group',
+        'New Group…'
+      ],
+      [
+        'desktop',
+        NEW_FOLDER_NAME,
+        'New Folder',
+        'New Live Folder…',
+        'Add 2 Tabs to Folder',
+        'New Folder…'
+      ]
     ] as const) {
       const h = on(layout)
       let before = folders(h).map((f) => f.id)
       h.browser.menus.showNewTabContextMenu(h.win, {})
-      deepItem(h.shown(), 'New Folder').click?.()
+      const strip = labels(h.shown())
+      expect(strip).toContain(newOne)
+      expect(strip).toContain(live)
+      expect(strip.filter((l) => /Folder|Group/.test(l))).toEqual([newOne, live])
+      deepItem(h.shown(), newOne).click?.()
       expect(newest(h, before).name).toBe(name)
 
       const second = h.browser.tabs.createTab({ url: 'https://second.test/', active: false }, h.win)
       before = folders(h).map((f) => f.id)
       h.browser.menus.showSelectionContextMenu([h.tabId, second.id], h.win)
-      deepItem(h.shown(), 'New Folder…').click?.()
+      const selection = labels(h.shown())
+      expect(selection).toContain(`${addTo} > ${newOneDots}`)
+      // Not one row of the other host's noun (the strip-made group's own name is listed too).
+      const foreign = layout === 'desktop' ? /Group/ : /Folder/
+      expect(selection.filter((l) => foreign.test(l))).toEqual([])
+      deepItem(h.shown(), newOneDots).click?.()
       const made = newest(h, before)
       expect(made.name).toBe(name)
       expect(h.browser.tabs.tab(h.tabId)?.folderId).toBe(made.id)

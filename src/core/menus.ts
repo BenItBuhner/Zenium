@@ -2742,6 +2742,12 @@ export class Menus {
     const folders = Object.values(m.folders).filter(
       (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
     )
+    // The group rows' words by the window's layout, as the tab menu's (the overview cleanup
+    // spec §7; the Lead's fold on #731): a touch host says GROUP, the desktop says Folder, its
+    // labels byte for byte as before.
+    const groupRows = touchLayout(win.formFactor)
+      ? { addTo: `Add ${n} Tabs to Group`, newOne: 'New Group…' }
+      : { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
     this.popup(
       [
         {
@@ -2782,7 +2788,7 @@ export class Menus {
                 })
               },
               {
-                label: `Add ${n} Tabs to Folder`,
+                label: groupRows.addTo,
                 enabled: nonEssential.some((t) => !t.pinned),
                 submenu: [
                   ...folders.map((f) => ({
@@ -2793,7 +2799,7 @@ export class Menus {
                   })),
                   ...(folders.length ? [{ type: 'separator' as const }] : []),
                   {
-                    label: 'New Folder…',
+                    label: groupRows.newOne,
                     click: () => {
                       const folder = this.browser.createFolder(
                         space.id,
@@ -2923,13 +2929,15 @@ export class Menus {
         ...(local
           ? []
           : [
+              // The strip's group rows say GROUP on a touch host, as the tab menu's do (the
+              // overview cleanup spec §7; the Lead's fold on #731); the desktop's say Folder.
               {
-                label: 'New Folder',
+                label: touchLayout(win.formFactor) ? 'New Group' : 'New Folder',
                 click: () =>
                   this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
               },
               {
-                label: 'New Live Folder…',
+                label: touchLayout(win.formFactor) ? 'New Live Group…' : 'New Live Folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               {
