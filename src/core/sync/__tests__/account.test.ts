@@ -3,6 +3,7 @@ import type { SecretStore, SyncFetch } from '../../platform'
 import {
   ACCOUNT_READ_MANY_MAX,
   ACCOUNT_REFRESH_MARGIN_MS,
+  ACCOUNT_ATTEMPT_KEY,
   ACCOUNT_SECRET_KEY,
   AccountClient,
   AccountError,
@@ -164,13 +165,14 @@ describe('the account session', () => {
     const order: string[] = []
     const set = secrets.set
     secrets.set = async (key, value) => {
-      order.push(`set ${server.log.length}`)
+      order.push(`set ${key === ACCOUNT_ATTEMPT_KEY ? 'attempt' : 'token'} ${server.log.length}`)
       await set(key, value)
     }
     expect(await session.query('sync:version')).toBe(0)
     expect(server.log).toEqual(['/auth/refresh', 'query sync:version'])
-    // Stored after the refresh answered and before the data call went out.
-    expect(order).toEqual(['set 1'])
+    // The attempt id is kept before the refresh goes out; the token after the refresh answered
+    // and before the data call went out.
+    expect(order).toEqual(['set attempt 0', 'set token 1'])
     const stored = secrets.values.get(ACCOUNT_SECRET_KEY)!
     expect(stored).not.toBe(grant.refreshToken)
     expect(server.sessionsOf(EMAIL)[0]!.refresh).toBe(stored)
@@ -239,11 +241,73 @@ describe('the account session', () => {
 
   it('a refresh token presented again is reuse: the service revokes the sign-in and the session ends', async () => {
     const { server, grant, session } = signedIn()
-    // Another copy of the token (a restored backup) rotated it first.
-    await new AccountClient(accountEndpoints('dev'), server.fetch).refresh(grant.refreshToken)
+    // Another copy of the token (a restored backup) rotated it first, under its own attempt.
+    await new AccountClient(accountEndpoints('dev'), server.fetch).refresh(
+      grant.refreshToken,
+      'another-copy'
+    )
     const error = await session.query('sync:version').catch((e: unknown) => e)
     expect(error).toMatchObject({ kind: 'signed-out' })
     expect(session.signedOut).toBe(true)
+  })
+
+  it('names each rotation attempt, keeps the id beside the token until the answer is in, and retries a lost answer under it long after the clock grace', async () => {
+    let now = 1_000_000
+    const server = new FakeAccountServer()
+    server.now = () => now
+    const { grant, secrets, session } = signedIn(server, { now: () => now })
+    // The answer to the first rotation is lost on the way back.
+    server.loseNextRefreshAnswer = true
+    await expect(session.query('sync:version')).rejects.toMatchObject({ kind: 'unavailable' })
+    const sent = server.bodies['/auth/refresh']!
+    expect(sent).toHaveLength(1)
+    const attempt = sent[0]!['attempt']
+    expect(typeof attempt).toBe('string')
+    expect(String(attempt)).toMatch(/^[A-Za-z0-9_-]{22}$/)
+    // The pair a retry needs is in the store: the token the service has spent, and the attempt.
+    expect(secrets.values.get(ACCOUNT_SECRET_KEY)).toBe(grant.refreshToken)
+    expect(secrets.values.get(ACCOUNT_ATTEMPT_KEY)).toBe(attempt)
+
+    // A day offline, then the retry: the same spent token under the same attempt id is taken.
+    now += 24 * 60 * 60_000
+    expect(await session.query('sync:version')).toBe(0)
+    expect(server.bodies['/auth/refresh']).toHaveLength(2)
+    expect(server.bodies['/auth/refresh']![1]!['attempt']).toBe(attempt)
+    expect(server.bodies['/auth/refresh']![1]!['refreshToken']).toBe(grant.refreshToken)
+    expect(server.sessionsOf(EMAIL)[0]!.revoked).toBe(false)
+    // Answered: the new token is kept and the attempt is cleared for the next rotation.
+    expect(secrets.values.get(ACCOUNT_SECRET_KEY)).toBe(server.sessionsOf(EMAIL)[0]!.refresh)
+    expect(secrets.values.has(ACCOUNT_ATTEMPT_KEY)).toBe(false)
+
+    // The next rotation is a new attempt.
+    now += server.accessTtlMs
+    await session.query('sync:version')
+    expect(server.bodies['/auth/refresh']).toHaveLength(3)
+    expect(server.bodies['/auth/refresh']![2]!['attempt']).not.toBe(attempt)
+  })
+
+  it('a restart after a lost answer retries under the attempt id the store kept', async () => {
+    let now = 1_000_000
+    const server = new FakeAccountServer()
+    server.now = () => now
+    const { grant, secrets, session } = signedIn(server, { now: () => now })
+    server.loseNextRefreshAnswer = true
+    await session.query('sync:version').catch(() => undefined)
+    const attempt = secrets.values.get(ACCOUNT_ATTEMPT_KEY)
+    expect(attempt).toBeDefined()
+
+    // Hours later, a new run reads the same store.
+    now += 6 * 60 * 60_000
+    const again = new AccountSession(
+      new AccountClient(accountEndpoints('dev'), server.fetch),
+      secrets,
+      { now: () => now }
+    )
+    expect(await again.query('sync:version')).toBe(0)
+    const last = server.bodies['/auth/refresh']!.at(-1)!
+    expect(last['refreshToken']).toBe(grant.refreshToken)
+    expect(last['attempt']).toBe(attempt)
+    expect(server.sessionsOf(EMAIL)[0]!.revoked).toBe(false)
   })
 
   it('a store without a token is signed out at once; a store that fails keeps the token in memory', async () => {

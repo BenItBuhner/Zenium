@@ -106,11 +106,11 @@ import {
   webDavFolderUrl
 } from './webdav'
 import {
-  ACCOUNT_SECRET_KEY,
   ACCOUNT_VERSION_POLL_MS,
   AccountClient,
   AccountSession,
   AccountTransport,
+  forgetAccountSecrets,
   isAccountError,
   isSignedOut,
   linkDevice,
@@ -827,7 +827,7 @@ export class SyncEngine implements SyncHost {
         )
         this.accountSession = null
         void session.signOut().catch(() => undefined)
-        void this.browser.platform.secrets?.delete(ACCOUNT_SECRET_KEY).catch(() => undefined)
+        void forgetAccountSecrets(this.browser.platform.secrets)
         return
       }
       // Another account holds none of this device's pages: the open buffer is written again.
@@ -879,7 +879,7 @@ export class SyncEngine implements SyncHost {
     const secrets = this.browser.platform.secrets
     void (async () => {
       await session?.load()
-      await secrets?.delete(ACCOUNT_SECRET_KEY).catch(() => undefined)
+      await forgetAccountSecrets(secrets)
       await after
       await session?.signOut().catch(() => undefined)
     })()
@@ -1685,7 +1685,7 @@ export class SyncEngine implements SyncHost {
         this.lastError = accountErrorMessage('signed-out')
         this.lastErrorKind = 'signed-out'
         this.stopTimers()
-        void this.browser.platform.secrets?.delete(ACCOUNT_SECRET_KEY).catch(() => undefined)
+        void forgetAccountSecrets(this.browser.platform.secrets)
       } else if (
         isWebDavError(error) &&
         error.kind === 'conflict' &&

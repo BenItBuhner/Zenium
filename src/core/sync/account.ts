@@ -30,6 +30,20 @@ import { README, README_NAME, type SyncTransport } from './transport'
 
 /** The one key the engine keeps the device's refresh token under in the host's secret store. */
 export const ACCOUNT_SECRET_KEY = 'sync.account.refresh'
+/**
+ * Beside it, the id of the rotation attempt in flight: made up before a refresh is sent and
+ * kept until its answer is in, so the previous token presented again under the same id is this
+ * device retrying – after a lost answer, however long it was offline or backgrounded – and not
+ * a copy. The service revokes a sign-in whose previous token comes back under another id.
+ */
+export const ACCOUNT_ATTEMPT_KEY = 'sync.account.attempt'
+
+/** Forget this device's sign-in in the host's secret store, best effort: the token and the attempt beside it. */
+export async function forgetAccountSecrets(secrets: SecretStore | undefined): Promise<void> {
+  if (!secrets) return
+  await secrets.delete(ACCOUNT_SECRET_KEY).catch(() => undefined)
+  await secrets.delete(ACCOUNT_ATTEMPT_KEY).catch(() => undefined)
+}
 /** One request's whole time: a device file is a few hundred kilobytes at most. */
 export const ACCOUNT_TIMEOUT_MS = 30_000
 /** The access token is refreshed this long before it expires, not at the edge. */
@@ -212,8 +226,11 @@ export class AccountClient {
    * the sign-in gone (revoked, the account deleted, a spent token presented again); a 400 is a
    * token the service cannot even read – neither is ever going to work again: `signed-out`.
    */
-  async refresh(refreshToken: string): Promise<AccountGrant> {
-    const reply = await this.post(`${this.endpoints.siteUrl}/auth/refresh`, { refreshToken })
+  async refresh(refreshToken: string, attempt?: string): Promise<AccountGrant> {
+    const reply = await this.post(`${this.endpoints.siteUrl}/auth/refresh`, {
+      refreshToken,
+      ...(attempt !== undefined ? { attempt } : {})
+    })
     if (reply.status === 401 || reply.status === 400)
       throw new AccountError('signed-out', `Account refresh answered ${reply.status}`)
     if (reply.status !== 200) throw this.error('refresh', reply.status)
@@ -310,6 +327,8 @@ export interface AccountSessionOptions {
 export class AccountSession {
   /** Undefined until the store was read; null when it holds none, or the session ended. */
   private refreshToken: string | null | undefined = undefined
+  /** The rotation attempt in flight (`ACCOUNT_ATTEMPT_KEY`): undefined until the store was read, null between rotations. */
+  private attemptId: string | null | undefined = undefined
   private access: { token: string; expiresAt: number } | null = null
   private refreshing: Promise<void> | null = null
   private ended = false
@@ -427,33 +446,68 @@ export class AccountSession {
       this.end()
       throw new AccountError('signed-out', 'No account sign-in on this device')
     }
+    const attempt = await this.attempt()
     let grant: AccountGrant
     try {
-      grant = await this.client.refresh(presented)
+      grant = await this.client.refresh(presented, attempt)
     } catch (error) {
       throw this.settle(error)
     }
     // The presented token is spent at the service from here: the new one goes to the store
     // before the access token is used, so a restart never presents the spent one. A store that
     // refuses leaves it in memory: this run keeps syncing, and the next start presents the
-    // spent token and is signed out – the one way left to say the store failed.
+    // spent token under the attempt id still in the store, which the service takes as the retry
+    // it is – or, with that lost too, is signed out: the one way left to say the store failed.
     this.refreshToken = grant.refreshToken
     try {
       await this.secrets.set(ACCOUNT_SECRET_KEY, grant.refreshToken)
     } catch {
       // See above.
     }
+    // The attempt is answered: the next rotation is a new one. Removed after the token is kept,
+    // so a store that fails between the two leaves the pair a retry still needs.
+    this.attemptId = null
+    await this.secrets.delete(ACCOUNT_ATTEMPT_KEY).catch(() => undefined)
     if (this.ended) throw new AccountError('signed-out', 'Account sign-in ended')
     this.access = { token: grant.accessToken, expiresAt: grant.expiresAt }
     this.email = grant.email
     this.options.onGrant?.(grant)
   }
 
+  /**
+   * The id this rotation is attempted under: the one a lost answer left in the store (a retry
+   * after a restart), else a new one, kept before the request goes out so a crash mid-request
+   * retries under it. A store that will not keep it still gets the in-memory id: a retry in this
+   * run is covered, and after a restart the clock rule is all that is left either way.
+   */
+  private async attempt(): Promise<string> {
+    if (this.attemptId === undefined) {
+      try {
+        this.attemptId = (await this.secrets.get(ACCOUNT_ATTEMPT_KEY)) || null
+      } catch {
+        this.attemptId = null
+      }
+    }
+    if (this.attemptId === null) {
+      this.attemptId = newAttemptId()
+      await this.secrets.set(ACCOUNT_ATTEMPT_KEY, this.attemptId).catch(() => undefined)
+    }
+    return this.attemptId
+  }
+
   private end(): void {
     this.ended = true
     this.access = null
     this.refreshToken = null
+    this.attemptId = null
   }
+}
+
+/** A rotation attempt's id: 16 random bytes, base64url without padding (22 characters). */
+export function newAttemptId(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 // ---------------------------------------------------------------------------

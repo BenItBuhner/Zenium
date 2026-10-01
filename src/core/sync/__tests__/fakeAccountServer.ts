@@ -13,8 +13,10 @@ import type { AccountGrant } from '../account'
  *   or 400 `{status:'expired'}` for a code expired, used, unknown or not this device's secret;
  *   `slowDown` answers 429 that many times first.
  * - `POST /auth/refresh` → the refresh token ROTATES: the current one is exchanged for a new
- *   one; the previous one presented again revokes the session (reuse detection) and answers 401,
- *   as does anything else not current. A malformed body is 400.
+ *   one; the previous one presented again is the device retrying a lost answer when it names the
+ *   `attempt` the rotation was made under (`retryAttemptGraceMs`) or, unnamed, comes within
+ *   `retryGraceMs` – and otherwise revokes the session (reuse detection) and answers 401, as
+ *   does anything else not current. A malformed body is 400.
  * - `POST /api/query|mutation` with `Bearer <access>`: a token unknown or expired is HTTP 401;
  *   a revoked session is `errorData.code: 'revoked'`, a deleted account `account-deleted`, and
  *   the functions answer as the backend's do – `sync:write` refuses `bad-name`, `too-large` and
@@ -40,6 +42,9 @@ interface FakeSession {
   kind: string
   refresh: string
   previous: string | null
+  /** When `previous` stopped being current, and the attempt id that rotation was made under. */
+  rotatedAt: number | null
+  rotateAttempt: string | null
   revoked: boolean
 }
 
@@ -93,6 +98,9 @@ export class FakeAccountServer {
   interval = 0
   linkTtlMs = 10 * 60_000
   accessTtlMs = 60 * 60_000
+  /** The service's two retry graces for a previous refresh token: unnamed, and under its attempt id. */
+  retryGraceMs = 60_000
+  retryAttemptGraceMs = 7 * 24 * 60 * 60_000
   now: () => number = Date.now
   limits = {
     maxBytes: 128 * 1024 * 1024,
@@ -104,8 +112,15 @@ export class FakeAccountServer {
   slowDown = 0
   /** While set, a refresh waits on it before answering (a test lines up concurrent callers). */
   refreshGate: Promise<void> | null = null
+  /**
+   * The next refresh is carried out – the token rotates at the service – but its answer never
+   * reaches the device (the network dropped on the way back): the device sees a failure.
+   */
+  loseNextRefreshAnswer = false
   /** While true, every request fails as a network failure would. */
   offline = false
+  /** Every request's parsed JSON body by route, in order (the auth routes; what the client sent). */
+  readonly bodies: Record<string, Array<Record<string, unknown>>> = {}
   private readonly access = new Map<string, { sid: string; expiresAt: number }>()
   private serial = 0
 
@@ -141,6 +156,8 @@ export class FakeAccountServer {
       kind,
       refresh: this.token(),
       previous: null,
+      rotatedAt: null,
+      rotateAttempt: null,
       revoked: false
     }
     this.sessions.set(session.id, session)
@@ -199,7 +216,11 @@ export class FakeAccountServer {
     }
     this.slowDown = 0
     this.refreshGate = null
+    this.loseNextRefreshAnswer = false
     this.offline = false
+    this.retryGraceMs = 60_000
+    this.retryAttemptGraceMs = 7 * 24 * 60 * 60_000
+    for (const route of Object.keys(this.bodies)) delete this.bodies[route]
   }
 
   readonly fetch: SyncFetch = async (url: string, init: SyncFetchInit) => {
@@ -225,6 +246,7 @@ export class FakeAccountServer {
     }
     this.log.push(path)
     this.authorizations.push(authorization)
+    if (body) (this.bodies[path] ??= []).push(body)
     switch (path) {
       case '/auth/device/start':
         return this.start(body)
@@ -233,7 +255,12 @@ export class FakeAccountServer {
       case '/auth/refresh': {
         const gate = this.refreshGate
         if (gate) await gate
-        return this.refresh(body)
+        const answer = this.refresh(body)
+        if (this.loseNextRefreshAnswer) {
+          this.loseNextRefreshAnswer = false
+          throw new TypeError('fetch failed')
+        }
+        return answer
       }
       default:
         return reply(404, { error: 'not-found' })
@@ -332,6 +359,8 @@ export class FakeAccountServer {
       kind: link.kind,
       refresh: this.token(),
       previous: null,
+      rotatedAt: null,
+      rotateAttempt: null,
       revoked: false
     }
     this.sessions.set(session.id, session)
@@ -342,20 +371,40 @@ export class FakeAccountServer {
     const presented = body?.['refreshToken']
     if (typeof presented !== 'string' || presented.length < 32)
       return reply(400, { error: 'bad-request' })
+    const attempt = body?.['attempt']
+    if (attempt !== undefined && (typeof attempt !== 'string' || attempt.length === 0))
+      return reply(400, { error: 'bad-request' })
     const sessions = [...this.sessions.values()]
-    const session = sessions.find((s) => s.refresh === presented)
+    let session = sessions.find((s) => s.refresh === presented)
+    let retried = false
     if (!session) {
       const replayed = sessions.find((s) => s.previous === presented)
-      if (replayed && !replayed.revoked) {
+      if (!replayed || replayed.revoked) return reply(401, { error: 'invalid' })
+      // The previous token is the device retrying when it names the attempt that rotation was
+      // made under (for RETRY_ATTEMPT_GRACE_MS), or, unnamed, within RETRY_GRACE_MS of it;
+      // otherwise it is a copy and the sign-in is revoked.
+      const age = this.now() - (replayed.rotatedAt ?? -Infinity)
+      const retry =
+        attempt === undefined
+          ? age <= this.retryGraceMs
+          : replayed.rotateAttempt === attempt && age <= this.retryAttemptGraceMs
+      if (!retry) {
         replayed.revoked = true
         return reply(401, { error: 'reused' })
       }
-      return reply(401, { error: 'invalid' })
+      session = replayed
+      retried = true
     }
     const account = this.accounts.get(session.email)
     if (session.revoked || !account || account.deleted) return reply(401, { error: 'invalid' })
-    session.previous = session.refresh
-    session.refresh = this.token()
+    if (retried) {
+      session.refresh = this.token()
+    } else {
+      session.previous = session.refresh
+      session.refresh = this.token()
+      session.rotatedAt = this.now()
+      session.rotateAttempt = typeof attempt === 'string' ? attempt : null
+    }
     return reply(200, this.grantBody(session))
   }
 
