@@ -33,6 +33,18 @@ export interface ExtensionRecord {
    * Chrome's `pinned_extensions` (the install toast offers to pin).
    */
   toolbarPinned: boolean
+  /**
+   * When `enabled` / `toolbarPinned` were last written on this device (ms) – each switch's own
+   * clock for the sync merge (ID-44): a peer's record lands a switch only when its clock for
+   * that switch is the later one, so one device's pin and another's disable both survive. Set
+   * by the desktop host at install and on every flip, by the phone's on every flip made there
+   * (`AndroidExtensions.setEnabled` / `setToolbarPinned`; its install writes none); absent on a
+   * record from before the clocks and on a switch a host never flipped, which the merge reads
+   * as written at 0 – older than any clocked switch (`syncedExtensionData`). Never written by
+   * the shared `newRecord`, so an install stamps no clock over a peer's later flip.
+   */
+  enabledAt?: number
+  toolbarPinnedAt?: number
   /** Chrome's "Allow access to file URLs" toggle; off by default like Chrome. */
   allowFileAccess: boolean
   /**
@@ -75,6 +87,28 @@ export interface ExtensionRecord {
    * extension disabled until the user accepts them again; the host clears this on approval.
    */
   pendingWarnings: string[] | null
+  /**
+   * Installed by sync from another device's `extension` record (ID-44) and not approved here
+   * yet: the record landed with `enabled: false` and is never loaded until the user accepts the
+   * install prompt – its permission warnings – from the Extensions page's switch, where the host
+   * clears this. Absent (never written) on an extension the user installed on this device, so a
+   * registry from before the field reads as it was persisted.
+   */
+  pendingApproval?: true
+  /**
+   * The install time this device's copy PUBLISHES in place of its own `installedAt` (ID-44,
+   * round 5): the `installedAt` the `extension` record carried when sync landed the extension
+   * here – when the extension was installed by hand, on whichever device did – or 0 when that
+   * record carried none (a build before the field). A landing is nobody's install: `installedAt`
+   * above stays this device's own (the time shown, the "newest install wins" resolutions), and
+   * a decline elsewhere (`extensionDeclineStands`) is re-offered by an install made by hand
+   * alone, never by a landing. Set by the desktop host at a synced install and when the merge
+   * adopts a later time from a peer's record (`ExtensionSyncApplier.mergeSwitches`); read by its
+   * `syncSources()` (`syncedInstalledAt ?? installedAt`). Never written by the shared
+   * `newRecord`, so an install made by hand publishes its own time; absent on the phone, whose
+   * every install is one made by hand (its `list()` projects `installedAt`).
+   */
+  syncedInstalledAt?: number
   /**
    * An update downloaded and unpacked but not applied yet (see [StagedUpdate]); absent or null
    * when none waits.
@@ -420,8 +454,29 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
   // Absent in registries from before the field (backfilled from the manifest on load): the key
   // is left out rather than written null, so such a record reads as it was persisted.
   if (r.startupPages !== undefined) record.startupPages = sanitizeStartupPagesField(r.startupPages)
+  // A synced landing still waiting for the user's approval (ID-44) stays one across a restart;
+  // an enabled record cannot be waiting, whatever a hand-edited registry says.
+  if (r.pendingApproval === true && !record.enabled) record.pendingApproval = true
+  // The switches' clocks (ID-44): kept when they are times, left out otherwise, so a record from
+  // before the clocks keeps reading its switches as never clocked (0 to the merge).
+  const enabledAt = clock(r.enabledAt)
+  if (enabledAt !== undefined) record.enabledAt = enabledAt
+  const toolbarPinnedAt = clock(r.toolbarPinnedAt)
+  if (toolbarPinnedAt !== undefined) record.toolbarPinnedAt = toolbarPinnedAt
+  // The install time a synced landing publishes (ID-44, round 5): kept when it is a time or the
+  // 0 of "the record carried none", left out otherwise – an install made here publishes its own.
+  if (
+    typeof r.syncedInstalledAt === 'number' &&
+    Number.isFinite(r.syncedInstalledAt) &&
+    r.syncedInstalledAt >= 0
+  )
+    record.syncedInstalledAt = r.syncedInstalledAt
   const staged = sanitizeStaged(r.staged, publisher)
   return staged ? { ...record, staged } : record
+}
+
+function clock(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 function sanitizeStartupPagesField(value: unknown): string[] | null {
