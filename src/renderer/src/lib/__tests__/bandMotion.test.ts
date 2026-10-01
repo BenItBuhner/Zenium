@@ -391,6 +391,36 @@ describe('BandMotion – the page-edge band’s travel (motion spec §2, §3.1�
     expect(band.opacity).toBe(0)
   })
 
+  it('names every travel’s destination to the seam before its first frame (depart): the open’s height, a re-target’s, 0 for a leave, the height for a spring-back; a finger’s drag names none', () => {
+    const frames = clockedFrames()
+    const t = trace()
+    const departs: number[] = []
+    const band = new BandMotion({ ...t.seam, depart: (to) => departs.push(to) })
+    band.open(BAND_HEIGHT_ONE_LINE)
+    expect(departs).toEqual([BAND_HEIGHT_ONE_LINE])
+    expect(t.offsets).toEqual([])
+    settle(frames)
+    band.open(BAND_HEIGHT_TWO_LINE)
+    expect(departs).toEqual([BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE])
+    settle(frames)
+    band.dragStart()
+    band.drag(-10)
+    expect(departs).toHaveLength(2)
+    band.release(0)
+    expect(departs.at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+    settle(frames)
+    band.close()
+    expect(departs.at(-1)).toBe(0)
+    expect(t.rests).toEqual([BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE, BAND_HEIGHT_TWO_LINE])
+    settle(frames)
+    expect(t.rests.at(-1)).toBe(0)
+    // A seam without the hook is served the same.
+    const plain = new BandMotion(trace().seam)
+    plain.open(BAND_HEIGHT_ONE_LINE)
+    settle(frames)
+    expect(plain.phase).toBe('open')
+  })
+
   it('dispose() stops the motion and the clock hears nothing more; close() on a shut band is nothing', () => {
     const frames = clockedFrames()
     const t = trace()

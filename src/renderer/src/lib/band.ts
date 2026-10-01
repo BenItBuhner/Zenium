@@ -19,10 +19,18 @@
  *   band (`tabId: null`) stands on every page tab.
  */
 import type { LucideIcon } from 'lucide-react'
+import { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE, type BandHeight } from './motion/band'
 import { BAND_CLOCK_MS } from './motion/tokens'
 import { createStore } from './store'
 
 export type BandForm = 'state' | 'offer'
+
+/**
+ * A state's status ink for its glyph (§3.1): the chrome's ok / warn / danger inks; a state with
+ * none (the default-browser prompt is no alarm) draws it in the deemphasised ink. An offer's
+ * glyph is the accent whatever this says.
+ */
+export type BandTone = 'ok' | 'warn' | 'danger'
 
 export type BandDismissReason =
   'action' | 'close' | 'swipe' | 'escape' | 'timeout' | 'navigation' | 'replaced' | 'program'
@@ -46,6 +54,7 @@ export interface BandEntry {
   tabId: string | null
   /** The glyph before the title: the status ink for a state, the accent for an offer (§3.1). */
   icon: LucideIcon
+  tone?: BandTone
   title: string
   detail?: string
   action?: BandAction
@@ -61,6 +70,7 @@ export interface BandOptions {
   form: BandForm
   tabId?: string | null
   icon: LucideIcon
+  tone?: BandTone
   title: string
   detail?: string
   action?: BandAction
@@ -77,14 +87,21 @@ export interface BandState {
   front: string | null
   /** The host says a band may show on what is in front now. */
   eligible: boolean
+  /** The host says offers may show on what is in front: false on a private tab (§3.2). */
+  offers: boolean
   /** A finger has the shown band: its clock waits. */
   held: boolean
 }
 
 export const bandStore = createStore<BandState>(
-  { entries: [], front: null, eligible: false, held: false },
+  { entries: [], front: null, eligible: false, offers: true, held: false },
   'band'
 )
+
+/** The band's height for a prompt: two lines with a detail, one without (§3.1). */
+export function bandHeightOf(entry: BandEntry): BandHeight {
+  return entry.detail ? BAND_HEIGHT_TWO_LINE : BAND_HEIGHT_ONE_LINE
+}
 
 /** Whether `entry` is about the tab in front (or about the window). */
 function inFront(entry: BandEntry, front: string | null): boolean {
@@ -93,11 +110,14 @@ function inFront(entry: BandEntry, front: string | null): boolean {
 
 /**
  * The prompt the band shows for `state`: null when none may (nothing stands for the front tab,
- * or the host withholds the band). States before offers; the newest of each.
+ * or the host withholds the band, or withholds offers there). States before offers; the newest
+ * of each.
  */
 export function chooseBand(state: BandState): BandEntry | null {
   if (!state.eligible) return null
-  const candidates = state.entries.filter((e) => inFront(e, state.front))
+  const candidates = state.entries.filter(
+    (e) => inFront(e, state.front) && (e.form === 'state' || state.offers)
+  )
   return candidates.find((e) => e.form === 'state') ?? candidates[0] ?? null
 }
 
@@ -154,6 +174,7 @@ export function showBand(opts: BandOptions): number {
     form: opts.form,
     tabId,
     icon: opts.icon,
+    tone: opts.tone,
     title: opts.title,
     detail: opts.detail,
     action: opts.action,
@@ -214,14 +235,16 @@ export function holdBand(held: boolean): void {
 }
 
 /**
- * The host's word on the frame: which tab is in front, and whether a band may show on it now
- * (false on the new tab page, a chrome page, under a sheet or dialog, with the keyboard up over
- * the page's field). A band for another tab waits with its clock paused; a band withheld waits.
+ * The host's word on the frame: which tab is in front, whether a band may show on it now (false
+ * on the new tab page, a chrome page, under a sheet or dialog, with the keyboard up over the
+ * page's field), and whether offers may (false on a private tab, whose offers Chrome withholds
+ * too; its states show). A band for another tab waits with its clock paused; a band withheld
+ * waits.
  */
-export function setBandFront(front: string | null, eligible: boolean): void {
+export function setBandFront(front: string | null, eligible: boolean, offers = true): void {
   const s = bandStore.get()
-  if (s.front === front && s.eligible === eligible) return
-  bandStore.set({ front, eligible, held: false })
+  if (s.front === front && s.eligible === eligible && s.offers === offers) return
+  bandStore.set({ front, eligible, offers, held: false })
   syncClock()
 }
 
@@ -236,5 +259,5 @@ export function resetBands(): void {
   if (running) clearTimeout(running.timer)
   running = null
   left.clear()
-  bandStore.set({ entries: [], front: null, eligible: false, held: false })
+  bandStore.set({ entries: [], front: null, eligible: false, offers: true, held: false })
 }

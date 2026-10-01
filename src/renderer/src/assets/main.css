@@ -15576,6 +15576,157 @@ ol.zen-page-prose-list {
 }
 
 /*
+ * The page-edge band (components/band/PageEdgeBand.tsx; motion spec §3.1): one prompt about the
+ * page between the content frame's top edge and the page's top edge, in the page's own surface
+ * (`--v2-page`) with the frame's radius on its top corners – the pull-to-refresh disc's band,
+ * kept open. 56 for a one-line prompt, 76 with a 13 detail line (`--zen-band-height`, the
+ * component's); the glyph 20 in the deemphasised ink for a state – or the state's status ink
+ * (`data-tone`) – and the accent for an offer; the title 15 in the heading weight; the one
+ * action a §9.11 secondary at `--v2-control` (32 at a mouse, 40 under a finger) and the × the
+ * message close, both of the page family (`data-surface="page"` on the band). A tenant swapped
+ * in cross-fades 120 ms over the one swapped out (`zen-fade` / `zen-fade-out`); the travel is
+ * the driver's (lib/motion/band.ts), written to the host per frame, and the content's opacity
+ * is written straight to the element (§6) – under reduced motion the global rule below ends
+ * the swap's animations and the driver's fades carry it. The desktop's slot
+ * (content/PageBandHost.tsx) holds the band's seated height in the frame's column, so the
+ * viewport under it lays out once at rest (§3.4); the band is absolute in the slot and the
+ * slot's height never follows the spring.
+ */
+@layer components {
+  .zen-band-slot {
+    position: relative;
+    z-index: 6;
+    flex-shrink: 0;
+  }
+  .zen-band {
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: var(--zen-band-height);
+    overflow: hidden;
+    border-radius: var(--zen-content-radius) var(--zen-content-radius) 0 0;
+    background: var(--v2-page);
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .zen-band-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px 0 16px;
+  }
+  .zen-band-content[data-swap] {
+    animation: zen-fade 120ms var(--zen-ease);
+  }
+  .zen-band-content[data-leaving] {
+    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+    pointer-events: none;
+  }
+  .zen-band-glyph {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    stroke-width: var(--v2-icon-stroke);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-band[data-tone='ok'] .zen-band-glyph {
+    color: var(--v2-ok);
+  }
+  .zen-band[data-tone='warn'] .zen-band-glyph {
+    color: var(--v2-warn);
+  }
+  .zen-band[data-tone='danger'] .zen-band-glyph {
+    color: var(--v2-danger);
+  }
+  .zen-band[data-form='offer'] .zen-band-glyph {
+    color: var(--v2-accent);
+  }
+  .zen-band-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .zen-band-title,
+  .zen-band-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-band-title {
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-band-detail {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-band-trailing {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-band-button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: var(--v2-control);
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-control-fill);
+    color: var(--v2-control-accent);
+    font-size: inherit;
+    font-weight: var(--v2-weight-button);
+    white-space: nowrap;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  :where(:root[data-hover='hover']) .zen-band-button:hover {
+    background: var(--v2-control-fill-hover);
+  }
+  .zen-band-button:active {
+    transform: scale(0.98);
+  }
+  .zen-band-close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--v2-icon-button);
+    height: var(--v2-icon-button);
+    border-radius: calc(var(--v2-radius-control) + 2px);
+    color: var(--v2-control-text-deemphasized);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  :where(:root[data-hover='hover']) .zen-band-close:hover {
+    background: var(--v2-control-fill);
+  }
+  .zen-band-close:active {
+    background: var(--v2-control-fill-hover);
+    transform: scale(0.96);
+  }
+  .zen-band-close svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-band-button:focus-visible,
+  .zen-band-close:focus-visible,
+  .zen-band-button[data-keyboard-focus]:focus,
+  .zen-band-close[data-keyboard-focus]:focus {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
+  }
+}
+
+/*
  * The desktop URL bar on design language v2 (§6 "Floating URL bar", §9.20, §9.22, §9.29): a
  * neutral opaque surface – radius 12 and the URL bar shadow when it floats; anchored under the
  * pill it is a popover at radius 8 with a hairline and the panel shadow – the field as the
