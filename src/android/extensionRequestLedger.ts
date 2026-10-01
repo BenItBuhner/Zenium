@@ -13,9 +13,18 @@ import type { ResourceType } from '@core/blocking/rules'
  *   under the hop's id ([noted] answers it; [chainIdOf] maps the target's own id back for its
  *   response reports). The mark is short-lived ([Options.hopTtlMs]) and consumed by its first
  *   match: two loads of one redirect target inside the window pair the first with the hop.
- *   A DOCUMENT's redirect has no relayed response at all: WebView follows it and the engine
- *   stamps the follow-up with the URL before it (`redirectedFrom`), so the hop is made of the
- *   tab's latest open main-frame request at that URL ([openMainFrame]) and marked the same way.
+ *   A DOCUMENT's redirect has no relayed response at all: WebView follows it, and the hop is
+ *   made of the tab's latest open main-frame request at the URL the navigation hook names as
+ *   the one redirected from ([openMainFrame]) and marked the same way. The target's request is
+ *   one WebView never offers to `shouldInterceptRequest` (Chromium's
+ *   `InterceptedRequest::ShouldNotInterceptRequest`, true once the request was redirected –
+ *   113.0.5672.136 and main alike; compat round 26), so the runtime notes it itself
+ *   ([NotedRequest.synthesized]) under the hop's id; should an intercept of it come after all,
+ *   it takes the note over ([adopt]) rather than making a second request of one load.
+ *   URLs pair by their canonical form ([requestUrlKey]): the hook's word is the address the
+ *   tab was sent to as the app spelled it, the intercept's is WebView's spelling of the same
+ *   request (a bare host's trailing slash, the case of scheme and host, a fragment the request
+ *   never carries).
  * - the FACTS of a request the response stage needs and `ext.response` does not carry: its
  *   `initiator` (Chrome puts it on every event of the request).
  * - the PAGE-SCRIPT OBSERVER's pairing (7.10): a `fetch` / XHR the page made is heard twice –
@@ -43,6 +52,22 @@ export interface NotedRequest {
   at: number
   /** An observer report took this request as its request stage. */
   claimed: boolean
+  /** The runtime's own note of a request the intercept never offered (a document's redirect target). */
+  synthesized?: boolean
+}
+
+/**
+ * The form two spellings of one request's URL pair by: parsed and re-serialized, the fragment
+ * dropped (a request never carries one); the string itself when it does not parse.
+ */
+export function requestUrlKey(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.hash = ''
+    return parsed.href
+  } catch {
+    return url
+  }
 }
 
 /** What the observer's report of one request pairs with: the id, type and initiator its events carry. */
@@ -90,7 +115,8 @@ export class RequestLedger {
   /**
    * A request-stage decision the runtime is about to report as `onBeforeRequest`: remembered,
    * and the id its events run under is answered – the hop's when the URL is a redirect target
-   * marked in this tab, else its own.
+   * marked in this tab, else its own. `synthesized` marks the runtime's own note of a request
+   * no intercept reported ([NotedRequest.synthesized]).
    */
   noted(
     tab: string | null,
@@ -99,10 +125,11 @@ export class RequestLedger {
     method: string,
     type: ResourceType,
     initiator: string | undefined,
-    now: number
+    now: number,
+    synthesized = false
   ): string {
     const key = tab ?? NO_TAB
-    const hopKey = `${key}|${url}`
+    const hopKey = `${key}|${requestUrlKey(url)}`
     const hop = this.hops.get(hopKey)
     let chainId = requestId
     if (hop) {
@@ -120,6 +147,7 @@ export class RequestLedger {
       claimed: false
     }
     if (initiator) entry.initiator = initiator
+    if (synthesized) entry.synthesized = true
     let list = this.byTab.get(key)
     if (!list) {
       list = []
@@ -138,25 +166,64 @@ export class RequestLedger {
       const oldest = this.hops.keys().next().value
       if (oldest !== undefined) this.hops.delete(oldest)
     }
-    this.hops.set(`${tab ?? NO_TAB}|${targetUrl}`, { chainId, at: now })
+    this.hops.set(`${tab ?? NO_TAB}|${requestUrlKey(targetUrl)}`, { chainId, at: now })
   }
 
   /**
-   * The tab's LATEST open main-frame request, when its URL is `url` – the request a document's
-   * server redirect is made of (the engine stamps the redirect's follow-up with the URL before
-   * it, `ExtRequestEvent.redirectedFrom`; the runtime makes `onBeforeRedirect` of the pair).
-   * Null when the tab's newest main-frame request is another URL (a second navigation in flight
-   * since the hop's request: no pair, no event), or when none is remembered (the tab's first
-   * load, or a request noted before the response stage was observed).
+   * The tab's LATEST open main-frame request, when its URL is `url` (by [requestUrlKey]) – the
+   * request a document's server redirect is made of (the navigation hook names the URL the
+   * navigation was redirected from; the runtime makes `onBeforeRedirect` of the pair). Null when
+   * the tab's newest main-frame request is another URL (a second navigation in flight since the
+   * hop's request: no pair, no event), or when none is remembered (the tab's first load, or a
+   * request noted before the response stage was observed).
    */
   openMainFrame(tab: string | null, url: string, now: number): NotedRequest | null {
+    const list = this.byTab.get(tab ?? NO_TAB)
+    if (!list) return null
+    this.prune(list, now)
+    const wanted = requestUrlKey(url)
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const entry = list[i]
+      if (entry.type !== 'main_frame') continue
+      return requestUrlKey(entry.url) === wanted ? entry : null
+    }
+    return null
+  }
+
+  /**
+   * An intercept's decision on a request the runtime already noted itself (the tab's latest
+   * main-frame note, [NotedRequest.synthesized], at `url`): the note becomes that decision's,
+   * `requestId` its own id for the response reports to pair by, and the entry is returned – its
+   * `onBeforeRequest` went out already. Null when the tab's latest main-frame note is another
+   * request or no synthesized one: the decision is a request of its own.
+   */
+  adopt(tab: string | null, requestId: string, url: string, now: number): NotedRequest | null {
     const list = this.byTab.get(tab ?? NO_TAB)
     if (!list) return null
     this.prune(list, now)
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const entry = list[i]
       if (entry.type !== 'main_frame') continue
-      return entry.url === url ? entry : null
+      if (!entry.synthesized || requestUrlKey(entry.url) !== requestUrlKey(url)) return null
+      this.byId.delete(entry.ownId)
+      entry.ownId = requestId
+      delete entry.synthesized
+      this.byId.set(requestId, entry)
+      return entry
+    }
+    return null
+  }
+
+  /**
+   * The URL of the tab's latest main-frame request still remembered, for the runtime's trace of
+   * a redirect pair [openMainFrame] found no match for; null when none is.
+   */
+  latestMainFrameUrl(tab: string | null): string | null {
+    const list = this.byTab.get(tab ?? NO_TAB)
+    if (!list) return null
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const entry = list[i]
+      if (entry.type === 'main_frame') return entry.url
     }
     return null
   }

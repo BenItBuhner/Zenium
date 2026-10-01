@@ -28,6 +28,12 @@ import java.util.Locale
  * the lines handed to it as the response's cookies ([Reply.cookies], which the caller passes on
  * through `WebResourceResponseCompat.setCookies`), an older one leaves it to the jar ([Cookies.store]).
  *
+ * The same request engine serves a CONTENT SCRIPT's cross-origin `fetch` the page's
+ * Content-Security-Policy refused ([Framing.contentScript], `Extensions.extensionProxyFetch`):
+ * there the request is performed as the page's own CORS request – its `Origin` and `Referer`
+ * the page's – and the server's answer is returned as it came, CORS headers and all, for the
+ * world to judge as Chrome's renderer does (`extensionCorsRelay.ts`).
+ *
  * Plain JVM: the unit tests run it against a local server. What is Android (the cookie jar, the
  * WebView response object, the user agent) comes in through [Cookies] and the caller.
  */
@@ -58,8 +64,46 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         val headers: Map<String, String>,
         val body: InputStream,
         /** `Set-Cookie` lines of a credentialed response for the WebView to store ([Cookies.intercepts]); else empty. */
-        val cookies: List<String> = emptyList()
+        val cookies: List<String> = emptyList(),
+        /** The URL the response came from: the request's, or where the redirects the proxy followed landed. */
+        val url: String = "",
+        /** Whether a redirect was followed on the way (fetch's `Response.redirected`). */
+        val redirected: Boolean = false
     )
+
+    /**
+     * Whose request the proxy performs, and how the answer is framed.
+     *
+     * An EXTENSION PAGE's ([extensionPage]): `Origin: chrome-extension://<id>` as Chrome sends it
+     * and no `Referer` (Chrome sends none for an extension page); the server's CORS answer is
+     * replaced by one for the emulated origin, since Chrome skips CORS for a host the extension's
+     * permissions cover and the WebView applies it to every response; the response's cookies go
+     * to the WebView when it intercepts them (the answer is a `WebResourceResponse`).
+     *
+     * A CONTENT SCRIPT's ([contentScript]): the request is the page's own CORS request in Chrome
+     * – its `Origin` and `Referer` the page's, no host permission consulted (Chrome 85), the
+     * server's consent read from the response – so the server's CORS headers are KEPT for the
+     * world to judge as Chrome's renderer does, none added, and the cookies of a credentialed
+     * request go to the jar, the answer never passing through a `WebResourceResponse`.
+     */
+    class Framing private constructor(
+        /** The `Origin` header the target sees. */
+        val origin: String,
+        /** The `Referer` the target sees; null sends none. */
+        val referer: String?,
+        /** Whether the server's CORS answer is replaced by one for the extension origin. */
+        val rewriteCors: Boolean,
+        /** Whether a credentialed response's cookies always go to the jar (never handed to a WebView). */
+        val cookiesToJar: Boolean
+    ) {
+        companion object {
+            fun extensionPage(extensionId: String): Framing =
+                Framing("chrome-extension://$extensionId", referer = null, rewriteCors = true, cookiesToJar = false)
+
+            fun contentScript(pageOrigin: String, referer: String?): Framing =
+                Framing(pageOrigin, referer, rewriteCors = false, cookiesToJar = true)
+        }
+    }
 
     private class Body(val bytes: ByteArray, val at: Long)
 
@@ -142,8 +186,15 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         return Reply(204, "No Content", "text/plain", null, headers, ByteArrayInputStream(ByteArray(0)))
     }
 
-    /** Perform the request and re-serve the response with CORS headers for `extensionOrigin`. */
-    fun forward(request: Request, extensionId: String, extensionOrigin: String, body: ByteArray?): Reply {
+    /**
+     * Perform the request as an extension page's and re-serve the response with CORS headers for
+     * `extensionOrigin` ([Framing.extensionPage]).
+     */
+    fun forward(request: Request, extensionId: String, extensionOrigin: String, body: ByteArray?): Reply =
+        forward(request, extensionOrigin, body, Framing.extensionPage(extensionId))
+
+    /** Perform the request framed as [framing] says and re-serve the response the way it asks. */
+    fun forward(request: Request, extensionOrigin: String, body: ByteArray?, framing: Framing): Reply {
         val credentials = request.header(CREDENTIALS_HEADER) == "include"
         var method = request.method.uppercase(Locale.ROOT)
         var url = request.url
@@ -159,7 +210,8 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
                 if (DROPPED_REQUEST_HEADERS.contains(name.lowercase(Locale.ROOT))) continue
                 connection.setRequestProperty(name, value)
             }
-            connection.setRequestProperty("Origin", "chrome-extension://$extensionId")
+            connection.setRequestProperty("Origin", framing.origin)
+            framing.referer?.let { connection.setRequestProperty("Referer", it) }
             userAgent()?.let { connection.setRequestProperty("User-Agent", it) }
             if (credentials) cookies.header(url)?.let { connection.setRequestProperty("Cookie", it) }
             if (payload != null && method != "GET" && method != "HEAD") {
@@ -180,7 +232,7 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
                 connection.disconnect()
                 continue
             }
-            return reply(connection, status, url, extensionOrigin, credentials, redirected = url != request.url)
+            return reply(connection, status, url, extensionOrigin, credentials, redirected = hops > 0, framing = framing)
         }
     }
 
@@ -190,7 +242,8 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         url: String,
         extensionOrigin: String,
         credentials: Boolean,
-        redirected: Boolean
+        redirected: Boolean,
+        framing: Framing
     ): Reply {
         val stream = (if (status >= 400) connection.errorStream else connection.inputStream) ?: ByteArrayInputStream(ByteArray(0))
         // The WebView writes the Content-Type line itself from the mime and the charset (measured:
@@ -206,8 +259,9 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         val headers = LinkedHashMap<String, String>()
         val exposed = ArrayList<String>()
         // The WebView files a response's cookies under the URL it asked for; after a redirect the
-        // proxy followed they belong to the final URL, which only the jar can be told.
-        val handOver = cookies.intercepts && !redirected
+        // proxy followed they belong to the final URL, which only the jar can be told – as can
+        // the cookies of an answer that never passes through a WebResourceResponse.
+        val handOver = cookies.intercepts && !redirected && !framing.cookiesToJar
         val forWebView = ArrayList<String>()
         for ((name, values) in connection.headerFields) {
             if (name == null || values.isNullOrEmpty()) continue
@@ -217,12 +271,15 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
                 continue
             }
             if (DROPPED_RESPONSE_HEADERS.contains(lower)) continue
+            if (framing.rewriteCors && CORS_RESPONSE_HEADERS.contains(lower)) continue
             headers[name] = values.joinToString(", ")
             exposed.add(name)
         }
-        headers["Access-Control-Allow-Origin"] = extensionOrigin
-        headers["Access-Control-Allow-Credentials"] = "true"
-        if (exposed.isNotEmpty()) headers["Access-Control-Expose-Headers"] = exposed.joinToString(", ")
+        if (framing.rewriteCors) {
+            headers["Access-Control-Allow-Origin"] = extensionOrigin
+            headers["Access-Control-Allow-Credentials"] = "true"
+            if (exposed.isNotEmpty()) headers["Access-Control-Expose-Headers"] = exposed.joinToString(", ")
+        }
         val reason = connection.responseMessage?.ifEmpty { null } ?: "OK"
         // Closing the body closes the connection; the WebView reads it on its own schedule.
         val body = object : FilterInputStream(stream) {
@@ -234,7 +291,7 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
                 }
             }
         }
-        return Reply(status, reason, mime, charset, headers, body, forWebView)
+        return Reply(status, reason, mime, charset, headers, body, forWebView, url, redirected)
     }
 
     companion object {
@@ -261,10 +318,16 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         )
         /**
          * Response headers that would lie about the re-framed, decoded body, the one the WebView
-         * writes itself from the reply's mime and charset, plus the server's own CORS answer.
+         * writes itself from the reply's mime and charset (the caller re-derives them).
          */
         private val DROPPED_RESPONSE_HEADERS = setOf(
-            "content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive", "content-type",
+            "content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive", "content-type"
+        )
+        /**
+         * The server's own CORS answer: replaced for an extension page's request
+         * ([Framing.rewriteCors]), kept for a content script's, whose world judges it.
+         */
+        private val CORS_RESPONSE_HEADERS = setOf(
             "access-control-allow-origin", "access-control-allow-credentials", "access-control-expose-headers"
         )
     }

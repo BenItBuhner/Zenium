@@ -31,9 +31,13 @@ interface PopupProps<T extends string> {
  * 16 check, a row with a description 48 around its two lines, as wide as the control at least
  * and as its longest row at most, flipped above the control near the window's bottom, with the
  * §9.22 keyboard (the current option focused, arrows, Home, End, type-ahead, Escape back to the
- * control) and the chrome layer's light dismiss. On a finger they are a bottom sheet of 44 rows
- * (64 with a description, §9.2) with a radio glyph (§9.14) on the current option. Picking one
- * closes the popup. Down or Up on the control opens it, as a click does.
+ * control) and the chrome layer's light dismiss. On a phone's finger they are a bottom sheet of
+ * 44 rows (64 with a description, §9.2) with a radio glyph (§9.14) on the current option; a
+ * tablet's finger gets the same anchored popover with the coarse pointer's 44 rows (main.css;
+ * §9.36 as the lead amended it on #750: an anchored panel that fits is the desktop popover with
+ * 44 rows – the split is the form factor's, as `translate/Menulist` draws it), the tablet's back
+ * gesture closing it as it closed the sheet (`surface`). Picking one closes the popup. Down or
+ * Up on the control opens it, as a click does.
  */
 export function V2Menulist<T extends string>({
   label,
@@ -69,7 +73,8 @@ export function V2Menulist<T extends string>({
   popupClassName?: string
 }): JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
-  const viewport = useViewport()
+  // A sheet on a phone, the popover everywhere else (§9.13, §9.36) – a tablet's finger included.
+  const phone = useViewport().formFactor === 'phone'
   const current = options.find((option) => option.value === value)
   const popup: PopupProps<T> | null = anchor && {
     anchor,
@@ -92,7 +97,7 @@ export function V2Menulist<T extends string>({
         className={cn('zen-v2-menulist', className)}
         aria-label={labelledBy ? undefined : label}
         aria-labelledby={labelledBy}
-        aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
+        aria-haspopup={phone ? 'dialog' : 'listbox'}
         aria-expanded={anchor !== null || undefined}
         aria-readonly={readOnly || undefined}
         disabled={disabled}
@@ -109,10 +114,10 @@ export function V2Menulist<T extends string>({
         <ChevronDown />
       </button>
       {popup &&
-        (viewport.coarse ? (
+        (phone ? (
           <MenulistSheet {...popup} />
         ) : (
-          <MenulistPopover {...popup} overPage className={popupClassName} />
+          <MenulistPopover {...popup} overPage surface="menulist" className={popupClassName} />
         ))}
     </>
   )

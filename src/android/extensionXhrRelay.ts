@@ -15,18 +15,32 @@
  * `Content-Type` and `Content-Length` headers, and `response` in the `responseType` asked. Any
  * other request – another URL, or a synchronous one, which cannot wait for the bridge – is the
  * native XHR's, exactly as before: the overrides hand it to the native prototype's own members.
+ *
+ * The same ride serves a CROSS-ORIGIN request to an origin the page's policy has refused in
+ * this document (`extensionFetchRelay.ts`'s second class; the relay's `fetch` then asks the host
+ * first and judges the answer as Chrome's renderer would): the request's headers, body and
+ * `withCredentials` go along, and the answer's status, exposed headers and final URL are played
+ * back. The policy's refusal is learnt from the document's own report, so the FIRST request to
+ * such an origin – by an XHR, where nothing of the native's course can be replayed – fails as
+ * before and teaches the relay; the next is relayed. A `fetch`'s refusal teaches it too.
  */
 
 export interface XhrRelayHost {
   /** Whether `url` (resolved, either spelling) is an attached extension's own file. */
   owns(url: string): boolean
-  /** The relay's `fetch`: the host's answer for an own file, the page's otherwise. */
+  /** Whether `url` is a cross-origin URL the page's policy has refused, which the relay's `fetch` asks the host for. */
+  refused?(url: string): boolean
+  /** The relay's `fetch`: the host's answer for an own file or a refused cross-origin URL, the page's otherwise. */
   fetch(url: string, init: RequestInit): Promise<Response>
 }
 
 interface Relayed {
   method: string
   url: string
+  /** Whether the request is the extension's own file (a header on it goes nowhere) or a cross-origin one. */
+  own: boolean
+  /** The request headers set so far (a cross-origin request's go along). */
+  requestHeaders: Array<[string, string]>
   readyState: number
   status: number
   statusText: string
@@ -154,10 +168,13 @@ export function createXhrRelay(win: Win, host: XhrRelayHost): typeof XMLHttpRequ
         relayed.delete(this)
       }
       const href = resolved(url)
-      if (async !== false && href !== '' && host.owns(href)) {
+      const own = href !== '' && host.owns(href)
+      if (async !== false && href !== '' && (own || host.refused?.(href) === true)) {
         relayed.set(this, {
           method: String(method).toUpperCase(),
           url: href,
+          own,
+          requestHeaders: [],
           readyState: OPENED,
           status: 0,
           statusText: '',
@@ -179,12 +196,14 @@ export function createXhrRelay(win: Win, host: XhrRelayHost): typeof XMLHttpRequ
     setRequestHeader(name, value) {
       const state = relayed.get(this)
       if (!state) return nativeMethod('setRequestHeader').call(this, name, value)
-      // A header on a request for one's own file goes nowhere, as it goes nowhere in Chrome.
       if (state.readyState !== OPENED || state.sent) {
         throw invalidState(
           "Failed to execute 'setRequestHeader' on 'XMLHttpRequest': The object's state must be OPENED."
         )
       }
+      // A header on a request for one's own file goes nowhere, as it goes nowhere in Chrome; a
+      // cross-origin request's go along (the forbidden names fetch's Headers refuse are left to it).
+      if (!state.own) state.requestHeaders.push([String(name), String(value)])
       return undefined
     },
     overrideMimeType(mime) {
@@ -211,8 +230,23 @@ export function createXhrRelay(win: Win, host: XhrRelayHost): typeof XMLHttpRequ
       }
       this.dispatchEvent(progressEvent('loadstart', 0, 0))
       const live = (): boolean => relayed.get(this) === state && !state.aborted
+      const init: RequestInit = { method: state.method }
+      if (!state.own) {
+        // A cross-origin request as the native would send it: its headers, its body (a Document
+        // serialised, as XHR sends one), the cookies when `withCredentials` asks for them.
+        init.headers = state.requestHeaders
+        init.credentials = this.withCredentials ? 'include' : 'same-origin'
+        if (
+          body !== null &&
+          body !== undefined &&
+          state.method !== 'GET' &&
+          state.method !== 'HEAD'
+        ) {
+          init.body = isDocument(win, body) ? serialised(win, body) : (body as BodyInit)
+        }
+      }
       host
-        .fetch(state.url, { method: state.method })
+        .fetch(state.url, init)
         .then(async (response) => {
           const bytes = new Uint8Array(await response.arrayBuffer())
           if (!live()) return
@@ -336,6 +370,19 @@ export function createXhrRelay(win: Win, host: XhrRelayHost): typeof XMLHttpRequ
       // With no `responseType` a document is parsed for an XML answer alone, as the native's is.
       if (type === '' && !/xml/i.test(mimeOf(state))) return null
       return parsed(state)
+    }
+  }
+
+  function isDocument(win: Win, body: unknown): body is Document {
+    return typeof win.Document === 'function' && body instanceof win.Document
+  }
+
+  /** A Document body as XHR serialises it: the markup, as text. */
+  function serialised(win: Win, body: Document): string {
+    try {
+      return new win.XMLSerializer().serializeToString(body)
+    } catch {
+      return ''
     }
   }
 
