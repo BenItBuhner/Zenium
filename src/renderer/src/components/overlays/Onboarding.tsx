@@ -8,6 +8,7 @@ import { formatBinding } from '@shared/shortcuts'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { browserSources, listNames, sourceGroups } from '@renderer/lib/importData'
+import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
 import { openImportSurface, openSettings } from '@renderer/lib/pages'
 import {
   isTouchOnly,
@@ -54,6 +55,14 @@ const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: 
     title: 'Sync',
     text: 'Keep Spaces, folders and pinned tabs identical on every computer, end-to-end encrypted.'
   }
+}
+
+/**
+ * Runs `then` once the tour's overlay has left: its exit is a pop (`MOTION_POP_MS`), and what
+ * the tour opens behind it – Settings, the import dialog – comes a frame after, never under it.
+ */
+function afterExit(then: () => void): void {
+  setTimeout(() => requestAnimationFrame(then), MOTION_POP_MS)
 }
 
 /**
@@ -164,11 +173,8 @@ function DesktopOnboarding({
       // Settings with the import dialog up on the picked browser; on Sync when both were asked
       // for, so the dialog's Done leaves the user where the second wish is met.
       const tabId = activeTab(state)?.id ?? null
-      setTimeout(
-        () => void openImportSurface(tabId, importFrom, wantsSync ? 'sync' : 'import'),
-        400
-      )
-    } else if (wantsSync) setTimeout(() => openSettings('sync'), 400)
+      afterExit(() => void openImportSurface(tabId, importFrom, wantsSync ? 'sync' : 'import'))
+    } else if (wantsSync) afterExit(() => openSettings('sync'))
   }
 
   const highlights = state.shortcuts.filter((s) =>

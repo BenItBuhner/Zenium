@@ -16,6 +16,7 @@
  */
 
 import { REDUCED_FADE_MS } from './fade'
+import { ZEN_EASE } from './tokens'
 
 /** How long the incoming grid's slide takes. */
 export const SPACE_SLIDE_MS = 250
@@ -29,8 +30,8 @@ export const SPACE_FADE_MS = REDUCED_FADE_MS
  */
 export const SPACE_SLIDE_PX = 120
 
-/** §11's standard curve for a state change. */
-export const SPACE_EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+/** §11's standard curve for a state change: the one curve. */
+export const SPACE_EASE = ZEN_EASE
 
 /** The slide's `Animation.id`, for whoever finds the slot's animations (tests, the drivers). */
 export const SPACE_SLIDE_ID = 'zen-space-slide'

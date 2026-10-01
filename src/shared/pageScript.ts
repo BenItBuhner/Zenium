@@ -749,11 +749,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * action as the manifest's other URLs are, the method and enctype tokens, the names of the
  * fields the app reads the share from, and `files` as up to `MAX_SHARE_FILES` entries of a name
  * and what it accepts – and nothing else. A target that is no object, or whose `params` is
- * none, is dropped: the reader would make nothing of it either way. An entry of `files` that is
+ * none, is dropped: the reader would make nothing of it either way. So is one whose `method`
+ * or `enctype` is present but no string: the reader refuses that target whole, where a member
+ * left out would read as the default (GET, urlencoded) and let the target through – the bridge
+ * must refuse what the reader refuses, as Chromium's parser does. An entry of `files` that is
  * no object crosses as null, which the reader refuses as it would the original.
  */
 function shareTargetSubset(value: unknown): Record<string, unknown> | null {
   if (!isPlainObject(value) || !isPlainObject(value.params)) return null
+  if (value.method !== undefined && typeof value.method !== 'string') return null
+  if (value.enctype !== undefined && typeof value.enctype !== 'string') return null
   const target: Record<string, unknown> = {}
   if (typeof value.action === 'string') target.action = value.action.slice(0, MAX_MANIFEST_STRING)
   if (typeof value.method === 'string') target.method = value.method.slice(0, MAX_SHARE_TOKEN)

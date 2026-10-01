@@ -17,6 +17,7 @@ import {
 } from '@renderer/lib/blockingUi'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 import { openSettings } from '@renderer/lib/pages'
 import { PRIVATE_TAB_PLACEHOLDER, mediaMasked } from '@renderer/lib/privateLock'
 import {
@@ -103,7 +104,7 @@ const VERDICT_CHIP_IDS = {
 } as const satisfies Partial<Record<IndicatorState, PillChipId>>
 
 /** How long a chip's arrival or departure cross-fades, on opacity (v2 §11.4; the same under reduced motion). */
-export const CHIP_FOLD_FADE_MS = 120
+export const CHIP_FOLD_FADE_MS = MOTION_STATE_MS
 
 /** A chip's row in the site-information sheet: the same name, state and action. */
 export interface PillChipRow {

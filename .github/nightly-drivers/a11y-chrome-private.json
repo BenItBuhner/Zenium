@@ -2,7 +2,7 @@
   "id": "a11y-chrome-private",
   "order": 110,
   "class": "ChromeA11yDemo",
-  "shard": "webview",
+  "shard": "webview-b",
   "mirrors": "android-a11y-chrome-demo.yml:record-private",
   "dir": "a11y-chrome-demo",
   "env": {
@@ -10,5 +10,5 @@
   },
   "timeout": 900,
   "estimate": 4,
-  "note": "The private scene alone, on the multi-profile WebView."
+  "note": "The private scene alone, on the multi-profile WebView. Moved from webview (67.0 of its 68 minutes, past the headroom line) to webview-b when that shard opened (services pass 17, seed #36), with the four media drivers: the one driver beyond them that nothing ties to webview (the private tabs, lock and security demos, the primitives' veil and the fakebox morph's private act stay there together), its four minutes making the halves 34.0 and 33.0. The same swapped-in WebView."
 }

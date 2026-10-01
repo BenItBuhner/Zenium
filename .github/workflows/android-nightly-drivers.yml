@@ -14,14 +14,15 @@ name: Android nightly drivers
 # The shards, each one job of the recipe in android-emulator-demo.yml and all in parallel: eight
 # phone shards on the API 34 Google APIs image (phone-a to phone-h, the drivers by their weight so
 # each shard's drivers take under an hour – under the 60-minute headroom line of the 68-minute
-# budget, which the plan warns of a shard past), api35 for the workflows that ask for API 35 (the
-# predictive back, the sheet leave and recede, the wake and status bar, the two profiling
-# drivers), webview for the demos that need the Chromium snapshot WebView swapped into an AOSP
-# image (private tabs, media, fullscreen, the accessibility demo's private scene, the fakebox
-# morph's private act), tablet for the pixel_tablet layout and tablet-webview for the tablet
-# layout on that swapped-in WebView (the sidebar's private mode). A new driver is one line in
-# the manifest. The extension compatibility sweep (hours long, the extension program's) is skipped
-# there with its reason.
+# budget, which the plan warns of a shard past), api35 and api35-b for the workflows that ask for
+# API 35 (the predictive back, the sheet leave and recede, the wake and status bar on api35; the
+# two profiling drivers on api35-b, a boot of their own), webview and webview-b for the demos that
+# need the Chromium snapshot WebView swapped into an AOSP image (private tabs, the primitives'
+# veil and the fakebox morph's private act on webview; media, picture-in-picture, fullscreen and
+# the accessibility demo's private scene on webview-b), tablet for the pixel_tablet layout and
+# tablet-webview for the tablet layout on that swapped-in WebView (the sidebar's private mode). A
+# new driver is one line in the manifest. The extension compatibility sweep (hours long, the
+# extension program's) is skipped there with its reason.
 #
 # The summary job puts the one table in the run's summary (driver, result, scenes / checks,
 # duration, the jank verdict, the artifact) and keeps every shard's findings and videos as the
@@ -60,8 +61,10 @@ on:
           - phone-g
           - phone-h
           - api35
+          - api35-b
           - api33
           - webview
+          - webview-b
           - tablet
           - tablet-webview
       ref:
