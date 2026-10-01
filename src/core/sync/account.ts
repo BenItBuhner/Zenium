@@ -20,11 +20,12 @@ import { README, README_NAME, type SyncTransport } from './transport'
  *   URL or a body.
  * - `AccountSession`, the device's sign-in: a refresh token in the host's secret store
  *   (`ACCOUNT_SECRET_KEY`), an access token in memory only. The refresh token ROTATES on every
- *   refresh and the service revokes the whole sign-in when a spent one is presented again, so
- *   refreshes are serialised – concurrent callers share the one in flight – and the new token is
- *   in the store before the access token it came with is used. A call refused as
- *   `unauthenticated` is refreshed and sent once more; `revoked`, `account-deleted` and a refused
- *   refresh end the session (`signed-out`).
+ *   refresh and the service revokes the whole sign-in when a spent one is presented again by
+ *   anyone but this device retrying (`ACCOUNT_ATTEMPT_KEY`), so refreshes are serialised –
+ *   concurrent callers share the one in flight – and the new token is in the store before the
+ *   access token it came with is used. A call refused as `unauthenticated` is refreshed and sent
+ *   once more; `revoked`, `account-deleted` and a refresh the service answers 401 end the
+ *   session (`signed-out`); any other refusal of a refresh keeps the token for the next try.
  * - `AccountTransport`, the `SyncTransport` over the session, and `linkDevice`, the sign-in.
  */
 
@@ -223,15 +224,18 @@ export class AccountClient {
 
   /**
    * A new access token for the refresh token, and the refresh token that replaces it. A 401 is
-   * the sign-in gone (revoked, the account deleted, a spent token presented again); a 400 is a
-   * token the service cannot even read – neither is ever going to work again: `signed-out`.
+   * the sign-in gone (revoked, the account deleted, a spent token presented again) and is never
+   * going to work again: `signed-out`. A 400 is a request the service could not read – a client
+   * at fault, or a service that changed its mind about the body – and says nothing about the
+   * token, so it is `refused` and the token is kept: the sign-in stays until the service refuses
+   * the token itself.
    */
   async refresh(refreshToken: string, attempt?: string): Promise<AccountGrant> {
     const reply = await this.post(`${this.endpoints.siteUrl}/auth/refresh`, {
       refreshToken,
       ...(attempt !== undefined ? { attempt } : {})
     })
-    if (reply.status === 401 || reply.status === 400)
+    if (reply.status === 401)
       throw new AccountError('signed-out', `Account refresh answered ${reply.status}`)
     if (reply.status !== 200) throw this.error('refresh', reply.status)
     const grant = readGrant(reply.body)

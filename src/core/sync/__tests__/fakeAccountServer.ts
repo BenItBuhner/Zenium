@@ -117,6 +117,8 @@ export class FakeAccountServer {
    * reaches the device (the network dropped on the way back): the device sees a failure.
    */
   loseNextRefreshAnswer = false
+  /** The next refresh answers 400 as a body the service could not read would, the token untouched. */
+  refuseNextRefreshAsUnreadable = false
   /** While true, every request fails as a network failure would. */
   offline = false
   /** Every request's parsed JSON body by route, in order (the auth routes; what the client sent). */
@@ -217,6 +219,7 @@ export class FakeAccountServer {
     this.slowDown = 0
     this.refreshGate = null
     this.loseNextRefreshAnswer = false
+    this.refuseNextRefreshAsUnreadable = false
     this.offline = false
     this.retryGraceMs = 60_000
     this.retryAttemptGraceMs = 7 * 24 * 60 * 60_000
@@ -255,6 +258,10 @@ export class FakeAccountServer {
       case '/auth/refresh': {
         const gate = this.refreshGate
         if (gate) await gate
+        if (this.refuseNextRefreshAsUnreadable) {
+          this.refuseNextRefreshAsUnreadable = false
+          return reply(400, { error: 'bad-request' })
+        }
         const answer = this.refresh(body)
         if (this.loseNextRefreshAnswer) {
           this.loseNextRefreshAnswer = false

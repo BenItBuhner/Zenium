@@ -152,10 +152,21 @@ describe('the account client', () => {
     expect(error.message).toContain('no response within 5 ms')
   })
 
-  it('a refresh the service refuses (401) or cannot read (400) is the sign-in gone', async () => {
+  it('a refresh the service refuses (401) is the sign-in gone; one it cannot read (400) is refused and says nothing about the token', async () => {
     const { client } = signedIn()
     await expect(client.refresh('x'.repeat(43))).rejects.toMatchObject({ kind: 'signed-out' })
-    await expect(client.refresh('short')).rejects.toMatchObject({ kind: 'signed-out' })
+    await expect(client.refresh('short')).rejects.toMatchObject({ kind: 'refused' })
+  })
+
+  it('a 400 on refresh keeps the token and the session: the next call presents it again', async () => {
+    const { server, grant, secrets, session } = signedIn()
+    server.refuseNextRefreshAsUnreadable = true
+    await expect(session.query('sync:version')).rejects.toMatchObject({ kind: 'refused' })
+    expect(session.signedOut).toBe(false)
+    expect(secrets.values.get(ACCOUNT_SECRET_KEY)).toBe(grant.refreshToken)
+    expect(server.sessionsOf(EMAIL)[0]!.revoked).toBe(false)
+    expect(await session.query('sync:version')).toBe(0)
+    expect(server.count('/auth/refresh')).toBe(2)
   })
 })
 
