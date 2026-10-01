@@ -177,9 +177,10 @@ describe("which host draws the question (v2 §9.36 as read on #727: the split is
     expect(dialog!.querySelector('.zen-sheet-item-secondary')?.textContent).toBe(
       'Without asking again'
     )
-    expect(
-      [...dialog!.querySelectorAll('.justify-end button')].map((b) => b.textContent)
-    ).toEqual(['Not now', 'Open'])
+    expect([...dialog!.querySelectorAll('.justify-end button')].map((b) => b.textContent)).toEqual([
+      'Not now',
+      'Open'
+    ])
     expect(dialog!.querySelector('[role="switch"]')).not.toBeNull()
   })
 
