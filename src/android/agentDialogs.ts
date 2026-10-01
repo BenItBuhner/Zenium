@@ -39,7 +39,8 @@ export function pageDialogRequestOf(event: PageDialogEvent): PageDialogRequest |
   return {
     kind,
     message: typeof event.message === 'string' ? event.message : '',
-    defaultValue: kind === 'prompt' && typeof event.defaultValue === 'string' ? event.defaultValue : '',
+    defaultValue:
+      kind === 'prompt' && typeof event.defaultValue === 'string' ? event.defaultValue : '',
     frameUrl: typeof event.frameUrl === 'string' ? event.frameUrl : '',
     pageUrl: typeof event.pageUrl === 'string' ? event.pageUrl : ''
   }
@@ -47,8 +48,7 @@ export function pageDialogRequestOf(event: PageDialogEvent): PageDialogRequest |
 
 /** The `view.pageDialogAnswer` command's payload (without the tab and dialog ids). */
 export type PageDialogAnswerWire =
-  | { user: true }
-  | { user: false; accepted: boolean; value: string | null }
+  { user: true } | { user: false; accepted: boolean; value: string | null }
 
 /** The core's answer as the bridge carries it to Kotlin (`AgentPageDialogs.answer`). */
 export function pageDialogAnswerWire(response: PageDialogResponse): PageDialogAnswerWire {
