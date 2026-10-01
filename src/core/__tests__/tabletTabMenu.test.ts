@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ANDROID, DESKTOP, deepItem, labels, pageHarness } from './menusFixture'
 
 /**
@@ -38,6 +38,33 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(deepItem(h.shown(), 'Close Tabs Below').enabled).toBe(true)
     expect(deepItem(h.shown(), 'Close Other Tabs').enabled).toBe(true)
     expect(deepItem(h.shown(), 'Close Tabs Above').enabled).toBe(false)
+  })
+
+  it("Close Other Tabs closes nothing itself on the tablet: it emits tab.closeOthersUndoable with the tabs the core's rule closes, for the chrome's close-with-undo (§9.23, OS-40 part B)", () => {
+    const h = tablet()
+    const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Other Tabs').click?.()
+    expect(emit.mock.calls.map(([name, payload]) => [name, payload])).toEqual([
+      ['tab.closeOthersUndoable', { tabId: h.tabId, tabIds: [other] }]
+    ])
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+    // The chrome answers with the core's own close, once its undo is armed.
+    h.browser.handleCommand(h.win, 'tab.closeOthers', { tabId: h.tabId })
+    expect(h.browser.tabs.tab(other)).toBeUndefined()
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+  })
+
+  it("the desktop's Close Other Tabs closes them in the core itself and emits nothing (its path is as it was)", () => {
+    const h = pageHarness(DESKTOP)
+    h.browser.tabs.createTab({ url: 'https://example.org/second', active: false }, h.win)
+    const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Other Tabs').click?.()
+    expect(h.browser.tabs.tab(other)).toBeUndefined()
+    expect(emit.mock.calls.map(([name]) => name)).not.toContain('tab.closeOthersUndoable')
   })
 
   it('opens a new tab below the row (Chrome\'s "New tab below" for a vertical strip)', () => {

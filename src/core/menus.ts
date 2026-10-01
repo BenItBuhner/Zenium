@@ -2630,7 +2630,17 @@ export class Menus {
           {
             label: 'Close Other Tabs',
             enabled: tabs.closeScope(tabId, 'others', win).length > 0,
-            click: () => tabs.closeOthers(tabId, win)
+            // A touch host's close comes with Undo on the toast (§9.23, OS-40 part B): the chrome
+            // runs the core's `tab.closeOthers` through its close-with-undo (`lib/closeUndo.ts`),
+            // handed the tabs this rule closes. The desktop's row closes them here, as before.
+            click: () =>
+              touchLayout(win.formFactor)
+                ? this.browser.emit(
+                    'tab.closeOthersUndoable',
+                    { tabId, tabIds: tabs.closeScope(tabId, 'others', win) },
+                    win
+                  )
+                : tabs.closeOthers(tabId, win)
           }
         ]
       },

@@ -7843,6 +7843,16 @@ export interface Events {
    * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
    */
   'folder.closeUndoable': { folderId: string }
+  /**
+   * Close the row's other tabs with Undo on the toast (the touch hosts' tab menu's "Close Other
+   * Tabs"; OS-40 part B, §9.23): `tabIds` are the tabs the core's own rule closes
+   * (`closeScope(tabId, 'others')` – the space's regular tabs in the window, pinned and
+   * Essentials exempt), so the chrome counts and holds the right ones; it runs `tab.closeOthers`
+   * through its one close-with-undo (`lib/closeUndo.ts`) and the toast reads "N tabs closed",
+   * Undo bringing them back. The desktop's tab menu never emits it: its row calls the core's
+   * `closeOthers` directly, with no toast.
+   */
+  'tab.closeOthersUndoable': { tabId: string; tabIds: string[] }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */

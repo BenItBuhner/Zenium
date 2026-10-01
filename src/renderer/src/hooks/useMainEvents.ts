@@ -116,6 +116,23 @@ function closeGroupUndoable(folderId: string): void {
   })
 }
 
+/**
+ * Close the row's other tabs with Undo on the toast (`tab.closeOthersUndoable`, the touch hosts'
+ * tab menu's "Close Other Tabs"; OS-40 part B, §9.23): the tabs are the ones the core's own rule
+ * closes, named in the event, the close the core's `tab.closeOthers`, the toast "N tabs closed".
+ */
+function closeOthersUndoable(tabId: string, tabIds: readonly string[]): void {
+  const state: UIState | null = browserStore.get().state
+  if (!state) return
+  const tabs = tabIds.flatMap((id) => state.tabs[id] ?? [])
+  closeWithUndo({
+    tabs,
+    settings: state.settings,
+    activeTabId: activeTab(state)?.id ?? null,
+    close: () => run('tab.closeOthers', { tabId })
+  })
+}
+
 function followsCover(): boolean {
   const state: UIState | null = browserStore.get().state
   return state !== null && chromeUnderPages(state.platform)
@@ -429,6 +446,9 @@ export function useMainEvents(): void {
       // saved", whose Undo brings them back into the group. Inert on the desktop, whose folder
       // menu never emits it (`showFolderContextMenu` calls the core's `closeFolder` itself).
       onEvent('folder.closeUndoable', ({ folderId }) => closeGroupUndoable(folderId)),
+      // The touch hosts' tab menu's Close Other Tabs, the same way (§9.23): the desktop's row
+      // closes them in the core and never emits it.
+      onEvent('tab.closeOthersUndoable', ({ tabId, tabIds }) => closeOthersUndoable(tabId, tabIds)),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
