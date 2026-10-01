@@ -8803,7 +8803,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * the action click as [actionMarker] clicks it, the chrome's permission sheet accepted
      * ([acceptPrompt]: `webNavigation`'s and the site's lines, as Chrome's dialog), the worker's
      * `permissions.getAll` read ([PERMISSIONS_HELD]), then the action's state as its own API
-     * reads it ([ACTION_STATE_PROBE]): `popup.html` set for every tab, and the action disabled on
+     * reads it ([ACTION_STATE_PROBE], read until two consecutive reads agree – the worker sets the
+     * state on its own clock): `popup.html` set for every tab, and the action disabled on
      * the fixture's tab, which its `onCompleted` does for a page without highlights
      * (`setEnabled(documents.length > 0)`) in Chrome too – so a second click there opens nothing
      * in Chrome (a disabled action's click falls to the context menu), and the tap is read for
@@ -8835,8 +8836,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // disabled there the same way, so Chrome's click opens no popup on that tab (it falls to
         // the context menu). The second click is due only where the tab has the action enabled;
         // on a disabled tab the tap is read for what it opens, which must be nothing.
-        val action = backgroundView(row.id)?.let { probe(it, ACTION_STATE_PROBE, "__zenAction", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view")
-        extra.put("action", action)
+        //
+        // The state is read SETTLED: the extension's `onCompleted` handler for the fixture's tab
+        // (`storage.get` → `setEnabled(documents.length > 0)` → `action.disable`) runs on the
+        // worker's own clock after it wakes, and round 26's BEFORE on the System WebView read
+        // `enabledForTab: true` 40 ms before that `action.disable` reached the bridge (the probe's
+        // `isEnabled` replies at uptime 1692823-1692831, the extension's `disable` at 1692868),
+        // then tapped an action the extension had disabled meanwhile and graded the nothing it
+        // opened as a popup that did not render. Two consecutive reads that agree on the popup
+        // and both enabled states, 1.5 s apart, are the state; up to four reads.
+        var action = JSONObject().put("error", "no background view")
+        var actionReads = 0
+        var actionSettled = false
+        var previousState: String? = null
+        while (actionReads < 4 && !actionSettled) {
+            val worker = backgroundView(row.id) ?: break
+            action = probe(worker, ACTION_STATE_PROBE, "__zenAction", scaled(8_000, factor))
+            actionReads++
+            val state = "${action.optString("popup")}|${action.opt("enabledForTab")}|${action.opt("enabledGlobal")}"
+            actionSettled = previousState == state
+            previousState = state
+            if (!actionSettled && actionReads < 4) SystemClock.sleep(scaled(1_500, factor))
+        }
+        extra.put("action", action).put("actionReads", actionReads).put("actionSettled", actionSettled)
         val popupSet = action.optString("popup").endsWith("popup.html")
         val disabledForTab = !action.isNull("enabledForTab") && !action.optBoolean("enabledForTab", true)
         var found = JSONObject()
