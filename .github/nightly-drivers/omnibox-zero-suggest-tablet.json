@@ -1,0 +1,12 @@
+{
+  "id": "omnibox-zero-suggest-tablet",
+  "class": "OmniboxZeroSuggestDemo",
+  "shard": "tablet-webview",
+  "mirrors": "android-omnibox-group-suggestion-demo.yml:tablet",
+  "dir": "omnibox-zero-suggest-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 5,
+  "note": "omnibox-zero-suggest on the tablet layout (1280x800@160): the field holds the page's address selected, untyped, and asks for the same zero-suggest list on focus (Chrome's on-focus zero-prefix suggest) - the tile row first in the popup, the recent searches under the clock and their heading, the visited rows after; the keyboard is put away before each still and touch, since the tablet's list runs under it. The same class and handshake dir as the phone run, on another shard: tablet-webview (28 of 45 minutes before it), since the tablet shard (36) would pass its 37-minute headroom line with this driver."
+}

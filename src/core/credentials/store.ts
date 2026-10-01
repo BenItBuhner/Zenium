@@ -998,7 +998,12 @@ function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text
 }
 
-function clipAddress(input: AddressInput): AddressInput {
+/**
+ * The form the vault keeps an address in: the country its two upper-case letters, every other
+ * field trimmed and cut to `MAX_FIELD`. Idempotent. Exported for the import engine's duplicate
+ * key, which has to compare what would land in the vault against what already did.
+ */
+export function clipAddress(input: AddressInput): AddressInput {
   return {
     country: input.country.trim().toUpperCase().slice(0, 2),
     name: clip(input.name.trim(), MAX_FIELD),

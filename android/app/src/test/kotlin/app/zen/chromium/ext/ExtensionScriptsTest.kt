@@ -244,11 +244,13 @@ class ExtensionScriptsTest {
         ExtensionScripts.documentStartTo(first, "", "{}", listOf(once), emptyMap(), false)
         assertTrue(first.contains("var t = 1"))
         assertTrue(runCatching { ExtensionScripts.documentStartTo(StringBuilder(), "", "{}", listOf(once), emptyMap(), false) }.isFailure)
-        // A relative import is rewritten on the way through the sink as it is through the builder.
+        // A relative import is rewritten on the way through the sink as it is through the builder:
+        // the specifier resolved and, for a content script's own call, the keyword to the helper.
         val edits = RelativeImports.edits("""import("./chunk.js");""", group.extensionId, "dir/cs.js")
         val rewritten = ExtensionScripts.Group(group.extensionId, 0, listOf(RelativeImports.source("""import("./chunk.js");""", edits, true)), "world")
         val viaSink = StringBuilder().also { ExtensionScripts.documentStartTo(it, "", "{}", listOf(rewritten), emptyMap(), false) }.toString()
-        assertTrue(viaSink.contains("""import("https://${group.extensionId}.ext.zenium.invalid/dir/chunk.js")"""))
+        assertTrue(viaSink.contains("""${RelativeImports.HELPER}("https://${group.extensionId}.ext.zenium.invalid/dir/chunk.js")"""))
+        assertFalse(viaSink.contains("""import("https://"""))
     }
 
     @Test
@@ -526,5 +528,116 @@ class ExtensionScriptsTest {
         // ASCII, one line: the module the WebView evaluates as the chunk's own text.
         assertTrue(stub.all { it.code < 128 })
         assertEquals(1, stub.trimEnd().lines().size)
+    }
+
+    @Test
+    fun aScriptShapedModuleIsToldByTheAbsenceOfModuleSyntaxReadInWindowsNeverWhole() {
+        // Web Highlights' content.js (its UMD head, Polymer's `"import"===rel` test, the QR module's
+        // write through `self` read bare two statements on, its blog copy's "how to import all your
+        // annotations" – the strings compat round 25's `[lane]` found the first spelling reading as
+        // the module graph's) and Web Scrobbler's esbuild connector: script-shaped.
+        val webHighlights = "/*! For license information please see content.js.LICENSE.txt */\n!function(e,t){if(\"object\"==typeof exports&&\"object\"==typeof module)module.exports=t();else{var i=t();for(var n in i)(\"object\"==typeof exports?exports:e)[n]=i[n]}}(self,()=>(()=>{function V(o){if(\"link\"===o.localName&&\"import\"===o.getAttribute(\"rel\"))return o.import}class nr{}self.QrCreator=nr;const or=QrCreator;const posts=[{description:\"Here's a quick guide on how to import all your annotations and notes from Diigo into Web Highlights.\"},{description:\"Learn how to export bookmarks from Chrome. Restore them in any browser or import into Web Highlights.\"}];async function importBackupData(e){if(!e)throw new Error(\"Invalid import backup data\")}return {or,V,posts,importBackupData}})());"
+        val connector = "\"use strict\";\n(() => {\n  // src/connectors/youtube.ts\n  Connector.playerSelector = [\"#content\", \"#player\"];\n  Connector.getArtistTrack = () => importFromTitle();\n})();\n"
+        assertTrue(ExtensionScripts.isScriptShapedModule(webHighlights.reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule(connector.reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule("".reader()))
+        // A dynamic `import()`, an `exports` object, a property named `import` or `export`, the
+        // word in a string or a comment of a line that begins otherwise: a script's – a
+        // declaration is a statement of the top level, and stands only at the text's start or
+        // after `;`, `}` or a line break and indentation.
+        for (text in listOf(
+            "const m = await import(\"./x.js\"); m.run();",
+            "if (typeof exports === \"object\") exports.a = 1; module.exports = a;",
+            "const api = { import: 1, export: 2 }; api.import + api.export; obj.export(); x.import.meta;",
+            "importFromTitle(); exportedNames(); reimport(); const important = 1;",
+            "throw new Error(\"Cannot import \" + name)",
+            "if (\"link\" === o.localName && \"import\" === o.getAttribute(\"rel\")) return o.import;",
+            "const snippet = \"export default x\"; const s2 = 'export { y }';",
+            "x = 1; // import x from \"./x.js\"\ny = 2; /* export default y */ z = 3;",
+            "const help = \"Use export * from './all.js' or import * as ns from './ns.js'\";"
+        )) assertFalse(text, ExtensionScripts.hasModuleSyntax(text))
+        // A static `import` in every spelling, `import.meta`, an `export` in every declared form: the module graph's.
+        for (text in listOf(
+            "import x from \"./x.js\"; x();",
+            "import{a as b}from'./a.js';b();",
+            "import * as ns from \"./ns.js\";",
+            "import \"./side-effect.js\";",
+            "import\n  { a }\n  from \"./a.js\"",
+            "const u = new URL(\"w.js\", import.meta.url);",
+            "const dir = import . meta.url;",
+            "const x = 1; export { x };",
+            "const x=1;export{x as default};",
+            "export default function () {}",
+            "export const a = 1;",
+            "export let b; export var c; export class D {} export async function e() {} export function* f() {}",
+            "export * from \"./all.js\";",
+            "(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);\nexport{};",
+            // Statement position without a semicolon: after `}`, after a line break with indentation, after a directive.
+            "function f() {}export { f };",
+            "const a = 1\n    export default a",
+            "\"use strict\";import x from \"./x.js\";",
+            "const t = `\${import.meta.url}`;"
+        )) {
+            assertTrue(text, ExtensionScripts.hasModuleSyntax(text))
+            assertFalse(text, ExtensionScripts.isScriptShapedModule(text.reader()))
+        }
+        // Where the position cannot tell – a line of a template literal that starts as a
+        // declaration would – the text reads as the module graph's: the safe direction.
+        assertTrue(ExtensionScripts.hasModuleSyntax("const snippet = `\nimport x from \"./x.js\";\n`;"))
+        // The search from an index: the characters before it are context, not a start.
+        assertTrue(ExtensionScripts.hasModuleSyntax("a;export{b};", 0))
+        assertFalse(ExtensionScripts.hasModuleSyntax("a;export{b};", 3))
+        // …and they are the lookbehind's context: the word after `to ` is a string's searched from its own index too.
+        assertFalse(ExtensionScripts.hasModuleSyntax("\"how to import all\"", 8))
+        assertTrue(ExtensionScripts.hasModuleSyntax("\"how\";\nimport all from \"./a.js\"", 7))
+        assertEquals(64, ExtensionScripts.MODULE_SYNTAX_LOOKBEHIND)
+        assertEquals(128, ExtensionScripts.MODULE_SYNTAX_OVERLAP)
+        // Read in windows: an `export` at the very end of a text longer than one window, one
+        // straddling the border between two windows, an `import` deep in the third window – each
+        // found; the same lengths of plain script read whole as script-shaped, and the word in a
+        // string that straddles the border, or sits just after it, is not a declaration.
+        val window = ExtensionScripts.MODULE_SYNTAX_WINDOW
+        val filler = "x".repeat(window - 4) + ";\n"
+        assertFalse(ExtensionScripts.isScriptShapedModule((filler + "const a=1;\nexport{a};").reader()))
+        assertFalse(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 3) + ";export {a};" + filler).reader()))
+        assertFalse(ExtensionScripts.isScriptShapedModule((filler + filler + "import x from './x.js';" + filler).reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule((filler + filler + "const a = 1;\n" + filler).reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 3) + ";exports.a=1;" + filler).reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 8) + "s=\"how to import all\";" + filler).reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 8) + "s=\"how to \" + \"import all your notes\";" + filler).reader()))
+        assertFalse(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 8) + "s=1;\n\n    export default s;" + filler).reader()))
+        // Over a file: the same answer, and none for a file over the limit or a missing one.
+        val dir = createTempDir("ext-scripts-shaped")
+        try {
+            val shaped = File(dir, "content.js").apply { writeText(webHighlights) }
+            val module = File(dir, "chunk.js").apply { writeText("import{c as F}from\"./u.js\";const K=()=>F();export{K};") }
+            assertTrue(ExtensionScripts.isScriptShapedModule(shaped))
+            assertFalse(ExtensionScripts.isScriptShapedModule(module))
+            assertFalse(ExtensionScripts.isScriptShapedModule(File(dir, "missing.js")))
+            assertEquals(8L * 1024 * 1024, ExtensionScripts.SCRIPT_SHAPED_LIMIT)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aModuleRunAsABlockOfTheScopeKeepsItsTopLevelToItselfNoMirrorNoCompletion() {
+        val id = "hldjnlbobkdkghfidgoecgmklcemanhm"
+        val dir = createTempDir("ext-scripts-chunk")
+        try {
+            val file = File(dir, "content.js").apply { writeText("class nr{}\nself.QrCreator=nr;\nconst or=QrCreator;\nvar rr=class{};") }
+            val payload = JSONObject().put("id", "c1").put("url", "https://$id.ext.zenium.invalid/content.js")
+            val chunk = ExtensionScripts.execScript("tok", id, "chunk", payload, null, listOf(file), null, null, null, false, scoped = true, mirror = false)
+            // The block of the scope, the file's text as it is: no mirror line for `or` or `rr`,
+            // no completion value written in.
+            assertTrue(chunk.contains("with(window){\nclass nr{}\nself.QrCreator=nr;\nconst or=QrCreator;\nvar rr=class{};\n}})"))
+            assertFalse(chunk.contains("__zenMirror("))
+            assertFalse(chunk.contains("__zenCompletion="))
+            // The same file as a scoped `executeScript` file mirrors its declarations, as before.
+            val injected = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(file), null, null, null, false, scoped = true)
+            assertTrue(injected.contains("__zenMirror("))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 }

@@ -213,6 +213,27 @@ describe('LookalikeChecker.check: the table', () => {
     expect(checker.check('https://bamk.example/', context(['bank.example']))).toBeNull()
   })
 
+  it('reads an engaged address embedded as a run of labels, and not the dash form of the same wildcard name', () => {
+    // The Android compat sweep's fixture server is the emulator's host address, a site with
+    // engagement once its rows have visited it: nip.io's dotted name of it embeds the address as
+    // a label run and is refused (compat round 24 read the error page on Image Downloader's
+    // gallery and Wayback Machine's page), while the dash form the sweep moved to carries no run
+    // of the address, and its label's hyphen-joined start (`10`) is below the embedding floor.
+    const engaged = context(['10.0.2.2'])
+    expect(checker.check('http://10.0.2.2.nip.io:8765/gallery.html?images', engaged)).toEqual({
+      target: '10.0.2.2',
+      reason: 'embedding',
+      source: 'engaged'
+    })
+    expect(checker.check('http://fixture.10.0.2.2.nip.io:8765/page-a.html', engaged)).toEqual({
+      target: '10.0.2.2',
+      reason: 'embedding',
+      source: 'engaged'
+    })
+    expect(checker.check('http://10-0-2-2.nip.io:8765/gallery.html?images', engaged)).toBeNull()
+    expect(checker.check('http://fixture-10-0-2-2.nip.io:8765/page-a.html', engaged)).toBeNull()
+  })
+
   it("names the list the target is on, and a site the user visits is theirs even when it is the top list's too", () => {
     // google.com is on the top list: its neighbour is "a site many people visit" – until the
     // user engages with google.com, when the same neighbour is one of "a site you visit".

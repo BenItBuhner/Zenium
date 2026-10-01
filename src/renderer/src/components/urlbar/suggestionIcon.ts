@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import type { Suggestion, SuggestionKind } from '@shared/types'
 import { internalPageOf } from '@shared/internalPages'
+import { RECENT_SEARCHES_GROUP } from '@shared/zeroSuggest'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 
 /**
@@ -47,13 +48,22 @@ const ROW_ICONS: Record<SuggestionKind, LucideIcon> = {
  * site's row draws its favicon (v2 §10.1: the gear, never the globe, in every slot that shows
  * the page) – `page` says so, and such a row shows no favicon even when one is set; every other
  * row keeps its kind's glyph (Chrome's globe for a site without one).
+ *
+ * With `recentSearchClock` – the touch layouts' rows (OMN-04) – a remembered search of the
+ * zero-suggest list ("Recent searches") wears the clock, the draft's glyph for what comes from
+ * the user's history, as Chrome for Android's search-history rows do; the desktop's rows keep
+ * the magnifier they have.
  */
-export function suggestionIcon(item: Pick<Suggestion, 'kind' | 'url'>): {
+export function suggestionIcon(
+  item: Pick<Suggestion, 'kind' | 'url' | 'group'>,
+  opts: { recentSearchClock?: boolean } = {}
+): {
   Icon: LucideIcon
   page: boolean
 } {
   const glyph = item.url ? internalPageOf(item.url)?.glyph : undefined
-  return glyph
-    ? { Icon: PAGE_GLYPHS[glyph], page: true }
-    : { Icon: ROW_ICONS[item.kind], page: false }
+  if (glyph) return { Icon: PAGE_GLYPHS[glyph], page: true }
+  if (opts.recentSearchClock && item.kind === 'search' && item.group === RECENT_SEARCHES_GROUP)
+    return { Icon: Clock, page: false }
+  return { Icon: ROW_ICONS[item.kind], page: false }
 }

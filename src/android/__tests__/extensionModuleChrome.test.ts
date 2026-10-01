@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   MODULE_SCAN_HEAD,
+  MODULE_SYNTAX_LOOKBEHIND,
   declaresChrome,
+  hasModuleSyntax,
   installModuleChrome,
+  isScriptShapedModule,
   isWebpackChunk,
   moduleOpen,
   wrapModuleText
@@ -362,5 +365,64 @@ describe('a chrome for the module graph on a one-realm WebView', () => {
     const bare: Record<string, unknown> = { ran: false }
     new Function('globalThis', wrapModuleText('globalThis.ran = true;', LT))(bare)
     expect(bare.ran).toBe(true)
+  })
+
+  it('tells a script-shaped module – no import or export declaration, no import.meta – from one of the module graph (Web Highlights, Web Scrobbler)', () => {
+    // Web Highlights' `content.js` (its UMD head, Polymer's `"import"===rel` test, the QR
+    // module's write through `self` and the bare read that followed, its blog copy's "how to
+    // import all your annotations" – the strings the round 25 `[lane]` found the first spelling
+    // reading as the module graph's) and Web Scrobbler's esbuild connector: script-shaped.
+    const webHighlights =
+      '/*! For license information please see content.js.LICENSE.txt */\n!function(e,t){if("object"==typeof exports&&"object"==typeof module)module.exports=t();else{var i=t();for(var n in i)("object"==typeof exports?exports:e)[n]=i[n]}}(self,()=>(()=>{function V(o){if("link"===o.localName&&"import"===o.getAttribute("rel"))return o.import}let ir=null;class nr{}self.QrCreator=nr;const or=QrCreator;const posts=[{title:"Import from Diigo",description:"Here\'s a quick guide on how to import all your annotations and notes from Diigo into Web Highlights."},{description:"Learn how to export bookmarks from Chrome. Restore them in any browser or import into Web Highlights."}];async function importBackupData(e){if(!e)throw new Error("Invalid import backup data")}return {or,V,posts,importBackupData}})());'
+    const connector =
+      '"use strict";\n(() => {\n  // src/connectors/youtube.ts\n  Connector.playerSelector = ["#content", "#player"];\n  Connector.getArtistTrack = () => importFromTitle();\n})();\n'
+    expect(isScriptShapedModule(webHighlights)).toBe(true)
+    expect(isScriptShapedModule(connector)).toBe(true)
+    expect(isScriptShapedModule('')).toBe(true)
+    // A dynamic `import()`, an `exports` object, a property named `import` or `export`, the word
+    // in a string or a comment of a line that begins otherwise: a script's – a declaration is a
+    // statement of the top level, and stands only at the text's start or after `;`, `}` or a
+    // line break and indentation.
+    for (const text of [
+      'const m = await import("./x.js"); m.run();',
+      'if (typeof exports === "object") exports.a = 1; module.exports = a;',
+      'const api = { import: 1, export: 2 }; api.import + api.export; obj.export(); x.import.meta;',
+      'importFromTitle(); exportedNames(); reimport(); const important = 1;',
+      'throw new Error("Cannot import " + name)',
+      'if ("link" === o.localName && "import" === o.getAttribute("rel")) return o.import;',
+      'const snippet = "export default x"; const s2 = \'export { y }\';',
+      'x = 1; // import x from "./x.js"\ny = 2; /* export default y */ z = 3;',
+      "const help = \"Use export * from './all.js' or import * as ns from './ns.js'\";"
+    ])
+      expect(isScriptShapedModule(text), text).toBe(true)
+    // A static `import` in every spelling, `import.meta`, an `export` in every declared form: the module graph's.
+    for (const text of [
+      'import x from "./x.js"; x();',
+      "import{a as b}from'./a.js';b();",
+      'import * as ns from "./ns.js";',
+      'import "./side-effect.js";',
+      'import\n  { a }\n  from "./a.js"',
+      'const u = new URL("w.js", import.meta.url);',
+      'const dir = import . meta.url;',
+      'const x = 1; export { x };',
+      'const x=1;export{x as default};',
+      'export default function () {}',
+      'export const a = 1;',
+      'export let b; export var c; export class D {} export async function e() {} export function* f() {}',
+      'export * from "./all.js";',
+      '(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);\nexport{};',
+      // Statement position without a semicolon: after `}`, after a line break with indentation, after a directive.
+      'function f() {}export { f };',
+      'const a = 1\n    export default a',
+      '"use strict";import x from "./x.js";',
+      'const t = `${import.meta.url}`;'
+    ])
+      expect(isScriptShapedModule(text), text).toBe(false)
+    // Where the position cannot tell – a line of a template literal that starts as a declaration
+    // would – the text reads as the module graph's: the safe direction (the file keeps the
+    // bracketed path it had), never the other.
+    expect(hasModuleSyntax('const snippet = `\nimport x from "./x.js";\n`;')).toBe(true)
+    expect(hasModuleSyntax('const snippet = `\n  export default x\n`;')).toBe(true)
+    expect(MODULE_SYNTAX_LOOKBEHIND).toBe(64)
   })
 })

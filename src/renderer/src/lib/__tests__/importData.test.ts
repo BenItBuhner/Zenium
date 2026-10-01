@@ -51,7 +51,7 @@ function source(patch: Partial<ImportSource> & Pick<ImportSource, 'id' | 'browse
     name: names[patch.browser],
     path: `/home/u/.config/${patch.browser}/${patch.id.split(':')[1] ?? ''}`,
     running: false,
-    kinds: ['bookmarks', 'history', 'passwords'],
+    kinds: ['bookmarks', 'history', 'passwords', 'addresses'],
     limits: {},
     ...patch
   }
@@ -177,16 +177,20 @@ describe('the notices a source carries', () => {
   })
 
   it('the kind rows are the kinds the source has, then a disabled row per recorded limit, in the dialog’s order', () => {
+    // A Chromium browser's fourth row is its saved addresses (ID-57); Firefox and Safari have no
+    // such row – the kind is not theirs and no limit is recorded for it.
     expect(kindRows(CHROME_1)).toEqual([
       { kind: 'bookmarks', available: true },
       { kind: 'history', available: true },
-      { kind: 'passwords', available: true }
+      { kind: 'passwords', available: true },
+      { kind: 'addresses', available: true }
     ])
     expect(kindRows(FIREFOX)).toEqual([
       { kind: 'bookmarks', available: true },
       { kind: 'history', available: true },
       { kind: 'passwords', available: false }
     ])
+    expect(kindRows(SAFARI).map((r) => r.kind)).toEqual(['bookmarks', 'history', 'passwords'])
     expect(kindRows(HTML)).toEqual([{ kind: 'bookmarks', available: true }])
     expect(kindRows(null)).toEqual([])
     expect(limitNotes(FIREFOX)).toEqual([{ kind: 'passwords', text: FIREFOX.limits.passwords }])
@@ -243,13 +247,27 @@ describe('the words for what an import did', () => {
     expect(outcomeLines('passwords', outcome({ error: 'The keyring kept its secret.' }))).toEqual([
       'The keyring kept its secret.'
     ])
+    // Addresses count in the same words as the passwords: imported, already saved, unusable.
+    expect(outcomeLines('addresses', outcome({ imported: 3, duplicates: 2, invalid: 1 }))).toEqual([
+      '3 addresses imported',
+      '2 already saved, 1 unusable'
+    ])
+    expect(outcomeLines('addresses', outcome({ imported: 1 }))).toEqual(['1 address imported'])
+    expect(outcomeLines('addresses', outcome({ duplicates: 4 }))).toEqual([
+      'No new addresses',
+      '4 already saved'
+    ])
   })
 
   it('reports the kinds that ran in the dialog’s order and knows whether anything came in', () => {
     const p = progress({
-      results: { passwords: outcome({ imported: 0 }), bookmarks: outcome({ imported: 3 }) }
+      results: {
+        addresses: outcome({ imported: 1 }),
+        passwords: outcome({ imported: 0 }),
+        bookmarks: outcome({ imported: 3 })
+      }
     })
-    expect(reportedKinds(p)).toEqual(['bookmarks', 'passwords'])
+    expect(reportedKinds(p)).toEqual(['bookmarks', 'passwords', 'addresses'])
     expect(importedAnything(p)).toBe(true)
     expect(importedAnything(progress({ results: { history: outcome() } }))).toBe(false)
   })
@@ -274,6 +292,9 @@ describe('the words for what an import did', () => {
   it('the busy line names the kind being read', () => {
     expect(progressLine(progress({ status: 'running', current: 'history' }))).toBe(
       'Importing browsing history…'
+    )
+    expect(progressLine(progress({ status: 'running', current: 'addresses' }))).toBe(
+      'Importing addresses…'
     )
     expect(progressLine(progress({ status: 'running', current: null }))).toBe('Importing…')
   })
