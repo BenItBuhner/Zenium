@@ -30,6 +30,26 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  backend:
+    name: Accounts backend and website
+    # Its own package (backend/package.json): Convex functions, unit tests against an in-memory
+    # Convex, and the accounts website's build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run web:build
+
   bundle-windows:
     name: Bundle on a case-insensitive filesystem
     # Linux resolves `./Departures` and `./departures` to different files; Windows and macOS do
