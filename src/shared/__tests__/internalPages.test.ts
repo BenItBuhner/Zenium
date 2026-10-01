@@ -76,6 +76,7 @@ describe('the page registry', () => {
       'agents',
       'passwords',
       'security',
+      'account',
       'sync',
       'import',
       'accessibility',
@@ -603,17 +604,41 @@ describe('the landing list', () => {
     expect(runs[0][0]).toBe('look')
     expect(runs[0]).not.toContain('sync')
     expect(runs[0]).not.toContain('accessibility')
-    expect(runs[1]).toEqual(['sync', 'import', 'accessibility', 'shortcuts', 'updates', 'reset'])
+    expect(runs[1]).toEqual([
+      'account',
+      'sync',
+      'import',
+      'accessibility',
+      'shortcuts',
+      'updates',
+      'reset'
+    ])
     expect(runs[2]).toEqual(['about'])
   })
 
-  it('lists Sync on the phone landing behind the capability, at the head of Zen’s second run (ID-08)', () => {
+  it('lists Account and Sync on the phone landing behind the capability, at the head of Zen’s second run (ID-08)', () => {
     const phone = availableSections(page, ALL, 'phone').map((s) => s.id)
+    expect(phone).toContain('account')
     expect(phone).toContain('sync')
     const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
       run.map((s) => s.id)
     )
-    expect(runs[1]).toEqual(['sync', 'import', 'accessibility', 'updates'])
+    expect(runs[1]).toEqual(['account', 'sync', 'import', 'accessibility', 'updates'])
+  })
+
+  it('the Account section stands on every host that syncs, right before Sync, and the search reaches it by what a user would type', () => {
+    const account = page.sections.find((s) => s.id === 'account')
+    expect(account).toMatchObject({ label: 'Account', requires: 'sync' })
+    const ids = page.sections.map((s) => s.id)
+    expect(ids.indexOf('sync')).toBe(ids.indexOf('account') + 1)
+    for (const query of ['account', 'sign in', 'sign out', 'email']) {
+      expect(
+        matchSections(page.sections, query).map((s) => s.id),
+        query
+      ).toContain('account')
+    }
+    const noSync = new Proxy({} as HostCapabilities, { get: (_t, key) => key !== 'sync' })
+    expect(availableSections(page, noSync, 'phone').map((s) => s.id)).not.toContain('account')
   })
 
   it('keeps a break when the section it precedes is missing and drops a run left empty', () => {
