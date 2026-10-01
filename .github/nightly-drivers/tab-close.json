@@ -5,5 +5,6 @@
   "shard": "phone-c",
   "mirrors": "android-tab-close-demo.yml",
   "dir": "tabclose-demo",
-  "estimate": 2.5
+  "estimate": 2.5,
+  "note": "Close All Tabs asks nothing and Undo brings the lot back (v2 §9.23, seed A3). The Close Private Tabs scene is SKIPPED as a line in the findings on this shard's WebView (the image's own, no profiles; capabilities.privateTabs off), no failure; it runs where the capability is on, as OverviewCleanupDemo's private step does through the snapshot WebView."
 }
