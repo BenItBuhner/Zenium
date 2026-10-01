@@ -214,7 +214,8 @@ const QR_HAND_OFF_SETTLE_MS = 700
  * editing), `group=<n>` (the active tab in a group of n members made on the spot, so the group
  * strip is up in the bar band; `then=` steps run once the group has formed), `link=<url>` (the
  * active page's link menu held up for that URL, `text=<label>` the link's text over the address
- * in its header), `image=<url>` (the image sheet held up on an image at that URL), `overlay=<kind>`
+ * in its header; `then=tap:<row>` takes a row of the menu once it is up – the group it makes,
+ * say), `image=<url>` (the image sheet held up on an image at that URL), `overlay=<kind>`
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
@@ -1243,7 +1244,13 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         finish()
         return
       }
-      whenMenuUp(finish)
+      // The steps, if any, once the menu is up and has settled: a row taken – Open Link in New
+      // Tab in Group, for the group the link menu makes around the page.
+      const then = target.then ?? []
+      whenMenuUp(() => {
+        if (then.length === 0) finish()
+        else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+      })
       holdLink(site.id, target.url, target.text, target.image ?? false)
     })
   } else if (target.kind === 'overlay') {

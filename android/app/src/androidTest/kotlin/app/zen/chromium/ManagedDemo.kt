@@ -240,9 +240,10 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
         }
         val released = asOwner(ManagedSeedReceiver.ACTION_RELEASE)
         finding("  the owner's process cleared the restrictions and the device owner: $released; the bundle now ${restrictionKeys()}")
-        if (dpm.isDeviceOwnerApp(admin.packageName)) {
-            finding("  still the owner; the shell's remove-active-admin instead: ${shellCommand("dpm remove-active-admin ${admin.flattenToString()}").trim().ifEmpty { "(no output)" }}")
-        }
+        // No shell fallback: the test APK is installed without `-t`, so its admin is not testOnly and
+        // `dpm remove-active-admin` is refused ("Attempt to remove non-test admin"; #699). The
+        // receiver's release is the one path; the nightly runner's reset_managed_seam takes the same
+        // one between drivers when this `finally` never ran.
         owner = dpm.isDeviceOwnerApp(admin.packageName)
         check("F: the bundle is empty again and the test package is no longer the device owner", restrictionKeys().isEmpty() && !owner, "keys ${restrictionKeys()}, owner $owner")
     }
