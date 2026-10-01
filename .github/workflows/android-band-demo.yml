@@ -19,12 +19,16 @@ name: Android band demo
 # the shared `PageBandLayer` (at rest one layer SEATED, its box inset by the band's height so the
 # page starts where the band ends and Settings scrolls to its last row above the frame's bottom;
 # translated at seat 0 through a travel, read under the finger; the host's WebView unmoved; a
-# swipe up on the new tab page puts it away, `band-swipe-new-tab`), a pull-to-refresh on the held
-# page taking the page over where it sits
+# swipe up on the new tab page puts it away, `band-swipe-new-tab`), the WebView SEATING under the
+# standing band on a long web page (the same rule for documents: at rest the WebView is seated –
+# translationY 0, height the frame less the band, laid out at top = seat by `TabHost.setBandSeat`
+# – and the page scrolls to its last line above the bottom edge; `design-web-page-seated-light`;
+# translated at seat 0 mid-swipe, `band-swipe-web-page`, seated again at the rest), a
+# pull-to-refresh on the held page taking the page over where it sits
 # (`band-pull-takeover`), the state's leave with the Back online toast (`band-leave-online`), and
 # the install offer, the reader offer and the offline state in dark. Every band motion is a
 # frame scene (`frames.jsonl`): HWUI's summary, the renderer's trace, the host sampler (the page's
-# `translationY` every 8 ms) and the chrome's frame clock – reported with a verdict, not gated
+# displacement – seat + `translationY` – every 8 ms) and the chrome's frame clock – reported with a verdict, not gated
 # (the emulator's software GPU). The driver writes `band-findings.txt` with a PASS or FAIL per
 # check and fails when any did. The wrapper script (android-band-demo.sh) enables Chrome and
 # hands it the browser role first, as the first-run demo's does: the campaign only speaks while

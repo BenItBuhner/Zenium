@@ -429,9 +429,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         place(view)
     }
 
-    /** The band's seat `tabId`'s view is laid out under, device px (diagnostics, the band demo). */
-    fun bandSeatOf(tabId: String): Int = seats[tabId] ?: 0
-
     /** The frame the chrome last laid `tabId`'s page out at (device px), or null (diagnostics, the band demo). */
     fun reportedFrameOf(tabId: String): Rect? = reported[tabId]?.let { Rect(it) }
 
