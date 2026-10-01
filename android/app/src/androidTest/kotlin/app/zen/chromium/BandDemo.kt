@@ -62,11 +62,15 @@ import kotlin.math.roundToInt
  *     follow-up): the state's band follows the front onto `zen://settings` (a chrome page typed
  *     opens its own tab, the demo tab its opener; closed after) and onto the phone's new tab
  *     page – pages the chrome draws, with no WebView under them – standing on the
- *     shared `PageBandLayer` (#740): one layer translated by the band's height, the page
- *     starting where the band ends, the host's WebView unmoved; a swipe up on the new tab page
- *     puts the band away (`band-swipe-new-tab`, the layer under the finger); the radios cycled
- *     bring the state back there, and on a web page after it the WebView takes the offset again.
- *     (Until this layer stood, this scene pinned the band WAITING on the new tab page.)
+ *     shared `PageBandLayer` (#740) under the desktop seam's contract (depart translates, rest
+ *     seats): AT REST one layer SEATED – its box inset by the band's height, no transform – so
+ *     the page starts where the band ends and Settings scrolls to its last row above the
+ *     frame's bottom (the Lead's check on #758); THROUGH A TRAVEL the layer translated at seat
+ *     0 (read under the finger mid-swipe); the host's WebView unmoved throughout; a swipe up on
+ *     the new tab page puts the band away (`band-swipe-new-tab`, the layer under the finger);
+ *     the radios cycled bring the state back there, seated again, and on a web page after it the
+ *     WebView takes the offset again. (Until this layer stood, this scene pinned the band
+ *     WAITING on the new tab page.)
  *  7. A PULL ON A HELD PAGE (§3.4 Android): a pull-to-refresh begun while the band stands takes
  *     the page over where it sits – the band leaves, the page never jumps home first
  *     (`band-pull-takeover`, the host's offset sampled through the drag), the pull comes home
@@ -487,12 +491,16 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
      * The Design Lead's (B) ruling on #735's gate question (8), its owed follow-up: a state's
      * band stands on Settings and on the phone's new tab page too. Neither has a page WebView
      * under it – the chrome draws them – so the host's `translationY` reads 0 there and the pull
-     * channel would move nothing; the page rides the shared `PageBandLayer` (Desktop's #740),
-     * translated by the band's offset from the one frame writer (`lib/band/androidHost.ts`: the
-     * layer's store for these surfaces, the pull channel for a document), its seat 0 as the
-     * WebView's is (§3.4 Android: a translation, clipped by the frame). The band is the same
-     * component in the same place, and a swipe up puts it away as on a web page. Read through
-     * [LAYER_PROBE_JS] (the layer's transform and where its page starts) beside the host.
+     * channel would move nothing; the page rides the shared `PageBandLayer` (Desktop's #740)
+     * from the one frame writer (`lib/band/androidHost.ts`: the layer's stores for these
+     * surfaces, the pull channel for a document) under the desktop seam's contract: a travel
+     * TRANSLATES the layer (seat 0, the frames the offset), the REST SEATS it (the seat the
+     * band's height, the offset the seat: the box inset, no transform), so a long chrome page
+     * scrolls to its last row above the frame's bottom – the Lead's check on #758 – where the
+     * WebView under the pull channel stays translated at rest (§3.4 Android, #734/#735). The band
+     * is the same component in the same place, and a swipe up puts it away as on a web page.
+     * Read through [LAYER_PROBE_JS] (the layer's transform, its seat and where its page starts)
+     * beside the host; the scroll through [SETTINGS_SCROLL_JS].
      */
     private fun chromePages() {
         finding("\n§3.4 Android, §10: the band stands on the chrome-drawn pages – Settings and the new tab page")
@@ -517,6 +525,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             layerGeometry("Settings", ONE_LINE)
             check("Settings: the page under the layer is the chrome's page host", layerProbe().optBoolean("host"))
             snap("design-settings-offline-light")
+            settingsScrollsToItsLastRow()
         }
         beat()
         // Settings' tab closed, the demo tab is the front again (its opener).
@@ -539,25 +548,36 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         beat()
 
         // The swipe up: the band leaves and the layer comes home with the page – the state put
-        // away by hand (it returns on the next flip, as on a web page).
+        // away by hand (it returns on the next flip, as on a web page). Under the finger the
+        // layer is in TRAVEL: translated at seat 0 (the seat read at the rest above is let go
+        // at the drag's first frame, so the page keeps covering the frame on its way).
         val title = fingerOnText(OFFLINE_TITLE) ?: return
         var midShift = -1f
-        val gone = scene("band-swipe-new-tab", JankBudget.Kind.GESTURE, took = { !bandUp() && layerShift() <= TOLERANCE }) {
+        var midSeat = -1
+        var midLayers = 0
+        val gone = scene("band-swipe-new-tab", JankBudget.Kind.GESTURE, took = { !bandUp() && layerHome() }) {
             Finger().apply {
                 down(title.x, title.y)
                 moveBy(0f, -NUDGE, 80)
                 moveBy(0f, -(ONE_LINE * density) * 0.3f, 240)
                 hold(200)
-                midShift = layerShift()
+                val mid = layerProbe()
+                midShift = mid.optDouble("shift", -1.0).toFloat()
+                midSeat = mid.optInt("seat", -1)
+                midLayers = mid.optInt("layers")
                 snap("new-tab-swipe-mid")
                 moveBy(0f, -(ONE_LINE * density) * 0.7f, 200)
                 up()
             }
         }
-        finding("  the swipe on the new tab page: ${describeSamples(sampler.stop())}; the layer under the finger mid-swipe: $midShift; after: ${layerProbe()}")
-        check("a swipe up past half puts the band away on the new tab page, the layer home (shift ${layerShift()})", gone)
+        finding("  the swipe on the new tab page: ${describeSamples(sampler.stop())}; the layer under the finger mid-swipe: shift $midShift, seat $midSeat; after: ${layerProbe()}")
+        check("a swipe up past half puts the band away on the new tab page, the layer home (shift ${layerShift()}, seat ${layerProbe().optInt("seat", -1)})", gone)
         if (!gone) touchFault("a swipe up on the band over the new tab page did not take it off")
         check("the page followed the finger: the layer's shift fell under the drag ($midShift, from $ONE_LINE) while the host's WebView never moved (${offsetCss()})", midShift >= 0f && midShift < ONE_LINE - 1f && offsetCss() <= TOLERANCE)
+        check(
+            "the travel reading: mid-swipe the one layer is TRANSLATED at seat 0 (shift $midShift of $ONE_LINE, seat $midSeat) – depart translates, rest seats",
+            midLayers == 1 && midSeat == 0 && midShift > TOLERANCE && midShift < ONE_LINE - 1f
+        )
         snap("new-tab-band-swiped")
         beat()
 
@@ -571,8 +591,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         radios(false)
         val returned = awaitBand(OFFLINE_TITLE, 20_000)
         SystemClock.sleep(900)
-        finding("  the radios off again on the new tab page: band=${bandTitle()}; ${layerProbe()}")
-        check("the state's return lands on the new tab page too, the layer taking it (shift ${layerShift()})", returned && abs(layerShift() - ONE_LINE) <= TOLERANCE)
+        val back = layerProbe()
+        finding("  the radios off again on the new tab page: band=${bandTitle()}; $back")
+        check(
+            "the state's return lands on the new tab page too, the layer taking it – seated again at rest (seat ${back.optInt("seat", -1)}, shift ${back.optDouble("shift", -1.0)})",
+            returned && layerSeatedAt(back, ONE_LINE)
+        )
         navigate("$SITE_A/plain")
         val onWeb = awaitBand(OFFLINE_TITLE, 6_000)
         SystemClock.sleep(900)
@@ -802,11 +826,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
     }
 
     /**
-     * The chrome-drawn page's shape under the band: one layer ([LAYER_PROBE_JS]), translated by
-     * the band's height with its seat at 0 (the Android layer is a translation, as the WebView's
-     * under the pull channel), its page starting where the band ends – pushed down, not covered;
-     * the host's WebView unmoved (no page view stands under a chrome-drawn page); one band root,
-     * the state form, at the frame's top.
+     * The chrome-drawn page's shape under the band AT REST: one layer ([LAYER_PROBE_JS]) SEATED
+     * – its box inset by the band's height (`top` the seat) with no transform, the desktop seam's
+     * rest (the travel's reading, translated at seat 0, is taken under the finger in the swipe
+     * scene) – its page starting where the band ends – pushed down, not covered; the host's
+     * WebView unmoved (no page view stands under a chrome-drawn page); one band root, the state
+     * form, at the frame's top.
      */
     private fun layerGeometry(where: String, bandHeight: Float) {
         val layer = layerProbe()
@@ -815,8 +840,8 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         finding("  $where: host offset $host; layer $layer; band $band")
         val shift = layer.optDouble("shift", -1.0).toFloat()
         check(
-            "$where: one page layer under the band, translated by the band's height ($bandHeight; the layer reads $shift), its seat 0",
-            layer.optInt("layers") == 1 && abs(shift - bandHeight) <= TOLERANCE && layer.optInt("seat", -1) == 0
+            "$where: one page layer under the band, SEATED at rest – its box inset by the band's height ($bandHeight; the layer reads seat ${layer.optInt("seat", -1)}, shift $shift) – depart translates, rest seats",
+            layerSeatedAt(layer, bandHeight)
         )
         val pageTop = layer.optDouble("pageTop", -1e6)
         val bandTop = band.optDouble("top", 1e6)
@@ -837,6 +862,52 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
 
     /** The layer's translation below the frame's top, CSS px; 0 without a layer (the page home, or no chrome-drawn page in front). */
     private fun layerShift(): Float = layerProbe().optDouble("shift", 0.0).toFloat()
+
+    /**
+     * The desktop seam's REST on a chrome-drawn page: one layer, SEATED – its `top` the band's
+     * height [h] (the box inset) and no translation – as [LAYER_PROBE_JS] read it in [probe].
+     */
+    private fun layerSeatedAt(probe: JSONObject, h: Float): Boolean =
+        probe.optInt("layers") == 1 && probe.optInt("seat", -1) == h.roundToInt() && abs(probe.optDouble("shift", 1e6)) <= TOLERANCE
+
+    /** The layer home – no translation, no seat (the band gone: a plain full-frame box) – or no layer at all. */
+    private fun layerHome(): Boolean {
+        val probe = layerProbe()
+        return abs(probe.optDouble("shift", 0.0)) <= TOLERANCE && probe.optInt("seat", 0) == 0
+    }
+
+    /**
+     * The Lead's check on #758, the reason the layer SEATS at rest: with the state's band standing
+     * on Settings – the layer read `{layers:1, shift:0, seat:<band height>}` – the landing scrolled
+     * to its bottom puts its last category row's bottom edge INSIDE the frame, above the frame's
+     * bottom. The seat insets the layer's box by the band's height, so the page's own scroller is
+     * that much shorter and reaches its last row; translated at rest instead (the first cut's
+     * reading, `shift 56, seat 0`), the box kept the frame's full height and its last 56 px – the
+     * last row – stood under the frame's bottom, unreachable by any scroll. Read through
+     * [SETTINGS_SCROLL_JS] (the scroll is instant, the geometry read in the same evaluation, then
+     * read again settled); the still `design-settings-seated-light` after it.
+     */
+    private fun settingsScrollsToItsLastRow() {
+        val layer = layerProbe()
+        val seated = layerSeatedAt(layer, ONE_LINE)
+        settingsScroll()
+        SystemClock.sleep(400)
+        val scrolled = settingsScroll()
+        finding("  Settings scrolled to its bottom under the band: layer $layer; scroll $scrolled")
+        val frameBottom = scrolled.optDouble("frameBottom", -1.0)
+        val lastBottom = scrolled.optDouble("lastBottom", 1e6)
+        check(
+            "at rest the layer is seated and zen://settings scrolls to its last row (layer seat ${layer.optInt("seat", -1)}, shift ${layer.optDouble("shift", -1.0)}; " +
+                "${scrolled.optInt("rows")} rows, the last '${scrolled.optString("lastLabel")}' bottom $lastBottom against the frame's bottom $frameBottom; " +
+                "scrollTop ${scrolled.optInt("scrollTop")} of ${scrolled.optInt("scrollHeight")} in ${scrolled.optInt("clientHeight")})",
+            seated && scrolled.optBoolean("scroller") && scrolled.optBoolean("overflows") && scrolled.optBoolean("atBottom") &&
+                frameBottom > 0 && lastBottom <= frameBottom - 1f
+        )
+        snap("design-settings-seated-light")
+    }
+
+    /** Settings' landing scrolled to its bottom inside the layer and its geometry read ([SETTINGS_SCROLL_JS]); `{layers:0}` without a layer. */
+    private fun settingsScroll(): JSONObject = runCatching { JSONObject(jsonString(chromeJs(SETTINGS_SCROLL_JS))) }.getOrDefault(JSONObject())
 
     /** Where the frame's top edge is on screen (px): the touchable window's top, the status bar above it. */
     private fun frameTopPx(): Float = touchable.top.toFloat().coerceAtLeast(0f)
@@ -1281,10 +1352,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
          * The chrome-drawn page's LAYER (`PageBandLayer`, Desktop's #740; its `data-band-layer`
          * mark is the one selector here): how many stand (`layers`), its translation from its
          * computed transform (`shift`, CSS px – the band's offset less the seat, as the host
-         * writes it per frame), its seat (`top`), where it sits (`top`) and where its page starts
-         * (`pageTop`, its first child's top), whether that page is the chrome's page host
-         * (`.zen-page-host`, Settings and the other `render: 'chrome'` pages; the phone's new
-         * tab page is its own component), and the band root's edges beside them.
+         * writes it per frame: the TRAVEL's reading, 0 at rest), its seat (`seat`, the layer's
+         * computed `top`: the REST's reading, the band's height, 0 through a travel – the
+         * desktop seam's contract, depart translates and rest seats), where it sits (`top`) and
+         * where its page starts (`pageTop`, its first child's top), whether that page is the
+         * chrome's page host (`.zen-page-host`, Settings and the other `render: 'chrome'` pages;
+         * the phone's new tab page is its own component), and the band root's edges beside them.
          */
         private const val LAYER_ROOT = "[data-band-layer]"
         private const val LAYER_PROBE_JS =
@@ -1294,6 +1367,30 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
                 "var r=f.getBoundingClientRect();o.shift=Math.round(y*10)/10;o.top=Math.round(r.top);o.seat=Math.round(parseFloat(cs.top)||0);" +
                 "var c=f.firstElementChild;if(c){o.pageTop=Math.round(c.getBoundingClientRect().top*10)/10}o.host=!!f.querySelector('.zen-page-host')}" +
                 "var b=document.querySelector('$BAND_ROOT');if(b){var br=b.getBoundingClientRect();o.bandTop=Math.round(br.top);o.bandBottom=Math.round(br.bottom)}" +
+                "return JSON.stringify(o)})()"
+
+        /**
+         * Settings' landing under the layer SCROLLED TO ITS BOTTOM, and where that leaves its
+         * last row (the Lead's check on #758): the landing's own scroller (`.zen-settings-scroll`,
+         * `SettingsPage.tsx`; it scrolls, the page under it does not) is put at its end – instant,
+         * no smooth scroll – and read in the same evaluation: `scrollTop`, `scrollHeight`,
+         * `clientHeight`, whether it `overflows` and is `atBottom`; the category rows'
+         * (`.zen-settings-category`) count and the LAST row's edges (`lastTop`, `lastBottom`, its
+         * label); the frame's bottom (`frameBottom`, the layer's parent – the frame's viewport)
+         * and the layer's own edges (`layerTop`, `layerBottom`). Seated, the last row's bottom
+         * sits inside the frame; translated at rest it would sit under the frame's bottom by the
+         * band's height.
+         */
+        private const val SETTINGS_SCROLL_JS =
+            "(function(){var l=document.querySelectorAll('$LAYER_ROOT');var f=l[0];var o={layers:l.length};if(!f){return JSON.stringify(o)}" +
+                "var s=f.querySelector('.zen-settings-scroll');o.scroller=!!s;if(!s){return JSON.stringify(o)}" +
+                "s.scrollTop=s.scrollHeight;" +
+                "var rows=s.querySelectorAll('.zen-settings-category');o.rows=rows.length;var last=rows[rows.length-1];" +
+                "var pr=f.parentElement.getBoundingClientRect();var lr=f.getBoundingClientRect();" +
+                "o.frameBottom=Math.round(pr.bottom*10)/10;o.layerTop=Math.round(lr.top*10)/10;o.layerBottom=Math.round(lr.bottom*10)/10;" +
+                "if(last){var rr=last.getBoundingClientRect();o.lastTop=Math.round(rr.top*10)/10;o.lastBottom=Math.round(rr.bottom*10)/10;o.lastLabel=(last.textContent||'').trim()}" +
+                "o.scrollTop=Math.round(s.scrollTop);o.scrollHeight=s.scrollHeight;o.clientHeight=s.clientHeight;" +
+                "o.overflows=s.scrollHeight>s.clientHeight+1;o.atBottom=s.scrollTop+s.clientHeight>=s.scrollHeight-1;" +
                 "return JSON.stringify(o)})()"
 
         /** A short page, no article, no manifest: the start page and the page the states stand on. */
