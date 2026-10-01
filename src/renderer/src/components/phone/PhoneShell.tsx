@@ -35,6 +35,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { HINT_BUBBLE_ID, hintBubbleBarItem, hintBubbleStore } from '@renderer/lib/iph'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
+import { LIFT_SCALE } from '@renderer/lib/motion/tokens'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
 import { phoneOnboardingCovers } from '@renderer/lib/onboarding'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
@@ -882,7 +883,7 @@ function BarDockLayer({
   const { slot } = dock
   // Per frame only transforms move: the card slides, the ghost translates and scales in place.
   const dy = dock.progress * dock.travel * dir
-  const scale = 1 + 0.04 * dock.lift
+  const scale = 1 + (LIFT_SCALE - 1) * dock.lift
   const { style: pillStyle, ...pillHandlers } = pill
   return (
     <div className="pointer-events-none absolute inset-0 z-[35]" data-shell-chrome>

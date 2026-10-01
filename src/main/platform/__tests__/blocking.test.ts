@@ -11,6 +11,7 @@ import {
 import { gzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DocumentFilters } from '../../../core/blocking/documentFilters'
 import { RuleEngine, TEXT_MATCH_SET_ID } from '../../../core/blocking/engine'
 import type { BlockedRequestSource } from '../../../core/blocking/report'
 import type { Decision, RequestContext, RuleSet } from '../../../core/blocking/rules'
@@ -61,7 +62,8 @@ function expectedMeta(
     fingerprint,
     version,
     engine: cacheDigest(readFileSync(join(cacheDir, `engine${tag}.bin`))),
-    documents: cacheDigest(readFileSync(join(cacheDir, `documents${tag}.txt`)))
+    documents: cacheDigest(readFileSync(join(cacheDir, `documents${tag}.txt`))),
+    documentsBin: cacheDigest(readFileSync(join(cacheDir, `documents${tag}.bin`)))
   }
 }
 
@@ -526,6 +528,11 @@ describe('GhosteryTextMatcher', () => {
     expect(readFileSync(join(cacheDir, 'documents.txt'), 'utf8')).toBe(
       '||phish.example^$all\n@@||trusted.example^$document'
     )
+    // The serialised form beside the lines: the same filters, read back without a parse.
+    expect(
+      DocumentFilters.deserialize(new Uint8Array(readFileSync(join(cacheDir, 'documents.bin'))))
+        .lines
+    ).toEqual(['||phish.example^$all', '@@||trusted.example^$document'])
     expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual(
       expectedMeta(cacheDir, 'excerpt:1000:10', 'v1')
     )
@@ -618,6 +625,9 @@ describe('GhosteryTextMatcher', () => {
     expect(readFileSync(join(cacheDir, 'documents.txt'), 'utf8')).toBe(
       '||phish.example^$all\n@@||trusted.example^$document'
     )
+    expect(Buffer.from(readFileSync(join(cacheDir, 'documents.bin')))).toEqual(
+      Buffer.from(compileGhosteryEngine(partsOf(1)).documents.serialize())
+    )
 
     // A compile that fails leaves the engine as it was, and the build is over.
     fail = true
@@ -641,25 +651,105 @@ describe('GhosteryTextMatcher', () => {
         { partition: 'private', parts: ['||p.example^'], cache: null }
       ]
     })
-    // One answer for the build's scopes, in order; moved, not copied: the task names the buffers.
+    // One answer for the build's scopes, in order; moved, not copied: the task names the
+    // buffers – the engine's and the document filters' serialised form's, per scope.
     expect(output.scopes.map((scope) => scope.partition)).toEqual([null, 'private'])
     expect(GHOSTERY_COMPILE_TASK.transferables!(output)).toEqual([
       output.scopes[0]!.engine.buffer,
-      output.scopes[1]!.engine.buffer
+      output.scopes[0]!.documentsBin.buffer,
+      output.scopes[1]!.engine.buffer,
+      output.scopes[1]!.documentsBin.buffer
     ])
     const cloned = structuredClone(output, {
-      transfer: output.scopes.map((scope) => scope.engine.buffer)
+      transfer: GHOSTERY_COMPILE_TASK.transferables!(output)
     })
     expect(output.scopes[0]!.engine.byteLength).toBe(0)
+    expect(output.scopes[0]!.documentsBin.byteLength).toBe(0)
     const fromWorker = FiltersEngine.deserialize(cloned.scopes[0]!.engine)
     const onTheSpot = compileGhosteryEngine(parts)
     expect(Buffer.from(fromWorker.serialize())).toEqual(Buffer.from(onTheSpot.engine.serialize()))
     expect(cloned.scopes[0]!.documents).toBe(onTheSpot.documents.lines.join('\n'))
+    // The serialised document filters: the same bytes as a parse on the spot writes, and read
+    // back, the same lines deciding the same.
+    expect(Buffer.from(cloned.scopes[0]!.documentsBin)).toEqual(
+      Buffer.from(onTheSpot.documents.serialize())
+    )
+    const documents = DocumentFilters.deserialize(cloned.scopes[0]!.documentsBin)
+    expect(documents.lines).toEqual(onTheSpot.documents.lines)
+    expect(documents.decide('https://phish.example/login')).toEqual(
+      onTheSpot.documents.decide('https://phish.example/login')
+    )
     expect(
       FiltersEngine.deserialize(cloned.scopes[1]!.engine).match(
         Request.fromRawDetails({ url: 'https://p.example/', type: 'script' })
       ).match
     ).toBe(true)
+  })
+
+  it("adopts the worker's document filters from their serialised form, not by parsing the lines; a form it cannot read falls back to the lines, logged once (seed #45)", async () => {
+    const { DOCUMENT_FILTERS_FORMAT } = await import('../../../core/blocking/documentFilters')
+    const cacheDir = join(tempDir(), 'cache')
+    const s = source()
+    let foreign = false
+    const compile = vi.fn((scopes: GhosteryCompileScope[]) => {
+      const output = GHOSTERY_COMPILE_TASK.run({ scopes })
+      if (foreign)
+        for (const scope of output.scopes)
+          scope.documentsBin = new TextEncoder().encode(
+            JSON.stringify([DOCUMENT_FILTERS_FORMAT + 1, []])
+          )
+      return Promise.resolve(output)
+    })
+    const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0, compile)
+    s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+    const parse = vi.spyOn(DocumentFilters, 'parse')
+    const deserialise = vi.spyOn(DocumentFilters, 'deserialize')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    matcher.rebuild()
+    await settled(matcher)
+    expect(matcher.ready).toBe(true)
+    expect(matcher.compiledInBackground).toBe(1)
+    // The worker parsed (inline here, as the mock runs the task in-process); the adopt did not.
+    expect(parse).toHaveBeenCalledTimes(1)
+    expect(deserialise).toHaveBeenCalledTimes(1)
+    expect(warn).not.toHaveBeenCalled()
+    expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+      action: 'block',
+      filter: '||phish.example^$all'
+    })
+    expect(
+      matcher.match(
+        ctx('https://ad.doubleclick.net/x', { documentUrl: 'https://trusted.example/p' })
+      )
+    ).toMatchObject({ action: 'allow', filter: '@@||trusted.example^$document' })
+
+    // A form of another format: refused, logged once for the scope's cache path, the lines
+    // parsed instead – the matcher is whole either way.
+    foreign = true
+    parse.mockClear()
+    s.engine.setRuleSet(textSet('a', '||a.example^\n||mal.example^$document'))
+    matcher.rebuild()
+    await new Promise((r) => setTimeout(r, 20))
+    await settled(matcher)
+    expect(matcher.compiledInBackground).toBe(2)
+    expect(parse).toHaveBeenCalledTimes(2)
+    const fallback = [...parse.mock.lastCall![0]]
+    expect(fallback).toHaveLength(1)
+    expect(fallback[0]!.split('\n').sort()).toEqual([
+      '@@||trusted.example^$document',
+      '||mal.example^$document',
+      '||phish.example^$all'
+    ])
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not read')
+    expect(warn.mock.calls[0]![1]).toBe(join(cacheDir, 'engine.bin'))
+    expect(warn.mock.calls[0]![2]).toBe('document filters not deserialised')
+    expect(matcher.match(ctx('https://mal.example/', { type: 'main_frame' }))).toMatchObject({
+      action: 'block',
+      filter: '||mal.example^$document'
+    })
+    expect(matcher.match(ctx('https://a.example/x.js'))).toMatchObject({ action: 'block' })
+    await new Promise((r) => setImmediate(r))
   })
 
   it('keeps the cached lists while the master switch has every list off', () => {
@@ -749,6 +839,7 @@ describe('GhosteryTextMatcher', () => {
     )
     expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
     expect(existsSync(join(cacheDir, 'documents.private.txt'))).toBe(true)
+    expect(existsSync(join(cacheDir, 'documents.private.bin'))).toBe(true)
 
     // Wired into the core engine: the private window's request is the list's, the normal one's the default allow.
     s.engine.setTextMatcher(matcher)
@@ -770,6 +861,7 @@ describe('GhosteryTextMatcher', () => {
     expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(false)
     expect(existsSync(join(cacheDir, 'engine.private.json'))).toBe(false)
     expect(existsSync(join(cacheDir, 'documents.private.txt'))).toBe(false)
+    expect(existsSync(join(cacheDir, 'documents.private.bin'))).toBe(false)
     expect(existsSync(join(cacheDir, 'engine.bin'))).toBe(true)
 
     // The next start with the switch on and the text on disk only: the unscoped scope
@@ -1449,6 +1541,7 @@ describe('GhosteryTextMatcher', () => {
         bin: join(cacheDir, 'engine.bin'),
         meta: join(cacheDir, 'engine.json'),
         documents: join(cacheDir, 'documents.txt'),
+        documentsBin: join(cacheDir, 'documents.bin'),
         fingerprint: 'a:1:1',
         version: 'v1'
       }
@@ -1458,9 +1551,11 @@ describe('GhosteryTextMatcher', () => {
       // Answered first: nothing is on disk until the worker's next turn.
       expect(existsSync(cacheDir)).toBe(false)
       const bytes = Buffer.from(output.scopes[0]!.engine)
+      const serialised = Buffer.from(output.scopes[0]!.documentsBin)
       await new Promise((r) => setImmediate(r))
       expect(Buffer.from(readFileSync(target.bin))).toEqual(bytes)
       expect(readFileSync(target.documents, 'utf8')).toBe('||phish.example^$all')
+      expect(Buffer.from(readFileSync(target.documentsBin))).toEqual(serialised)
       expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual(
         expectedMeta(cacheDir, 'a:1:1', 'v1')
       )
@@ -1472,12 +1567,13 @@ describe('GhosteryTextMatcher', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const tmp = `${target.bin}.${process.pid}.tmp`
       mkdirSync(tmp)
-      expect(
-        writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([9]), 'x')
-      ).toBe(false)
-      expect(
-        writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([9]), 'x')
-      ).toBe(false)
+      const nine = (): Uint8Array => new Uint8Array([9])
+      expect(writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, nine(), 'x', nine())).toBe(
+        false
+      )
+      expect(writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, nine(), 'x', nine())).toBe(
+        false
+      )
       expect(Buffer.from(readFileSync(target.bin))).toEqual(bytes)
       expect(JSON.parse(readFileSync(target.meta, 'utf8')).fingerprint).toBe('a:1:1')
       expect(warn).toHaveBeenCalledTimes(1)
@@ -1488,7 +1584,7 @@ describe('GhosteryTextMatcher', () => {
       // of the new one misses rather than pairing new bytes with old filters.
       const other = { ...target, documents: join(cacheDir, 'docs-dir'), fingerprint: 'c:3:3' }
       mkdirSync(other.documents)
-      expect(writeGhosteryCache(other, new Uint8Array([7, 7]), 'x')).toBe(false)
+      expect(writeGhosteryCache(other, new Uint8Array([7, 7]), 'x', nine())).toBe(false)
       expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from([7, 7]))
       expect(JSON.parse(readFileSync(target.meta, 'utf8')).fingerprint).toBe('a:1:1')
       expect(readdirSync(cacheDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
@@ -1533,7 +1629,7 @@ describe('GhosteryTextMatcher', () => {
      */
     function cached(): {
       cacheDir: string
-      paths: { bin: string; meta: string; documents: string }
+      paths: { bin: string; meta: string; documents: string; documentsBin: string }
       next(): { matcher: InstanceType<typeof GhosteryTextMatcher>; compile: Mock }
       warn: MockInstance<typeof console.warn>
     } {
@@ -1547,7 +1643,8 @@ describe('GhosteryTextMatcher', () => {
         paths: {
           bin: join(cacheDir, 'engine.bin'),
           meta: join(cacheDir, 'engine.json'),
-          documents: join(cacheDir, 'documents.txt')
+          documents: join(cacheDir, 'documents.txt'),
+          documentsBin: join(cacheDir, 'documents.bin')
         },
         next: () => {
           const compile = vi.fn((scopes: GhosteryCompileScope[]) =>
@@ -1573,13 +1670,33 @@ describe('GhosteryTextMatcher', () => {
       expect(c.warn).not.toHaveBeenCalled()
     })
 
-    it('recompiles on a `documents.txt` cut short – a prefix that parses as a smaller set – and on an empty one, before anything is deserialised', async () => {
+    it('adopts the document filters from `documents.bin` without parsing a line, and recompiles on one cut short or emptied, before anything is deserialised', async () => {
       const { FiltersEngine } = await import('@ghostery/adblocker')
       const c = cached()
-      const whole = readFileSync(c.paths.documents, 'utf8')
-      expect(whole).toBe('||phish.example^$all\n@@||trusted.example^$document')
-      // The first line alone: a valid set, missing the exception. Never adopted.
-      writeFileSync(c.paths.documents, whole.split('\n')[0]!)
+      const whole = readFileSync(c.paths.documentsBin)
+      expect(DocumentFilters.deserialize(new Uint8Array(whole)).lines).toEqual([
+        '||phish.example^$all',
+        '@@||trusted.example^$document'
+      ])
+      // An intact cache: the lines are not parsed; the serialised form is read back.
+      const parse = vi.spyOn(DocumentFilters, 'parse')
+      const deserialise = vi.spyOn(DocumentFilters, 'deserialize')
+      const intact = c.next()
+      expect(intact.matcher.fromCache).toBe(true)
+      expect(deserialise).toHaveBeenCalledTimes(1)
+      expect(parse).not.toHaveBeenCalled()
+      expect(
+        intact.matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))
+      ).toMatchObject({ action: 'block', filter: '||phish.example^$all' })
+      expect(
+        intact.matcher.match(
+          ctx('https://ad.doubleclick.net/x', { documentUrl: 'https://trusted.example/p' })
+        )
+      ).toMatchObject({ action: 'allow', filter: '@@||trusted.example^$document' })
+      parse.mockRestore()
+      deserialise.mockRestore()
+      // A prefix of the serialised form: never adopted, and nothing is deserialised first.
+      writeFileSync(c.paths.documentsBin, whole.subarray(0, whole.length - 3))
       const deserialize = vi.spyOn(FiltersEngine, 'deserialize')
       const short = c.next()
       expect(short.matcher.fromCache).toBe(false)
@@ -1588,8 +1705,8 @@ describe('GhosteryTextMatcher', () => {
       expect(c.warn).toHaveBeenCalledTimes(1)
       expect(c.warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not read')
       expect(c.warn.mock.calls[0]![2]).toBe('document filters do not match the metadata')
-      // Zero bytes: the empty set parses too. Never adopted; the warning for the path is spent.
-      writeFileSync(c.paths.documents, '')
+      // Zero bytes: never adopted; the warning for the path is spent.
+      writeFileSync(c.paths.documentsBin, '')
       const empty = c.next()
       expect(empty.matcher.fromCache).toBe(false)
       expect(empty.compile).toHaveBeenCalledTimes(1)
@@ -1597,10 +1714,88 @@ describe('GhosteryTextMatcher', () => {
       // The recompile's write puts the cache right again; the start after adopts it.
       await new Promise((r) => setTimeout(r, 20))
       await new Promise((r) => setImmediate(r))
-      expect(readFileSync(c.paths.documents, 'utf8')).toBe(whole)
+      expect(Buffer.from(readFileSync(c.paths.documentsBin))).toEqual(whole)
       const after = c.next()
       expect(after.matcher.fromCache).toBe(true)
       expect(after.compile).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the cached lines when `documents.bin` is of another format – logged once, parsed, adopted – and recompiles when those lines are cut short too', async () => {
+      const { DOCUMENT_FILTERS_FORMAT } = await import('../../../core/blocking/documentFilters')
+      const c = cached()
+      const meta = JSON.parse(readFileSync(c.paths.meta, 'utf8')) as Record<string, unknown>
+      // A blob another build wrote, whole and named by the metadata: the digests pass, the
+      // deserialise refuses it, the lines beside it are parsed as before seed #45.
+      const foreign = new TextEncoder().encode(JSON.stringify([DOCUMENT_FILTERS_FORMAT + 1, []]))
+      writeFileSync(c.paths.documentsBin, foreign)
+      writeFileSync(c.paths.meta, JSON.stringify({ ...meta, documentsBin: cacheDigest(foreign) }))
+      const parse = vi.spyOn(DocumentFilters, 'parse')
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(true)
+      expect(compile).not.toHaveBeenCalled()
+      expect(parse).toHaveBeenCalledTimes(1)
+      expect(parse).toHaveBeenCalledWith(['||phish.example^$all\n@@||trusted.example^$document'])
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not read')
+      expect(c.warn.mock.calls[0]![2]).toBe('document filters not deserialised')
+      expect(String(c.warn.mock.calls[0]![3])).toMatch(/format 2, this build reads 1/)
+      expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+        action: 'block',
+        filter: '||phish.example^$all'
+      })
+      parse.mockRestore()
+      // The lines cut short under the same foreign blob: the fallback's digest check fails,
+      // and the cache is a miss (the warning for the path is spent).
+      writeFileSync(c.paths.documents, '||phish.example^$all')
+      const torn = c.next()
+      expect(torn.matcher.fromCache).toBe(false)
+      expect(torn.compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      // On another cache path the reason is logged: the lines, not the serialised form.
+      const otherDir = join(tempDir(), 'cache')
+      const s = source()
+      s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+      new GhosteryTextMatcher(s, otherDir, 'v1', 0).rebuild()
+      const otherMeta = JSON.parse(readFileSync(join(otherDir, 'engine.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      writeFileSync(join(otherDir, 'documents.bin'), foreign)
+      writeFileSync(
+        join(otherDir, 'engine.json'),
+        JSON.stringify({ ...otherMeta, documentsBin: cacheDigest(foreign) })
+      )
+      writeFileSync(join(otherDir, 'documents.txt'), '')
+      const both = new GhosteryTextMatcher(s, otherDir, 'v1', 0)
+      both.rebuild()
+      expect(both.fromCache).toBe(false)
+      expect(c.warn).toHaveBeenCalledTimes(2)
+      expect(c.warn.mock.calls[1]![2]).toBe('document filters not deserialised')
+      // Recompiled on the spot (no compile given): still matching.
+      expect(both.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+        action: 'block'
+      })
+      // The recompiles' cache writes land before the directories go.
+      await new Promise((r) => setTimeout(r, 20))
+      await new Promise((r) => setImmediate(r))
+    })
+
+    it('adopts an intact `documents.bin` whatever state `documents.txt` is in: the fallback is checked only when it is needed', () => {
+      const c = cached()
+      writeFileSync(c.paths.documents, '')
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(true)
+      expect(compile).not.toHaveBeenCalled()
+      expect(c.warn).not.toHaveBeenCalled()
+      expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+        action: 'block'
+      })
+      // A file of the four missing is still a miss, silently.
+      rmSync(c.paths.documents)
+      const missing = c.next()
+      expect(missing.matcher.fromCache).toBe(false)
+      expect(missing.compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).not.toHaveBeenCalled()
     })
 
     it('recompiles when `engine.bin` is not the file the metadata names: another length, or the same length with other bytes', () => {

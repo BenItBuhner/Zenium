@@ -860,6 +860,51 @@ describe('a card dragged out of its group', () => {
   })
 })
 
+// --- the card in the hand: compositor-only (motion spec §0.4) -------------------------------------
+
+describe('the card in the hand', () => {
+  const seat = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-overview-ghost-seat')!
+  const card = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-overview-ghost')!
+
+  it('follows by a translate on its seat and scales on the card inside: no left/top, no frame of layout', () => {
+    render(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')]))
+    pickUp('a')
+    act(() => settleSprings())
+    const origin = liftStore.get().ghost!
+    // The seat is the fixed, sized element and carries the follow alone.
+    expect(seat().contains(card())).toBe(true)
+    expect(seat().style.transform).toBe(`translate(${origin.x}px, ${origin.y}px)`)
+    expect(seat().style.width).toBe(`${origin.width}px`)
+    expect(seat().style.height).toBe(`${origin.height}px`)
+    expect(seat().style.left).toBe('')
+    expect(seat().style.top).toBe('')
+    // The card carries the lift's scale alone – the 120 ms transition is its – and no position.
+    expect(card().style.transform).toBe('scale(1.02)')
+    expect(card().style.left).toBe('')
+    expect(card().style.top).toBe('')
+    expect(card().style.width).toBe('')
+    expect(card().style.height).toBe('')
+    expect(card().classList.contains('zen-overview-card')).toBe(true)
+    // The card keeps the hooks the stylesheet and the drivers read.
+    expect(card().dataset.active).toBe('true')
+
+    // A drag moves the seat's translate and nothing else on either element.
+    const from = at('a', 0.5, 0.5)
+    drag(from.x + 40, from.y + 60)
+    act(() => settleSprings())
+    const moved = liftStore.get().ghost!
+    expect(moved).toMatchObject({ x: origin.x + 40, y: origin.y + 60 })
+    expect(seat().style.transform).toBe(`translate(${moved.x}px, ${moved.y}px)`)
+    expect(seat().style.left).toBe('')
+    expect(seat().style.top).toBe('')
+    expect(card().style.transform).toBe('scale(1.02)')
+    expect(Array.from(card().style)).toEqual(['transform'])
+    expect(Array.from(seat().style).sort()).toEqual(['height', 'transform', 'width'])
+    letGo(from.x + 40, from.y + 60)
+    act(() => settleSprings())
+  })
+})
+
 // --- a drop on a card: one order, making a group or joining one (v2 §11.4) -----------------------
 
 describe('a drop on a card', () => {

@@ -161,9 +161,22 @@ describe('motion tokens (§1)', () => {
     expect(card).toContain(`opacity: ${LIFT_OPACITY}`)
     expect(card).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
     expect(card).toContain('transform var(--zen-motion-state) var(--zen-ease)')
+    // The follow is a translate on the card's seat (§0.4): neither element promises `left`/`top`.
+    expect(card).not.toMatch(/left|top/)
+    const seat = css.match(/\.zen-overview-ghost-seat\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(seat).toContain('will-change: transform')
+    expect(seat).not.toMatch(/transition/)
     const cardLift = read('../../components/phone/useCardLift.ts')
     expect(cardLift).not.toMatch(/scaleSpring/)
     expect(cardLift).toMatch(/scale: reduced \? LIFT_SCALE : 1/)
+    // The carried pill (the bar dock's ghost in PhoneShell) rises to the same lift: its scale is
+    // derived from the token over `dock.lift` 0…1, no figure of its own – at lift 1 it reads 1.02.
+    const shell = read('../../components/phone/PhoneShell.tsx')
+    expect(shell).toMatch(/import \{ LIFT_SCALE \} from '@renderer\/lib\/motion\/tokens'/)
+    expect(shell).toMatch(/const scale = 1 \+ \(LIFT_SCALE - 1\) \* dock\.lift/)
+    expect(shell).not.toMatch(/0\.04 \* dock\.lift/)
+    expect(1 + (LIFT_SCALE - 1) * 1).toBeCloseTo(1.02, 10)
+    expect(1 + (LIFT_SCALE - 1) * 0).toBe(1)
   })
 
   it('exports exactly §1’s names', async () => {

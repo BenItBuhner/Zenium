@@ -160,16 +160,39 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
     expect(destructive).toHaveLength(1)
   })
 
-  it('is the selection menu while selecting (§5)', () => {
+  it('is the selection menu while selecting (§5): Select All, Deselect All, the one hairline, Close Selected', () => {
     expect(overviewMenu(ctx({ selection: { selected: 2, total: 5 } }))).toEqual([
       { command: 'select-all', label: 'Select All', disabled: false },
       { command: 'deselect-all', label: 'Deselect All', disabled: false },
+      { separator: true },
       { command: 'close-selected', label: 'Close Selected (2)', destructive: true, disabled: false }
     ])
     const none = overviewMenu(ctx({ selection: { selected: 0, total: 5 } }))
-    expect(none.map((e) => !isOverviewMenuSeparator(e) && e.disabled)).toEqual([false, true, true])
+    expect(none.map((e) => !isOverviewMenuSeparator(e) && e.disabled)).toEqual([
+      false,
+      true,
+      false,
+      true
+    ])
     const all = overviewMenu(ctx({ selection: { selected: 5, total: 5 } }))
-    expect(all.map((e) => !isOverviewMenuSeparator(e) && e.disabled)).toEqual([true, false, false])
+    expect(all.map((e) => !isOverviewMenuSeparator(e) && e.disabled)).toEqual([
+      true,
+      false,
+      false,
+      false
+    ])
+  })
+
+  it('draws the selection menu’s one hairline right before Close Selected, the only destructive row', () => {
+    const rows = overviewMenu(ctx({ selection: { selected: 1, total: 3 } }))
+    expect(rows.filter(isOverviewMenuSeparator)).toHaveLength(1)
+    const at = rows.findIndex(isOverviewMenuSeparator)
+    expect(at).toBe(2)
+    const after = rows[at + 1]
+    expect(after && !isOverviewMenuSeparator(after) ? after.command : null).toBe('close-selected')
+    expect(rows.length - 1).toBe(at + 1)
+    const destructive = rows.filter((e) => !isOverviewMenuSeparator(e) && e.destructive)
+    expect(destructive).toHaveLength(1)
   })
 
   it('writes counts in parentheses', () => {
