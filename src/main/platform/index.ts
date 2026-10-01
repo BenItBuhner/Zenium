@@ -231,6 +231,7 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // `paint`/`did-frame-finish-load`-class signal, and this flag turns the chrome's waits on.
   placementAnswered: false,
   agentDialogs: true,
+  agentDialogPolicy: true,
   // An agent's tab keeps its native prompts from the user (`AgentService.routePrompt`): file
   // choosers over the DevTools protocol and the preload's `print` / File System Access shims
   // (`ElectronTabView.interceptAgentPrompts`), the rest through the core's own prompts.
