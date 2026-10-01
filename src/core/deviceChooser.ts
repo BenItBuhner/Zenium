@@ -1,6 +1,7 @@
 import type { Browser } from './browser'
 import { permissionSite } from './permissions'
 import { newId } from '../shared/ids'
+import { deviceChooserSpec, devicePairingSpec } from './agent/nativePrompts'
 import type {
   DeviceCandidate,
   DeviceChooser,
@@ -76,7 +77,7 @@ export class DeviceChooserService {
    */
   open(
     kind: DeviceKind,
-    candidates: DeviceCandidate[],
+    initial: DeviceCandidate[],
     request: DeviceChooserRequest
   ): DeviceChooserHandle {
     const origin = permissionSite(request.origin)
@@ -88,12 +89,29 @@ export class DeviceChooserService {
         close: () => undefined
       }
     }
+    const tabId = request.tabId
+    if (tabId && this.browser.agents?.takesPrompt(tabId, 'device-chooser')) {
+      let candidates = dedupe(initial)
+      const agent = this.browser.agents.routePrompt(
+        deviceChooserSpec(tabId, kind, origin, () => candidates)
+      )
+      if (agent)
+        return {
+          id: agent.id,
+          result: agent.result,
+          update: (list, scanning) => {
+            candidates = dedupe(list)
+            agent.update({ candidates, ...(scanning !== undefined ? { scanning } : {}) })
+          },
+          close: () => agent.close()
+        }
+    }
     const chooser: DeviceChooser = {
       id: newId('device'),
       tabId: request.tabId,
       origin,
       kind,
-      candidates: dedupe(candidates),
+      candidates: dedupe(initial),
       scanning: request.scanning ?? false,
       hint: request.hint ?? 'none',
       requestedAt: this.now()
@@ -159,6 +177,11 @@ export class DeviceChooserService {
       kind: details.kind,
       pin: details.pin ?? ''
     }
+    const tabId = details.tabId
+    const agent = tabId
+      ? this.browser.agents?.routePrompt(devicePairingSpec({ ...prompt, tabId }))
+      : null
+    if (agent) return agent.result
     return new Promise((resolve) => {
       this.pairings.push({ prompt, resolve })
       this.browser.state.commitVolatile()

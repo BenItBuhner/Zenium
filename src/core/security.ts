@@ -7,6 +7,7 @@ import type {
 } from '../shared/types'
 import { newId } from '../shared/ids'
 import type { Browser } from './browser'
+import { clientCertificateSpec, httpAuthSpec } from './agent/nativePrompts'
 
 export interface HttpCredentials {
   username: string
@@ -196,7 +197,10 @@ export class SecurityPromptService {
     tabId: string | null
   ): Promise<HttpCredentials | null> {
     const key = httpAuthKey(challenge)
-    const waiting = this.inFlight.get(key)
+    // An agent's tab answers its own challenge: a user's tab behind the same realm never waits
+    // on the agent, nor takes its answer.
+    const flight = this.agentTab(tabId, 'http-auth') ? `${key}|${tabId}` : key
+    const waiting = this.inFlight.get(flight)
     if (waiting) return waiting
     const now = this.now()
     const failedBefore = now - (this.answeredAt.get(key) ?? -Infinity) < AUTH_RETRY_WINDOW_MS
@@ -207,11 +211,11 @@ export class SecurityPromptService {
     }
     if (remembered) this.credentials.delete(key)
     const asking = this.askHttpAuth(key, challenge, tabId, failedBefore)
-    this.inFlight.set(key, asking)
+    this.inFlight.set(flight, asking)
     try {
       return await asking
     } finally {
-      this.inFlight.delete(key)
+      this.inFlight.delete(flight)
     }
   }
 
@@ -233,6 +237,19 @@ export class SecurityPromptService {
       secure: challenge.secure,
       failedBefore,
       username: failedBefore ? (this.lastUsername.get(key) ?? '') : ''
+    }
+    const agent = tabId
+      ? this.browser.agents?.routePrompt(httpAuthSpec({ ...prompt, tabId }))
+      : null
+    if (agent) {
+      // The agent's credentials go with this request alone: never remembered for the user.
+      const credentials = await agent.result
+      if (!credentials) {
+        this.answeredAt.delete(key)
+        return null
+      }
+      this.sent(key, credentials)
+      return credentials
     }
     const answer = await this.show(prompt)
     if (!answer || answer.kind !== 'http-auth') {
@@ -267,6 +284,11 @@ export class SecurityPromptService {
       if (index >= 0) return index
     }
     if (!certificates.length) return null
+    // An agent's pick is for its request alone: not remembered for the session, never shared.
+    const agent = tabId
+      ? this.browser.agents?.routePrompt(clientCertificateSpec(tabId, host, certificates))
+      : null
+    if (agent) return agent.result
     const waiting = this.certificateInFlight.get(host)
     if (waiting) {
       // Same host, same session: the answer to the first chooser applies here as well.
@@ -321,6 +343,10 @@ export class SecurityPromptService {
     this.certificateChoices.clear()
     this.answeredAt.clear()
     this.lastUsername.clear()
+  }
+
+  private agentTab(tabId: string | null, kind: 'http-auth'): boolean {
+    return Boolean(tabId && this.browser.agents?.takesPrompt(tabId, kind))
   }
 
   /** Queue the prompt; the chrome shows it once its tab is the active one (tab-modal, like Chrome). */

@@ -4,6 +4,7 @@ import type {
   DeviceGrant,
   DeviceKind,
   PermissionPrompt,
+  PermissionPromptAnswer,
   PermissionRule,
   RevokedSitePermissions
 } from '../shared/types'
@@ -173,6 +174,17 @@ export interface PermissionRequestDetails {
   privateContainerId?: string
 }
 
+/** `PermissionService.agentPrompts`. */
+export interface AgentPermissionPrompts {
+  /** Whether the tab's prompts are its agent's. */
+  takes(tabId: string): boolean
+  /** The agent's answer to the request, or null when the request is the user's to answer. */
+  ask(
+    request: PermissionPrompt,
+    details: PermissionRequestDetails
+  ): Promise<PermissionPromptAnswer | null> | null
+}
+
 export interface PermissionPromptCopy {
   message: string
   detail: string
@@ -267,6 +279,12 @@ export class PermissionService {
    */
   private readonly regranted = new Map<string, RevokedSitePermissions>()
   private override: PermissionOverride | null = null
+  /**
+   * The AI agents' side of the prompts (`AgentService.routePrompt`): a request of an agent's tab
+   * goes to its agent instead of the chrome, and its answer is never remembered for the user.
+   * The browser sets it once the agents exist; left unset, every prompt is the user's.
+   */
+  agentPrompts: AgentPermissionPrompts | null = null
 
   constructor(
     io: StoreIO,
@@ -667,7 +685,7 @@ export class PermissionService {
     // The Storage Access API needs a gesture before it may ask (Chrome's
     // `kDeniedByPrerequisites`): a request without one is refused at once, nothing shown.
     if (isStorageAccessPermission(permission) && details.userGesture === false) return false
-    return this.askOnce(key, () => this.prompt(permission, origin, [key], details))
+    return this.askOnce(key, details, () => this.prompt(permission, origin, [key], details))
   }
 
   /**
@@ -686,11 +704,22 @@ export class PermissionService {
     }
     const keys = open.map((row) => decisionKey(origin, row, details))
     const permission = open.length === 1 ? open[0] : 'media'
-    return this.askOnce(keys.join('+'), () => this.prompt(permission, origin, keys, details))
+    return this.askOnce(keys.join('+'), details, () =>
+      this.prompt(permission, origin, keys, details)
+    )
   }
 
-  /** Concurrent requests for the same question share one prompt and its answer. */
-  private askOnce(pendingKey: string, ask: () => Promise<boolean>): Promise<boolean> {
+  /**
+   * Concurrent requests for the same question share one prompt and its answer – an agent's tab
+   * its own, so a user's tab never waits on an agent's question nor takes its answer.
+   */
+  private askOnce(
+    key: string,
+    details: PermissionRequestDetails,
+    ask: () => Promise<boolean>
+  ): Promise<boolean> {
+    const tabId = details.tabId
+    const pendingKey = tabId && this.agentPrompts?.takes(tabId) ? `${key}|${tabId}` : key
     const inFlight = this.pending.get(pendingKey)
     if (inFlight) return inFlight
     const promise = ask().finally(() => this.pending.delete(pendingKey))
@@ -717,7 +746,7 @@ export class PermissionService {
       allowOnce: allowOnceFor(permission),
       requestedAt: this.now()
     }
-    const answer = await this.prompts.show(request)
+    const answer = await (this.agentPrompts?.ask(request, details) ?? this.prompts.show(request))
     switch (answer) {
       // Withdrawn (the page navigated away): refused this once, nothing counted or remembered.
       case null:

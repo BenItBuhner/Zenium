@@ -630,6 +630,7 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
+    this.permissions.agentPrompts = this.agents.permissionPrompts()
     // A session's END that emptied its space hands the user's window back (W7-F3): the agent's
     // `zen_session end` and the record's close (DELETE, Disconnect, the parked limit, shutdown).
     // A park is not an end – the idle sweep's timer, no action of anyone's; the session may
