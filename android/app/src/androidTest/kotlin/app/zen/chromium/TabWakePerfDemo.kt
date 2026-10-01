@@ -63,7 +63,9 @@ import kotlin.math.roundToInt
  * The gestures: `wake-tap-<state>`, a tap on the tab's card in the open overview – the `switch`
  * window runs from the tap to the page view's show (the morph landed), `land` from the show to the
  * page's first paint, `load` from the tap to the load; `wake-pull-out-<state>`, the tap, then once
- * the page is up and still loading a pull on the pill back to the overview (the bar's
+ * the page is up ([OUT_AFTER_SHOW_MS] after the show, waited for up to [SHOW_WAIT_MS] – past the
+ * recipe's slowest morph, so every state's gesture begins at the same moment of the wake and not
+ * at the landing) and still loading, a pull on the pill back to the overview (the bar's
  * swipe-to-overview, the way out of a tab on the phone) – the `out` window is the gesture's first
  * [OUT_WINDOW_MS]; `wake-back-out-<state>`, the same with the system's predictive back gesture from
  * the left edge (gesture navigation is turned on for the run), which at a page with history is the
@@ -256,7 +258,7 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         shot("overview-sleeping")
         val card = cardRect(heavyTab) ?: return
         Finger().tap(card.exactCenterX(), card.exactCenterY())
-        awaitShown(heavyTab, SWITCH_CAP_MS)
+        awaitShown(heavyTab, SHOW_WAIT_MS)
         SystemClock.sleep(OUT_AFTER_SHOW_MS)
         shot("woken-loading")
         pullOut()
@@ -385,7 +387,7 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             startBoot = capture.nowBoot()
             tapNs = System.nanoTime()
             Finger().tap(card.exactCenterX(), card.exactCenterY())
-            shownNs = awaitShown(heavyTab, SWITCH_CAP_MS)
+            shownNs = awaitShown(heavyTab, SHOW_WAIT_MS)
             SystemClock.sleep(OUT_AFTER_SHOW_MS)
             if (back) canGoBackAtOut = awaitCanGoBack(heavyTab, BACK_READY_MS)
             loadingAtOut = !loaded(heavyTab)
@@ -968,6 +970,12 @@ requestAnimationFrame(chunk);next(0);})();
         private const val POLL_MS = 100L
         /** The most the `switch` window runs after the tap when the page view's show is not seen. */
         private const val SWITCH_CAP_MS = 2_500L
+        /**
+         * How long an out scene waits for the page view's show before the way out: longer than
+         * the recipe's slowest morph (a sleeping tab's lands 2.8–3.3 s after the tap here), so the
+         * gesture begins [OUT_AFTER_SHOW_MS] after the show in every state and not at the landing.
+         */
+        private const val SHOW_WAIT_MS = 8_000L
         /** How long after the page view's show the way out begins: the page is up and still loading. */
         private const val OUT_AFTER_SHOW_MS = 300L
         /** How long the back scene waits for the page's history to be behind it before the gesture. */

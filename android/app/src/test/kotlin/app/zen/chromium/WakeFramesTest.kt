@@ -112,7 +112,30 @@ class WakeFramesTest {
         val share = WakeFrames.judge("out", slow, control, bar)
         assertFalse(share.pass)
         assertEquals(share.line(), 1, share.reasons.size)
-        assertTrue(share.line(), share.reasons.first().startsWith("100% of frames over 32 ms, cap 27%"))
+        assertTrue(share.line(), share.reasons.first().startsWith("100% of frames over 32 ms, cap 27% (the control's 17% + 10 points)"))
+    }
+
+    @Test
+    fun theShareAllowanceIsTenPointsOrOneFrameOfTheSmallerWindow() {
+        assertEquals(0.10, WakeFrames.shareAllowance(0.10, 60, 60), 1e-9)
+        assertEquals(1.0 / 6, WakeFrames.shareAllowance(0.10, 6, 13), 1e-9)
+        assertEquals(0.10, WakeFrames.shareAllowance(0.10, 0, 6), 1e-9)
+        val bar = WakeFrames.Bar.Relative(WakeFrames.P95_RATIO, WakeFrames.LONGEST_RATIO, WakeFrames.OVER32_POINTS)
+        // Six frames against six: one more over two vsyncs than the control is within (the share cannot tell a tenth).
+        val control = WakeFrames.summarize(List(5) { 100.0 } + 20.0)
+        val oneMore = WakeFrames.summarize(List(6) { 100.0 })
+        assertTrue(WakeFrames.judge("out", oneMore, control, bar).line(), WakeFrames.judge("out", oneMore, control, bar).pass)
+        // Eight against eight: two more is over, and the reason names the frame's worth.
+        val eightControl = WakeFrames.summarize(List(4) { 100.0 } + List(4) { 20.0 })
+        val twoMore = WakeFrames.summarize(List(6) { 100.0 } + List(2) { 20.0 })
+        val verdict = WakeFrames.judge("out", twoMore, eightControl, bar)
+        assertFalse(verdict.pass)
+        assertEquals(verdict.line(), listOf("75% of frames over 32 ms, cap 63% (the control's 50% + 13 points, one frame of 8)"), verdict.reasons)
+        assertTrue(WakeFrames.judge("out", WakeFrames.summarize(List(5) { 100.0 } + List(3) { 20.0 }), eightControl, bar).pass)
+        // Ten against ten: a tenth is the frame, and the reason stays the plain one.
+        val tenControl = WakeFrames.summarize(List(5) { 100.0 } + List(5) { 20.0 })
+        val tenVerdict = WakeFrames.judge("out", WakeFrames.summarize(List(7) { 100.0 } + List(3) { 20.0 }), tenControl, bar)
+        assertEquals(tenVerdict.line(), listOf("70% of frames over 32 ms, cap 60% (the control's 50% + 10 points)"), tenVerdict.reasons)
     }
 
     @Test
