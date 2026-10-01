@@ -423,6 +423,13 @@ function chromeProbeSource() {
   const zen = g.zen
   if (zen && typeof zen.on === 'function') {
     zen.on('state', (state) => {
+      // What the waits read (`waitForIdle`, `waitForDiscarded`): a count and a map from the
+      // latest snapshot, so a wait costs the chrome a number and not a snapshot per poll.
+      const tabs = Object.values(state.tabs ?? {})
+      P.lastLoading = tabs.filter((t) => t.loading).length
+      const discarded = {}
+      for (const t of tabs) discarded[t.id] = Boolean(t.discarded)
+      P.lastDiscarded = discarded
       if (!P.recording) return
       const at = P.epoch()
       let active = null
@@ -636,24 +643,36 @@ async function openTabs(session, origin, n) {
   return ids
 }
 
-/** Wait until no tab is loading (or `ms` has passed). */
+/**
+ * Wait until no tab is loading (or `ms` has passed). The first reading is the core's own
+ * (`app.getState`, ordered after the commands before it); the polls after it read the count the
+ * probe keeps from the latest state event. A snapshot per poll would cost main a serialisation,
+ * the chrome a bridge copy and Playwright another – 70 KB every 100 ms inside the very window
+ * being measured (it read as 1.6 s of the chrome's time over a 7 s load at 4x).
+ */
 async function waitForIdle(chrome, ms) {
   const deadline = Date.now() + ms
+  const countLoading = (state) => Object.values(state.tabs).filter((t) => t.loading).length
+  if (countLoading(await getState(chrome)) === 0) return true
   while (Date.now() < deadline) {
-    const state = await getState(chrome)
-    if (!Object.values(state.tabs).some((t) => t.loading)) return true
     await sleep(100)
+    const loading = await chrome.evaluate(() => globalThis.__zenPerf?.lastLoading ?? null)
+    if ((loading ?? countLoading(await getState(chrome))) === 0) return true
   }
   return false
 }
 
-/** Wait until the page of `tabId` reads `discarded` (or the deadline passes). */
+/** Wait until the page of `tabId` reads `discarded` (or the deadline passes); as `waitForIdle`. */
 async function waitForDiscarded(chrome, tabId, ms) {
   const deadline = Date.now() + ms
+  if ((await getState(chrome)).tabs[tabId]?.discarded) return true
   while (Date.now() < deadline) {
-    const state = await getState(chrome)
-    if (state.tabs[tabId]?.discarded) return true
     await sleep(50)
+    const discarded = await chrome.evaluate(
+      (id) => globalThis.__zenPerf?.lastDiscarded?.[id] ?? null,
+      tabId
+    )
+    if (discarded ?? (await getState(chrome)).tabs[tabId]?.discarded) return true
   }
   return false
 }
@@ -920,6 +939,7 @@ async function sceneLoad(session, origin, ids) {
   // it raises on main, and the chrome's frames while it carries them.
   for (let i = 0; i < RUNS; i++) {
     await probeStart(session, { sizes: true })
+    await profileStart(session)
     const t0 = Date.now()
     const heavyTab = await invoke(chrome, 'tab.create', {
       url: `${origin}/heavy?l=${i}`,
@@ -927,9 +947,11 @@ async function sceneLoad(session, origin, ids) {
     })
     await sleep(500)
     await waitForIdle(chrome, 15000)
+    const profile = await profileStop(session)
     const r = await probeStop(session)
     const span = (Date.now() - t0) / 1000
     const sample = {
+      ...(profile ? { profile } : {}),
       seconds: span,
       frames: frameStats(r.chrome.frames),
       longTasks: longTaskStats(r.chrome.longTasks),
@@ -1195,7 +1217,8 @@ async function main() {
     log(`wrote ${file}`)
     await closeApp(session.app)
     server.close()
-    fs.rmSync(session.root, { recursive: true, force: true })
+    // A killed Electron may still be dropping files into the profile for a moment (ENOTEMPTY).
+    fs.rmSync(session.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   }
   printTable(result)
 }
