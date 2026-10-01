@@ -991,7 +991,12 @@ export interface TabView {
   detach(): void
   setBounds(rect: Rect): void
   setBorderRadius(radius: number): void
-  setVisible(visible: boolean): void
+  /**
+   * `switched` names a hide a switch away from the page (`LayoutReport.switchedAway`: the tab
+   * overview over it), for a host whose pages are told so (Android); a host with no such word
+   * reads the first parameter alone.
+   */
+  setVisible(visible: boolean, switched?: boolean): void
   isVisible(): boolean
   bringToFront(): void
   /**

@@ -24,8 +24,9 @@ package app.zen.chromium
  * hidden as it would have been; the return puts VISIBLE back in one step either way, so a page
  * that never heard it was hidden hears nothing on return, and one that did hears one change.
  *
- * The hide a tab switch brings (OS-39, [BackgroundTabRule]) is held by the same word: an allowed
- * site stays visible to itself behind another tab ONLY while its session is playing video – a
+ * The hide a tab switch brings (OS-39, [BackgroundTabRule]; the tab overview opening over the page
+ * is one, by the lead's ruling on #728) is held by the same word: an allowed site stays visible
+ * to itself behind another tab, or under the overview, ONLY while its session is playing video – a
  * silent allowed site (nothing playing, or paused) is hidden like any other site and its timers
  * throttle; the sound stopping while the tab is behind hides the page then, and a session that
  * starts again while the page is hidden un-hides nothing (the engine's pause stands until the tab

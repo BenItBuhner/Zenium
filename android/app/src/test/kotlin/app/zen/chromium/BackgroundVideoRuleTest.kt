@@ -262,4 +262,26 @@ class BackgroundVideoRuleTest {
         assertEquals(true, hold.onBackground(false))
         assertTrue(hold.engineVisible)
     }
+
+    @Test
+    fun anAllowedSitesPlayingVideoKeepsPlayingUnderTheOverview() {
+        // The overview opens over an allowed site playing video: its hide is a switch (the core's
+        // `switchedAway`, `BackgroundTabRule`'s `switched`) and comes to the same hold as the
+        // switch to another tab – held while the video plays, so the clip plays on under the
+        // overview (ruling 1); closing the overview on it brings one change to nothing new.
+        val hold = BackgroundVideoHold()
+        assertNull(hold.onKeep(BackgroundVideoRule.keepsPlaying(session())))
+        assertNull(hold.onBackground(true))
+        assertTrue(hold.holding)
+        assertTrue(hold.engineVisible)
+        assertNull(hold.onBackground(false))
+        assertTrue(hold.engineVisible)
+        assertFalse(hold.holding)
+        // The same site with its video paused under the overview is hidden there, as any other.
+        val paused = BackgroundVideoHold()
+        assertNull(paused.onKeep(BackgroundVideoRule.keepsPlaying(session(playing = false))))
+        assertEquals(false, paused.onBackground(true))
+        assertFalse(paused.engineVisible)
+        assertEquals(true, paused.onBackground(false))
+    }
 }

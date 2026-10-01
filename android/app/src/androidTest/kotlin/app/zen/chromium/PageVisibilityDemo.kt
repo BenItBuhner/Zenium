@@ -42,8 +42,11 @@ import java.net.URL
  * Home's, the page visible to itself and the clip playing on; silent – hidden like any other site
  * (the allow holds only while the video plays); playing and then paused by the page while behind
  * – hidden the moment the sound stops, and a `play()` while hidden un-hides nothing. Last, the
- * tab overview opened over the page by a real touch and closed again, plain and allowed, as FACT
- * lines of what the page reads under that cover today ([overviewCover]).
+ * tab overview opened over the page by a real touch ([overviewCover]): a switch away from the
+ * page under it, by the lead's ruling on #728 (the core's `switchedAway`, the view's `switched`,
+ * [BackgroundTabRule]) – the page reads hidden under the overview and its clip pauses, back on it
+ * shows it again, another card picked from it (a real touch on the card) leaves it behind, and
+ * the allowed site playing video under it plays on (ruling 1's hold).
  *
  * A `check` that did not hold fails the run at its end; what is measured but not held to goes to
  * the notes as a `FACT`. Every touch injected has an assertion on what it did (the rule in
@@ -325,52 +328,87 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         forgetAllow()
     }
 
-    // --- the tab overview over the page: what the page reads under that cover today -----------------
+    // --- the tab overview over the page: a switch away from it (the lead's ruling on #728) ---------
 
     /**
-     * The overview opened over the playing page by a real touch on the bar's Tabs button and closed
-     * by back; once with the site allowed `background-video` and playing. FACT lines, not checks:
-     * the lead's ruling 2 (the overview counts as switching away, as Chrome's Hub does) waits on a
-     * word from the core the host does not have today – every cover of the chrome hides the view
-     * the same way – so this scene records what the page reads under the cover now.
+     * The overview opened over the playing page by a real touch on the bar's Tabs button. The
+     * lead's ruling on #728: the overview, open or on its way open, is a switch away from the page
+     * under it – the chrome's layout report says so (`LayoutReport.switchedAway`), the core carries
+     * the word on the view's hide (`view.setVisible { switched: true }`), and the host's rule puts
+     * the tab behind ([BackgroundTabRule], `switched`) – so the page reads hidden under the
+     * overview, as Chrome's does behind the Hub, and the engine pauses its clip; back closes the
+     * overview on the page, which reads visible again and resumes; another card picked from the
+     * overview (a real touch on the card) leaves the covered page behind the tab picked; and the
+     * site allowed `background-video`, playing, keeps playing under the overview (ruling 1's hold,
+     * [BackgroundVideoHold]). The cadence under the overview stays a FACT, as under a switch.
      */
     private fun overviewCover() {
-        note("\n9. the tab overview opened over the page (a real touch on the bar's Tabs button) and closed again by back – FACT lines of what the page reads under that cover today; then the same with the site allowed background-video")
+        note("\n9. the tab overview opened over the page (a real touch on the bar's Tabs button): a switch away from the page under it (the lead's ruling on #728) – hidden under it, visible again when it closes on the page, behind after another card is picked; the allowed site playing under it plays on")
         onPage("video")
         play()
-        val before = read() ?: run { check("overview: the page answers before the cover", false); return }
+        val before = read() ?: run { check("overview: the page answers before the overview", false); return }
         note("  in front: ${before.line()}")
         if (!openOverview("overview")) { pause(); return }
         resetGaps()
         SystemClock.sleep(1_000)
-        val a = read() ?: run { check("overview: the page answers under the cover", false); closeOverview("overview"); return }
+        val a = read() ?: run { check("overview: the page answers under the overview", false); closeOverview("overview"); return }
         SystemClock.sleep(3_000)
-        val b = read() ?: run { check("overview: the page answers under the cover a second time", false); closeOverview("overview"); return }
+        val b = read() ?: run { check("overview: the page answers under the overview a second time", false); closeOverview("overview"); return }
         note("  under the overview, +1 s: ${a.line()}; view ${viewState(TAB)}; $OTHER ${viewState(OTHER)}")
         note("  under the overview, +4 s: ${b.line()}; cadence ${rates(a, b)}")
-        fact("overview", "under the overview the page reads \"${b.vis}\" with ${b.vc} change(s); the clip ${if (b.paused == true) "PAUSED" else "PLAYING"} (currentTime ${a.t} -> ${b.t} ms); the host has the tab ${if (behind()) "BEHIND another tab" else "under a cover, not behind"} (holding=${holding()})")
-        fact("overview", "under the overview the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms), requestAnimationFrame at ${"%.1f".format(frameHz(a, b))} frames/s")
+        check("overview: under the overview the page reads document.visibilityState \"hidden\" and heard one visibilitychange (read \"${b.vis}\", ${b.vc} event(s): ${b.changes})", b.vis == "hidden" && b.vc == 1)
+        check("overview: the host has the tab behind the overview (backgroundTab, on the core's switched word) and the hold forwarded the hide to the engine (not holding)", behind() && !holding())
+        check("overview: under the overview the engine paused the clip, as Chrome's does behind the Hub (paused ${b.paused}, pause events ${b.pauses}, currentTime ${a.t} -> ${b.t} ms)", b.paused == true && b.pauses == 1 && !advancing(a, b))
+        check("overview: under the overview requestAnimationFrame stops (${"%.1f".format(frameHz(a, b))} frames/s)", frameHz(a, b) < 1.0)
+        fact("overview", "under the overview the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms) – the page was audible up to the hide (Chrome's 30 s recently-audible rule)")
         closeOverview("overview")
         SystemClock.sleep(2_000)
-        val c = read() ?: run { check("overview: the page answers after the cover", false); return }
+        val c = read() ?: run { check("overview: the page answers after the overview closed", false); return }
         note("  closed: ${c.line()}; view ${viewState(TAB)}")
-        fact("overview", "after the overview closed the page reads \"${c.vis}\" with ${c.vc} change(s) in all; the clip ${if (c.paused == true) "PAUSED" else "PLAYING"} (play events ${c.plays}, pause events ${c.pauses})")
-        // The allowed site, playing, under the overview.
+        check("overview: closed on the page, it reads \"visible\" and heard the second visibilitychange (read \"${c.vis}\", ${c.vc} event(s) in all); the tab is behind nothing", c.vis == "visible" && c.vc == 2 && !behind())
+        check("overview: closed on the page, the engine resumed the clip it paused (paused ${c.paused}, play events ${c.plays})", c.paused == false && c.plays == 2)
+        pause()
+        // Another card picked from the overview: the covered page stays behind the tab picked.
+        onPage("video")
+        play()
+        if (!openOverview("overview-pick")) { pause(); return }
+        val hiddenUnder = poll(5_000) { behind() && read()?.vis == "hidden" }
+        check("overview-pick: under the overview the page is hidden and behind, before the pick", hiddenUnder)
+        val picked = touchTapLabelExpecting("PV|kind:other", "the other tab is in front and the overview is down", prefix = true, timeoutMs = 10_000) {
+            activeCoreTab()?.optString("id") == OTHER && viewVisibility(OTHER) == View.VISIBLE && viewVisibility(TAB) == View.GONE && !overviewUp()
+        }
+        check("overview-pick: a real touch on the other tab's card closes the overview on that tab", picked)
+        if (!picked) { closeOverview("overview-pick"); pause(); return }
+        SystemClock.sleep(1_500)
+        val g = read() ?: run { check("overview-pick: the page behind answers", false); switchTo(TAB); pause(); return }
+        note("  picked $OTHER: ${g.line()}; view ${viewState(TAB)}; $OTHER ${viewState(OTHER)}")
+        check("overview-pick: the covered page is left behind the tab picked – hidden still, no further visibilitychange (read \"${g.vis}\", ${g.vc} event(s)), the clip paused (paused ${g.paused}, pause events ${g.pauses})", g.vis == "hidden" && g.vc == 1 && behind() && g.paused == true && g.pauses == 1)
+        check("overview-pick: tab.activate brings the probe's tab back (VISIBLE)", switchTo(TAB))
+        SystemClock.sleep(2_000)
+        val h = read() ?: run { check("overview-pick: the page answers after the return", false); return }
+        note("  back: ${h.line()}; view ${viewState(TAB)}")
+        check("overview-pick: back in front the page reads \"visible\" with the second visibilitychange, the clip resumed (read \"${h.vis}\", ${h.vc} event(s), paused ${h.paused}, play events ${h.plays})", h.vis == "visible" && h.vc == 2 && !behind() && h.paused == false && h.plays == 2)
+        pause()
+        // The allowed site, playing, under the overview: ruling 1's hold, as behind another tab.
+        onPage("video")
         coreInvoke("permissions.set", allow("allow"))
         play()
         SystemClock.sleep(1_500)
-        check("overview-allowed: the session keeps the video for the view before the cover", keeps())
+        check("overview-allowed: the session keeps the video for the view before the overview", keeps())
         if (!openOverview("overview-allowed")) { pause(); forgetAllow(); return }
         SystemClock.sleep(1_000)
-        val d = read() ?: run { check("overview-allowed: the page answers under the cover", false); closeOverview("overview-allowed"); forgetAllow(); return }
+        val d = read() ?: run { check("overview-allowed: the page answers under the overview", false); closeOverview("overview-allowed"); forgetAllow(); return }
         SystemClock.sleep(3_000)
-        val e = read() ?: run { check("overview-allowed: the page answers under the cover a second time", false); closeOverview("overview-allowed"); forgetAllow(); return }
+        val e = read() ?: run { check("overview-allowed: the page answers under the overview a second time", false); closeOverview("overview-allowed"); forgetAllow(); return }
         note("  allowed, under the overview, +4 s: ${e.line()}; view ${viewState(TAB)}")
-        fact("overview-allowed", "the allowed site playing under the overview reads \"${e.vis}\" with ${e.vc} change(s); the clip ${if (e.paused == true) "PAUSED" else "PLAYING"} (currentTime ${d.t} -> ${e.t} ms); behind=${behind()} holding=${holding()} keeps=${keeps()}")
+        check("overview-allowed: the allowed site playing under the overview stays visible to itself, no visibilitychange (read \"${e.vis}\", ${e.vc} event(s))", e.vis == "visible" && e.vc == 0)
+        check("overview-allowed: the host has the tab behind the overview and the hold keeps the hide from the engine (behind, holding, keeps)", behind() && holding() && keeps())
+        check("overview-allowed: the clip plays on under the overview (paused ${e.paused}, currentTime ${d.t} -> ${e.t} ms)", e.paused == false && advancing(d, e))
         closeOverview("overview-allowed")
         SystemClock.sleep(1_500)
-        val f = read()
-        note("  allowed, closed: ${f?.line() ?: "no answer"}; view ${viewState(TAB)}")
+        val f = read() ?: run { check("overview-allowed: the page answers after the overview closed", false); pause(); forgetAllow(); return }
+        note("  allowed, closed: ${f.line()}; view ${viewState(TAB)}")
+        check("overview-allowed: closed on the page, it is as it was – visible to itself with no visibilitychange, playing, behind nothing (read \"${f.vis}\", ${f.vc} event(s), paused ${f.paused})", f.vis == "visible" && f.vc == 0 && f.paused == false && !behind() && !holding())
         pause()
         forgetAllow()
     }

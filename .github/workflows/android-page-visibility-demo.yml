@@ -7,7 +7,9 @@ name: Android page visibility demo
 # heard, paused and currentTime, the 100 ms interval's and requestAnimationFrame's cadence), then
 # switched back; the control, Home with the clip with sound (the engine's own pause, MED-08's
 # fact a); the OS-08 cases, the site allowed background-video and switched away – playing, silent,
-# and stopping while behind; and the tab overview over the page, as facts. Every reading
+# and stopping while behind; and the tab overview over the page, a switch away from it (the
+# lead's ruling on #728): hidden under it, shown again as it closes, left behind when another
+# card is picked, the allowed site playing on under it. Every reading
 # is a FACT line and every check a PASS/FAIL line of android-w6-s26-page-visibility-notes.txt in
 # the artifact; a FAIL fails the run once the stills are taken. Dispatch-only, like the other
 # demos: it says nothing about a change being correct beyond what the notes record. The build,

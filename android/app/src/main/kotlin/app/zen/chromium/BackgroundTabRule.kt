@@ -14,15 +14,19 @@ package app.zen.chromium
  * hides the WebContents by the WINDOW's visibility alone (`BrowserViewRenderer::IsClientVisible`),
  * so a page view set GONE for a switch stayed visible to its page, playing and un-throttled.
  *
- * The tab host cannot be told why a view leaves the screen – the core's relayout hides a view the
- * same way for a switch and for the chrome's covers (the overview, a sheet's recede, the private
- * lock) – so it reads the switch off what is on screen: a view that has been on screen before,
- * is off it now, while some tab's view IS on it, is behind that tab. Off the screen with no tab on
- * it is a cover, not a switch, and changes nothing: the page under the overview stays visible to
- * itself and keeps playing, as before; picking another card from there hides it then. A tab once
- * behind stays behind until its own view is on screen again – the cover going up over the tab in
- * front (the overview opened after a switch) does not bring the one behind back, where its paused
- * video would resume under the cover. A view that was never on screen (a tab opened in the
+ * The core's relayout hides a view the same way for a switch and for the chrome's covers (a
+ * sheet's recede, the URL field, a prompt, the private lock), so the host reads the switch off
+ * what is on screen: a view that has been on screen before, is off it now, while some tab's view
+ * IS on it, is behind that tab. Off the screen with no tab on it is a cover, not a switch, and
+ * changes nothing: the page under a sheet stays visible to itself and keeps playing, as before.
+ * The one cover that is a switch has the core's word: the tab overview, open or on its way open,
+ * is a switch away from the pages under it (`LayoutReport.switchedAway`, the hide's `switched`;
+ * the lead's ruling on #728), so the page under the overview is behind it as Chrome's is behind
+ * the tab switcher – hidden to itself, its video paused – and comes back when the overview closes
+ * on it; picking another card leaves it behind. A tab once behind stays behind until its own
+ * view is on screen again – the cover going up over the tab in front (the overview opened after a
+ * switch) does not bring the one behind back, where its paused video would resume under the
+ * cover. A view that was never on screen (a tab opened in the
  * background, a tab restored at boot and not yet visited) is left as it is: the boot's restored
  * tabs and a new tab's first show cost one trivial O(N) pass over the views that finds nobody
  * behind and writes no change, and nothing else of those paths changes here. The hold that
@@ -33,20 +37,28 @@ package app.zen.chromium
  */
 object BackgroundTabRule {
     /**
-     * One tab's view as the tab host has it: on screen now, whether it has ever been, and whether
-     * the last pass had it behind another tab.
+     * One tab's view as the tab host has it: on screen now, whether it has ever been, whether
+     * the last pass had it behind another tab, and whether the core named its last hide a switch
+     * (the tab overview over it, `switched`; false for a cover and for a view on screen).
      */
-    class Tab(val tabId: String, val onScreen: Boolean, val shownBefore: Boolean, val behind: Boolean)
+    class Tab(
+        val tabId: String,
+        val onScreen: Boolean,
+        val shownBefore: Boolean,
+        val behind: Boolean,
+        val switched: Boolean = false
+    )
 
     /**
      * The tabs behind another tab on screen after this pass: every view off the screen that was
-     * behind already, and – while some tab's view is on the screen – every view off it that has
-     * been on it before. A view on screen is behind nothing.
+     * behind already or whose hide the core named a switch, and – while some tab's view is on
+     * the screen – every view off it that has been on it before. A view on screen is behind
+     * nothing.
      */
     fun behind(tabs: Collection<Tab>): Set<String> {
         val someOnScreen = tabs.any { it.onScreen }
         return tabs
-            .filter { !it.onScreen && (it.behind || (someOnScreen && it.shownBefore)) }
+            .filter { !it.onScreen && (it.behind || it.switched || (someOnScreen && it.shownBefore)) }
             .mapTo(LinkedHashSet()) { it.tabId }
     }
 }

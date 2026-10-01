@@ -5425,6 +5425,15 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number; cover?: ContentCover } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /**
+   * Set with `contentHidden` when what covers the pages is the tab overview, open or on its way
+   * open (the gesture stage's `overviewInteractive`, on the phone and on the tablet): the hide
+   * is a switch away from the pages under it, not a sheet or a field over them, and the host
+   * tells those pages so (OS-39, the Android op `view.setVisible { tabId, visible, switched?:
+   * true }` → `BackgroundTabRule`). Absent otherwise – on every desktop report, where no
+   * overview exists.
+   */
+  switchedAway?: boolean
   /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
   sidePanel?: Rect | null
 }

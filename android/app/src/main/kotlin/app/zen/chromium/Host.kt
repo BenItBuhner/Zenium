@@ -1271,7 +1271,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
-            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible"), args.bool("switched")); reply(null) }
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
             "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
@@ -2606,8 +2606,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * ([PrivateLock.refusesShow]), so the release brings it back; the chrome's cover is over it
      * meanwhile, and the guard stays up. The chrome's own hide of such a view is the same word as
      * the host's.
+     *
+     * `switched` is the core's reason for a hide: the tab overview over the page, a switch away
+     * from it (`LayoutReport.switchedAway`, OS-39) rather than a sheet or a field over it. It
+     * goes to the views ahead of the hide, which waits for the chrome's frame ([TabHost.switched]).
      */
-    private fun setTabVisible(tabId: String, visible: Boolean) {
+    private fun setTabVisible(tabId: String, visible: Boolean, switched: Boolean = false) {
         val view = tabs.get(tabId)
         if (visible && view != null && privateLock.refusesShow(tabId, Profiles.isPrivate(view.containerId))) {
             Log.d(TAG, "show of private $tabId refused under the lock")
@@ -2621,6 +2625,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (privateLock.forget(tabId)) refreshGuard()
         // Another tab coming on screen under the picture-in-picture window ends it (Chrome's NEW_TAB).
         if (visible) media.onTabShown(tabId)
+        // The hide's reason, recorded now: the hide itself waits for the frame, and may be one
+        // the core sends again for the reason alone, to a view that is gone already.
+        if (!visible) tabs.switched(tabId, switched)
         val ticket = pageVisibility.request(tabId, visible) ?: return
         // What covers the page is up in the chrome already: out of a screen reader's tree from
         // the ask, not from the frame the hide waits for (A11Y-03, [TabHost.hideRequested]).
