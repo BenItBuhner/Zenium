@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Space, Tab } from '../../../shared/types'
 import { BLANK_URL } from '../../../shared/url'
 import type { ZenWindow } from '../../../core/window'
+import { ERROR_AGENT_GROUP } from '../../../core/extensions/api/tabGroups'
 import { TabsApi } from '../extensionApi/tabs'
 import { WindowsApi } from '../extensionApi/windows'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
@@ -31,6 +32,11 @@ interface World {
   ctx: ApiContext
   own: FakeWindow
   torn: FakeWindow
+  /** The two tabs of the own window (Chrome ids 7 and 8). */
+  t1: Tab
+  t2: Tab
+  /** Folders an AI agent session holds, by the core's word. */
+  agentFolders: Set<string>
   /** The window `moveTabToNewWindow` hands back, and what it was asked. */
   tearOffs: Array<{ tabId: string; at: unknown; from: FakeWindow }>
   moves: Array<{ tabId: string; target: unknown; win: FakeWindow }>
@@ -77,6 +83,7 @@ function world({ ownPrivate = false } = {}): World {
   const all = (): Tab[] => [tab, other, ...made]
   const chromeIdOf = (t: Tab): number =>
     t.id === 't1' ? 7 : t.id === 't2' ? 8 : 100 + made.indexOf(t)
+  const agentFolders = new Set<string>()
   const w: Partial<World> = {
     tearOffs: [],
     moves: [],
@@ -84,7 +91,10 @@ function world({ ownPrivate = false } = {}): World {
     newWindows: 0,
     bw,
     own,
-    torn
+    torn,
+    t1: tab,
+    t2: other,
+    agentFolders
   }
   const model = {
     zenWindow: (id: number) => windows.get(id),
@@ -117,6 +127,10 @@ function world({ ownPrivate = false } = {}): World {
   }
   const browser = {
     extensions: { list: () => [{ id: EXT, path: '/ext/' + EXT, allowFileAccess: false }] },
+    agents: {
+      groupOwner: (folderId: string) => (agentFolders.has(folderId) ? { id: 's1' } : undefined),
+      heldBy: () => undefined
+    },
     tabs: {
       createTab,
       // The core's tear-off files the tab in the new window's own space, as `moveTab` does.
@@ -278,5 +292,33 @@ describe('windows.create({ tabId }) and tabs.move across windows', () => {
       'Tabs can only be moved between windows in the same profile.'
     )
     expect(w.moves).toHaveLength(1)
+  })
+
+  it("reorders a tab of an AI agent's folder within its space, and refuses to move it out to another space or into another window's", () => {
+    const w = world()
+    w.t1.spaceId = 'space-1'
+    w.t1.folderId = 'agent'
+    w.t2.spaceId = 'space-1'
+    w.agentFolders.add('agent')
+    // Beside a tab of its own space: a reorder, the folder kept – allowed.
+    w.tabs.handlers.move(w.ctx, 7, { index: 1 })
+    expect(w.moves).toEqual([
+      { tabId: 't1', target: { spaceId: 'space-1', section: 'regular', index: 1 }, win: w.own }
+    ])
+    // Beside a tab of another space: the model would drop the folder – refused, nothing moved.
+    w.t2.spaceId = 'space-2'
+    expect(() => w.tabs.handlers.move(w.ctx, 7, { index: 1 })).toThrow(ERROR_AGENT_GROUP)
+    // Into another window's own space: the same.
+    w.windows.handlers.create(w.ctx, { tabId: 8 })
+    expect(() => w.tabs.handlers.move(w.ctx, 7, { windowId: 2, index: 0 })).toThrow(
+      ERROR_AGENT_GROUP
+    )
+    expect(w.moves).toHaveLength(1)
+    expect(w.t1.spaceId).toBe('space-1')
+    // The agent's session over, the folder is an ordinary one: the move goes through.
+    w.agentFolders.delete('agent')
+    w.tabs.handlers.move(w.ctx, 7, { windowId: 2, index: 0 })
+    expect(w.moves).toHaveLength(2)
+    expect(w.moves[1]).toMatchObject({ tabId: 't1', target: { spaceId: 'local-w2' }, win: w.torn })
   })
 })
