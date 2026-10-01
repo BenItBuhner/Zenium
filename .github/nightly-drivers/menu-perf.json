@@ -2,7 +2,7 @@
   "id": "menu-perf",
   "order": 101,
   "class": "MenuSheetPerfDemo",
-  "shard": "api35",
+  "shard": "api35-b",
   "mirrors": "android-menu-perf.yml",
   "dir": "menu-perf-demo",
   "script": ".github/scripts/android-menu-perf.sh",
@@ -14,5 +14,5 @@
   "setup": ["perfetto-python"],
   "timeout": 2100,
   "estimate": 20,
-  "note": "The workflow's ten cycles against the live page, without the recording; its own report (menu-perf-report.md) is in the findings. Last on the shard: the longest."
+  "note": "The workflow's ten cycles against the live page, without the recording; its own report (menu-perf-report.md) is in the findings. Last on the shard: the longest. Moved from api35 (65.5 of its 68 minutes, past the headroom line) to api35-b when that shard opened (services pass 17, seed #36), with motion-perf: see motion-perf for the choice. Still last on its shard, the longest; its perfetto-python step comes with it (the shard's own list names it too)."
 }
