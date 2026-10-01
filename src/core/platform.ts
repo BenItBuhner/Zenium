@@ -14,6 +14,7 @@ import type {
   AppWindowInfo,
   CertificateDetails,
   ClipboardPeekKind,
+  ClipboardReadItems,
   ColorScheme,
   ContentCover,
   DevtoolsDock,
@@ -1675,6 +1676,13 @@ export interface ClipboardHost {
    * system may toast the read); '' when it holds none.
    */
   read?(): Promise<string>
+  /**
+   * The clipboard's text AND, when its first item carries one, its image as a bounded PNG
+   * (base64), for a page's `navigator.clipboard.read()` behind the `clipboard-read` prompt
+   * (`ClipboardReadService`; MW-38) – one read, one system toast, both representations. Hosts
+   * without it hand the text alone through `readText`; `readText()` never asks for the image.
+   */
+  readItems?(): Promise<ClipboardReadItems>
   /**
    * The clip on the clipboard now was OPENED through the row (the pick, not a reveal): `peek`
    * answers `none` for it until the clipboard changes (Chrome's `SuppressClipboardContent`),

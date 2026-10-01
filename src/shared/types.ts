@@ -2586,6 +2586,29 @@ export interface ClipboardContent {
   text: string
 }
 
+/**
+ * An image read off the clipboard for a page's `navigator.clipboard.read()` (MW-38): its bytes
+ * as PNG, base64. The HOST bounds it – the longer edge at most 2048 px, the PNG at most 8 MiB, a
+ * bigger clip scaled down rather than dropped (`ClipboardPeek.kt`) – and says the encoded
+ * bitmap's size when it knows it.
+ */
+export interface ClipboardImage {
+  png: string
+  width?: number
+  height?: number
+}
+
+/**
+ * The host's whole clipboard read for a page's `read()` (`ClipboardHost.readItems`; on Android
+ * the `clipboard.read` bridge verb with `image: true`): the text as `read` / `readText` have it
+ * ('' for none) and, when the clip's first item carries an image, the image. A host answering
+ * text alone leaves `image` out; a reader takes a missing field as no image.
+ */
+export interface ClipboardReadItems {
+  text: string
+  image?: ClipboardImage
+}
+
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts
 // ---------------------------------------------------------------------------

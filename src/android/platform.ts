@@ -1,5 +1,7 @@
 import type {
   AppLinkState,
+  ClipboardImage,
+  ClipboardReadItems,
   DevicePosture,
   DownloadItem,
   EventName,
@@ -342,6 +344,33 @@ class AndroidAutofillHost implements AutofillHost {
       })
       .catch(() => undefined)
   }
+}
+
+/**
+ * Kotlin's `clipboard.read` reply, checked field by field: the text alone as a string (the verb
+ * asked without `image: true` – the URL bar's row, paste-and-go – and any older host) or
+ * `{ text, image? }` (asked with `image: true`, for a page's `navigator.clipboard.read()`;
+ * `ClipboardPeek.readClip` / `Host.kt`). A reply that is neither reads as no text; a missing or
+ * malformed `image` – no `png` string – as no image, the text kept.
+ */
+export function clipboardReadItemsFrom(raw: unknown): ClipboardReadItems {
+  if (typeof raw === 'string') return { text: raw }
+  if (!raw || typeof raw !== 'object') return { text: '' }
+  const o = raw as Record<string, unknown>
+  const items: ClipboardReadItems = { text: typeof o.text === 'string' ? o.text : '' }
+  const image = clipboardImageFrom(o.image)
+  if (image) items.image = image
+  return items
+}
+
+function clipboardImageFrom(raw: unknown): ClipboardImage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  if (typeof o.png !== 'string' || o.png === '') return undefined
+  const image: ClipboardImage = { png: o.png }
+  if (typeof o.width === 'number' && Number.isFinite(o.width)) image.width = o.width
+  if (typeof o.height === 'number' && Number.isFinite(o.height)) image.height = o.height
+  return image
 }
 
 /** Kotlin's `autofill.status` reply, checked field by field. */
@@ -1570,12 +1599,20 @@ export class AndroidPlatform implements Platform {
         const kind = await bridge.call<string>('clipboard.peek', {})
         return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
       },
-      read: () => bridge.call<string>('clipboard.read', {}),
+      read: async () =>
+        clipboardReadItemsFrom(await bridge.call<unknown>('clipboard.read', {})).text,
       markUsed: () => bridge.send('clipboard.markUsed'),
       // The core's Paste and go / Paste and search (`urlbar.pasteAndGo`, `urlbar.pasteAndSearch`;
       // the field toolbar's item, OMN-23) read the clipboard through this once they run; without
       // it they do nothing. The same read as the row's: the system's toast is its word about it.
-      readText: () => bridge.call<string>('clipboard.read', {})
+      readText: async () =>
+        clipboardReadItemsFrom(await bridge.call<unknown>('clipboard.read', {})).text,
+      // A page's `navigator.clipboard.read()` behind the `clipboard-read` prompt (MW-38): the
+      // same verb asked for the clip's image too (`image: true`) – Kotlin decodes it off the main
+      // thread, bounded (the longer edge 2048 px, the PNG 8 MiB) and PNG-encoded, base64 – in the
+      // one read the system toasts. The row's and paste-and-go's reads never ask for it.
+      readItems: async () =>
+        clipboardReadItemsFrom(await bridge.call<unknown>('clipboard.read', { image: true }))
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
