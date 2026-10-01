@@ -7608,8 +7608,13 @@ export interface Commands {
    * The ambient banner's card is mounted on a surface that draws banners: the prompt counts as
    * shown now and the app's cooldown starts on this word, not on the core's emit (#740). Without
    * it inside the core's grace the prompt counts as undrawn and the cooldown is not spent.
+   * `visible` (absent: true – today's word, the card on screen as it is posted) says whether the
+   * card is on screen: false, a surface ACCEPTED the card but holds it back – the page-edge band
+   * under a cover (a sheet, the keyboard, the open tab overview) – so the core keeps the banner
+   * up, stamps no cooldown yet and waits for the same word with `visible` true (or absent) at
+   * the card's first drawn frame; a cover is not a view (seed #43, the Lead's S3).
    */
-  'webapp.bannerShown': { args: { tabId: string }; result: void }
+  'webapp.bannerShown': { args: { tabId: string; visible?: boolean }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
   /**

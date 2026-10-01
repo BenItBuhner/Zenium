@@ -115,6 +115,28 @@ describe('createModelDoor', () => {
     expect(onEnd).toHaveBeenCalledWith('close')
   })
 
+  it('shown reads what the band draws – the model’s choice: a request posted under a cover is up, not shown, until the cover lifts; the one standing before the cover stays shown (seed #43)', () => {
+    const door = createModelDoor()
+    const standing = door.show(offer({ key: 'reader' }))
+    expect(door.shown(standing)).toBe(true)
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    expect(door.shown(standing)).toBe(true)
+    const waiting = door.show(offer({ key: 'install', title: 'Add App to Home screen' }))
+    // The newer offer replaced the standing one in the model's entries, and waits for the cover.
+    expect(door.up(standing)).toBe(false)
+    expect(door.up(waiting)).toBe(true)
+    expect(door.shown(waiting)).toBe(false)
+    expect(shownBand()).toBeNull()
+    setBandFrame({ front: 't1', ok: true, covered: false })
+    expect(door.shown(waiting)).toBe(true)
+    // Withheld another way – the frame not a band's (a pull has the page) – it is up, not shown.
+    setBandFrame({ front: 't1', ok: false })
+    expect(door.up(waiting)).toBe(true)
+    expect(door.shown(waiting)).toBe(false)
+    door.dismiss(waiting, 'program')
+    expect(door.shown(waiting)).toBe(false)
+  })
+
   it("the model's own ends come back through the door: the clock as timeout, a newer offer as replaced", () => {
     const first = vi.fn()
     const second = vi.fn()
