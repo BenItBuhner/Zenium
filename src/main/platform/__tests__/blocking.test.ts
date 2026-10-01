@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,8 @@ import type { BlockedRequestSource } from '../../../core/blocking/report'
 import type { Decision, RequestContext, RuleSet } from '../../../core/blocking/rules'
 import { RuleSetStore } from '../../../core/blocking/store'
 import type { StoreIO } from '../../../core/platform'
-import type { DecisionStage } from '../blocking'
+import type { DecisionStage, IdleSlot } from '../blocking'
+import type { GhosteryCompileOutput, GhosteryCompileScope } from '../blockingCompile'
 import type { HostRequest } from '../webRequest'
 
 vi.mock('electron', () => ({
@@ -16,6 +17,7 @@ vi.mock('electron', () => ({
 }))
 
 const { BlockingHandler, ElectronBundledLists, GhosteryTextMatcher } = await import('../blocking')
+const { GHOSTERY_COMPILE_TASK } = await import('../blockingCompile')
 
 const dirs: string[] = []
 function tempDir(): string {
@@ -516,15 +518,17 @@ describe('GhosteryTextMatcher', () => {
     const cacheDir = join(tempDir(), 'cache')
     const s = source()
     const { FiltersEngine, Request } = await import('@ghostery/adblocker')
-    const { GHOSTERY_COMPILE_TASK, compileGhosteryEngine } = await import('../blockingCompile')
+    const { compileGhosteryEngine } = await import('../blockingCompile')
     // The compile as the worker runs it, but held until the test lets each one go.
     const gates: Array<() => void> = []
     let fail = false
-    const compile = vi.fn(async (parts: string[]) => {
+    const compile = vi.fn(async (scopes: GhosteryCompileScope[]) => {
       await new Promise<void>((resolve) => gates.push(resolve))
       if (fail) throw new Error('the worker choked')
-      return GHOSTERY_COMPILE_TASK.run({ parts })
+      return GHOSTERY_COMPILE_TASK.run({ scopes })
     })
+    const partsOf = (call: number): string[] =>
+      compile.mock.calls[call]![0].flatMap((scope) => scope.parts)
     const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0, compile)
     s.engine.setRuleSet(textSet('excerpt', EXCERPT))
     matcher.rebuild()
@@ -547,9 +551,7 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.match(ctx('https://a.example/'))).toBeNull()
     // The folded build went out by itself, with the later sets' unpersisted text.
     expect(compile).toHaveBeenCalledTimes(2)
-    expect([...compile.mock.calls[1]![0]].sort()).toEqual(
-      [EXCERPT, '||a.example^', '||b.example^'].sort()
-    )
+    expect([...partsOf(1)].sort()).toEqual([EXCERPT, '||a.example^', '||b.example^'].sort())
     gates.shift()!()
     await new Promise((r) => setTimeout(r, 20))
     expect(matcher.builds).toBe(2)
@@ -561,7 +563,7 @@ describe('GhosteryTextMatcher', () => {
     })
     // The cache holds the worker's bytes as they came: the next start deserialises them.
     expect(Buffer.from(readFileSync(join(cacheDir, 'engine.bin')))).toEqual(
-      Buffer.from(compileGhosteryEngine(compile.mock.calls[1]![0]).engine.serialize())
+      Buffer.from(compileGhosteryEngine(partsOf(1)).engine.serialize())
     )
     expect(
       FiltersEngine.deserialize(new Uint8Array(readFileSync(join(cacheDir, 'engine.bin')))).match(
@@ -585,18 +587,34 @@ describe('GhosteryTextMatcher', () => {
   })
 
   it('hands back the same engine from the worker task as the parse on the spot', async () => {
-    const { FiltersEngine } = await import('@ghostery/adblocker')
-    const { GHOSTERY_COMPILE_TASK, compileGhosteryEngine } = await import('../blockingCompile')
+    const { FiltersEngine, Request } = await import('@ghostery/adblocker')
+    const { compileGhosteryEngine } = await import('../blockingCompile')
     const parts = [EXCERPT, '||a.example^\n||b.example^$third-party']
-    const output = GHOSTERY_COMPILE_TASK.run({ parts })
-    // Moved, not copied: the task names its buffer.
-    expect(GHOSTERY_COMPILE_TASK.transferables!(output)).toEqual([output.engine.buffer])
-    const cloned = structuredClone(output, { transfer: [output.engine.buffer] })
-    expect(output.engine.byteLength).toBe(0)
-    const fromWorker = FiltersEngine.deserialize(cloned.engine)
+    const output = GHOSTERY_COMPILE_TASK.run({
+      scopes: [
+        { partition: null, parts, cache: null },
+        { partition: 'private', parts: ['||p.example^'], cache: null }
+      ]
+    })
+    // One answer for the build's scopes, in order; moved, not copied: the task names the buffers.
+    expect(output.scopes.map((scope) => scope.partition)).toEqual([null, 'private'])
+    expect(GHOSTERY_COMPILE_TASK.transferables!(output)).toEqual([
+      output.scopes[0]!.engine.buffer,
+      output.scopes[1]!.engine.buffer
+    ])
+    const cloned = structuredClone(output, {
+      transfer: output.scopes.map((scope) => scope.engine.buffer)
+    })
+    expect(output.scopes[0]!.engine.byteLength).toBe(0)
+    const fromWorker = FiltersEngine.deserialize(cloned.scopes[0]!.engine)
     const onTheSpot = compileGhosteryEngine(parts)
     expect(Buffer.from(fromWorker.serialize())).toEqual(Buffer.from(onTheSpot.engine.serialize()))
-    expect(cloned.documents).toBe(onTheSpot.documents.lines.join('\n'))
+    expect(cloned.scopes[0]!.documents).toBe(onTheSpot.documents.lines.join('\n'))
+    expect(
+      FiltersEngine.deserialize(cloned.scopes[1]!.engine).match(
+        Request.fromRawDetails({ url: 'https://p.example/', type: 'script' })
+      ).match
+    ).toBe(true)
   })
 
   it('keeps the cached lists while the master switch has every list off', () => {
@@ -705,32 +723,245 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.scopedPartitions).toEqual([])
     expect(matcher.match(from(fp, 'private'))).toBeNull()
     expect(matcher.match(from(ad, 'private'))).toMatchObject({ action: 'block' })
-    expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
+    // The dropped scope's cache files go with it; the unscoped matcher's stay.
+    expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(false)
+    expect(existsSync(join(cacheDir, 'engine.private.json'))).toBe(false)
+    expect(existsSync(join(cacheDir, 'documents.private.txt'))).toBe(false)
+    expect(existsSync(join(cacheDir, 'engine.bin'))).toBe(true)
 
-    // The next start with the switch on and the text on disk only: both scopes deserialise.
+    // The next start with the switch on and the text on disk only: the unscoped scope
+    // deserialises, the private one (its cache gone with the switch off) compiles again from
+    // the store's text.
     const s2 = source()
     s2.engine.setRuleSet(
       { id: 'easylist', source: 'filter-list', priority: 1, enabled: true, updatedAt: 1000 },
       { persisted: true, hasFilterText: true, filterCount: 1 }
     )
-    s2.engine.setRuleSet(
-      {
-        id: 'ubo-privacy',
-        source: 'filter-list',
-        priority: 1,
-        enabled: true,
-        updatedAt: 1000,
-        partitions: ['private']
-      },
-      { persisted: true, hasFilterText: true, filterCount: 1 }
-    )
+    s2.engine.setRuleSet({
+      ...textSet('ubo-privacy', '||fingerprint.example^'),
+      partitions: ['private']
+    })
     const second = new GhosteryTextMatcher(s2, cacheDir, 'v1', 0)
     second.rebuild()
     expect(second.fromCache).toBe(true)
+    expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
     expect(second.scopedPartitions).toEqual(['private'])
     expect(second.match(from(fp, 'private'))).toMatchObject({ action: 'block' })
     expect(second.match(from(fp, 'default'))).toBeNull()
     expect(second.match(from(ad, 'default'))).toMatchObject({ action: 'block' })
+  })
+
+  /** A compile the test lets go by hand, and an idle slot the test fires by hand. */
+  function handDriven(): {
+    compile: Mock<(scopes: GhosteryCompileScope[]) => Promise<GhosteryCompileOutput>>
+    release(call?: number): Promise<void>
+    slot: IdleSlot
+    fireSlot(): void
+    slots: number
+  } {
+    const gates: Array<() => void> = []
+    const compile = vi.fn(async (scopes: GhosteryCompileScope[]) => {
+      await new Promise<void>((resolve) => gates.push(resolve))
+      // Without the cache targets: the stand-in worker never writes, so the disk holds what a
+      // test put there and nothing else.
+      return GHOSTERY_COMPILE_TASK.run({
+        scopes: scopes.map((scope) => ({ ...scope, cache: null }))
+      })
+    })
+    const pending: Array<() => void> = []
+    const state = {
+      compile,
+      release: async (call = 0): Promise<void> => {
+        gates[call]!()
+        await new Promise((r) => setTimeout(r, 0))
+        await new Promise((r) => setImmediate(r))
+      },
+      slot: ((fn: () => void) => {
+        pending.push(fn)
+        state.slots++
+        return () => {
+          const at = pending.indexOf(fn)
+          if (at >= 0) pending.splice(at, 1)
+        }
+      }) as IdleSlot,
+      fireSlot: (): void => {
+        for (const fn of pending.splice(0)) fn()
+      },
+      slots: 0
+    }
+    return state
+  }
+  it('answers from the previous snapshot until the adopt: between a rebuild and its idle slot, every request sees the old engine (W8-P1 pin)', async () => {
+    const s = source()
+    const h = handDriven()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0, h.compile, h.slot)
+    s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+    matcher.rebuild()
+    await h.release(0)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(matcher.ready).toBe(false)
+    h.fireSlot()
+    expect(matcher.ready).toBe(true)
+    expect(matcher.compiledInBackground).toBe(1)
+    const old = (): void => {
+      expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+      expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+      expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+        action: 'block'
+      })
+    }
+    old()
+
+    // A set lands and the rebuild goes out: the old snapshot answers while the worker compiles …
+    s.engine.setRuleSet(textSet('a', '||a.example^\n@@||phish.example^$document'))
+    matcher.rebuild()
+    expect(h.compile).toHaveBeenCalledTimes(2)
+    old()
+    // … while its bytes wait for the idle slot …
+    await h.release(1)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(matcher.builds).toBe(2)
+    old()
+    // … and the one assignment of the slot switches every answer at once.
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(2)
+    expect(matcher.ready).toBe(true)
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+      action: 'allow'
+    })
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+  })
+
+  it('compiles the scopes of one build in one message, one after the other (#716 nit)', async () => {
+    const s = source()
+    const h = handDriven()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0, h.compile, h.slot)
+    s.engine.setRuleSet(textSet('easylist', '||ads.example^'))
+    s.engine.setRuleSet({ ...textSet('ubo-privacy', '||fp.example^'), partitions: ['private'] })
+    matcher.rebuild()
+    expect(h.compile).toHaveBeenCalledTimes(1)
+    const scopes = h.compile.mock.calls[0]![0]
+    expect(scopes.map((scope) => scope.partition)).toEqual([null, 'private'])
+    expect(scopes[0]!.parts).toEqual(['||ads.example^'])
+    expect([...scopes[1]!.parts].sort()).toEqual(['||ads.example^', '||fp.example^'])
+    expect(scopes.map((scope) => scope.cache?.fingerprint)).toEqual([
+      'easylist:1000:1',
+      'easylist:1000:1|ubo-privacy:1000:1'
+    ])
+    await h.release(0)
+    expect(matcher.waitingScopes).toBe(2)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(2)
+    expect(matcher.scopedPartitions).toEqual(['private'])
+    expect(matcher.match(ctx('https://fp.example/', { partition: 'private' }))).toMatchObject({
+      action: 'block'
+    })
+    expect(matcher.match(ctx('https://fp.example/', { partition: 'default' }))).toBeNull()
+  })
+
+  it('folds N flips during a compile into one follow-up build of the final state; a flip back to a cached state adopts nothing new (W8-P1 pins)', async () => {
+    const cacheDir = join(tempDir(), 'cache')
+    const seed = source()
+    seed.engine.setRuleSet(textSet('excerpt', EXCERPT))
+    // The disk holds the excerpt alone (a start that parsed on the spot).
+    new GhosteryTextMatcher(seed, cacheDir, 'v1', 0).rebuild()
+    const s = source()
+    const h = handDriven()
+    const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0, h.compile, h.slot)
+    // Subscribed before the sets load, as in the app (the matcher sees every set before a flip).
+    const stop = matcher.start()
+    s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+    s.engine.setRuleSet(textSet('a', '||a.example^', false))
+    s.engine.setRuleSet(textSet('b', '||b.example^', false))
+    await new Promise((r) => setTimeout(r, 5))
+    expect(matcher.builds).toBe(1)
+    expect(matcher.fromCache).toBe(true)
+    expect(h.compile).not.toHaveBeenCalled()
+
+    // A flip sends a compile out; four more while it runs: ONE follow-up, reading the sets as
+    // they stand at its start – the final state – never an intermediate one.
+    s.engine.setEnabled('a', true)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(h.compile).toHaveBeenCalledTimes(1)
+    s.engine.setEnabled('b', true)
+    s.engine.setEnabled('a', false)
+    s.engine.setEnabled('b', false)
+    s.engine.setEnabled('b', true)
+    expect(h.compile).toHaveBeenCalledTimes(1)
+    await h.release(0)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(matcher.builds).toBe(2)
+    expect(h.compile).toHaveBeenCalledTimes(2)
+    expect(h.compile.mock.calls[1]![0][0]!.cache?.fingerprint).toBe('b:1000:1|excerpt:1000:10')
+    expect([...h.compile.mock.calls[1]![0][0]!.parts].sort()).toEqual(
+      [EXCERPT, '||b.example^'].sort()
+    )
+    await h.release(1)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(matcher.builds).toBe(3)
+    // The first compile's bytes, still waiting, were replaced by the follow-up's: one deserialise.
+    expect(matcher.superseded).toBe(1)
+    expect(matcher.waitingScopes).toBe(1)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(1)
+    expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+    expect(matcher.ready).toBe(true)
+
+    // A flip away and back while nothing is compiling: the build that follows finds the current
+    // matcher carries the sets' fingerprint already, and neither compiles nor adopts.
+    s.engine.setEnabled('a', true)
+    s.engine.setEnabled('a', false)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(matcher.builds).toBe(4)
+    expect(h.compile).toHaveBeenCalledTimes(2)
+    expect(matcher.compiledInBackground).toBe(1)
+
+    // Flips during a compile that end at the state the disk cache holds (the excerpt alone):
+    // the one follow-up hits the cache and deserialises from disk; the worker is not asked, and
+    // the in-flight compile's bytes are dropped unread.
+    s.engine.setEnabled('a', true)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(h.compile).toHaveBeenCalledTimes(3)
+    s.engine.setEnabled('b', false)
+    s.engine.setEnabled('a', false)
+    await h.release(2)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(h.compile).toHaveBeenCalledTimes(3)
+    expect(matcher.builds).toBe(6)
+    expect(matcher.fromCache).toBe(true)
+    expect(matcher.compiledInBackground).toBe(1)
+    expect(matcher.waitingScopes).toBe(0)
+    expect(matcher.match(ctx('https://b.example/'))).toBeNull()
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+    expect(matcher.ready).toBe(true)
+    stop()
+  })
+
+  it("supersedes waiting bytes with a newer build's: one deserialise, the newer (W8-P1 pin)", async () => {
+    const s = source()
+    const h = handDriven()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0, h.compile, h.slot)
+    s.engine.setRuleSet(textSet('a', '||a.example^'))
+    matcher.rebuild()
+    await h.release(0)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(h.slots).toBe(1)
+    // The next build goes out and comes back before the slot fires.
+    s.engine.setRuleSet(textSet('b', '||b.example^'))
+    matcher.rebuild()
+    await h.release(1)
+    expect(matcher.superseded).toBe(1)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(h.slots).toBe(1)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(1)
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.ready).toBe(true)
   })
 
   it('keeps a partition an enabled text set stands aside from out of that set (PS-49)', () => {
