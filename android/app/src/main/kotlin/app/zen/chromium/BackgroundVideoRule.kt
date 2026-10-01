@@ -39,13 +39,20 @@ object BackgroundVideoRule {
 }
 
 /**
- * One tab's view between the system's word on its window and the engine's: the window visibility
- * the system dispatched last, the one the engine heard last, and whether a hide is being held.
- * [onWindow] and [onKeep] return the visibility to forward to the WebView, or null for nothing.
+ * One tab's view between the words on its visibility and the engine's: the window visibility the
+ * system dispatched last, whether the tab host has the tab behind another tab on screen
+ * ([BackgroundTabRule], OS-39), the visibility the engine heard last, and whether a hide is being
+ * held. The engine is owed VISIBLE while the window is on screen and the tab is not behind
+ * another, GONE otherwise – the one word `AwContents` shows or hides the WebContents by – and a
+ * hide of either kind is held while the session keeps the video playing. [onWindow], [onBackground]
+ * and [onKeep] return the visibility to forward to the WebView, or null for nothing.
  */
 class BackgroundVideoHold {
     /** The window is on screen by the system's last word. */
     var windowVisible = true
+        private set
+    /** The tab is behind another tab on screen by the tab host's last word (a switch left it there). */
+    var background = false
         private set
     /** The window is on screen by the engine's last word. */
     var engineVisible = true
@@ -54,31 +61,54 @@ class BackgroundVideoHold {
     var keep = false
         private set
 
-    /** A hide the system dispatched is being held from the engine. */
-    val holding: Boolean get() = !windowVisible && engineVisible
+    /** What the engine is owed by the window and the tab host together. */
+    private val wanted: Boolean get() = windowVisible && !background
+
+    /** A hide – the window's or a tab switch's – is being held from the engine. */
+    val holding: Boolean get() = !wanted && engineVisible
 
     /**
      * The system said the window is `visible` (`onWindowVisibilityChanged`): what to tell the engine –
-     * the same, or null to hold a hide while the session keeps the video playing.
+     * VISIBLE whenever it is owed (a show goes through as it always has, heard before or not), GONE
+     * for a hide the engine has not heard (the window's, or the attach of a tab already behind
+     * another: the system's VISIBLE at attach is answered with the word the tab is owed), or null
+     * to hold a hide while the session keeps the video playing.
      */
     fun onWindow(visible: Boolean): Boolean? {
         windowVisible = visible
-        if (!visible && keep) return null
-        engineVisible = visible
-        return visible
+        return settle(repeatShow = visible)
+    }
+
+    /**
+     * The tab host's word changed: the tab is behind another tab on screen (`value`), or back on it.
+     * A hide goes to the engine unless the session holds it; the return goes through once the
+     * window is on screen and the engine heard the hide.
+     */
+    fun onBackground(value: Boolean): Boolean? {
+        if (background == value) return null
+        background = value
+        return settle()
     }
 
     /**
      * The session's word changed: a held hide goes through the moment the video no longer keeps
-     * playing with the window still away (false to forward); nothing otherwise.
+     * playing with the tab still away (false to forward); nothing otherwise – yes never un-hides
+     * a page the engine already has hidden (its pause stands until the return, as Chrome's does).
      */
     fun onKeep(value: Boolean): Boolean? {
         if (keep == value) return null
         keep = value
-        if (!value && holding) {
-            engineVisible = false
-            return false
+        return if (value) null else settle()
+    }
+
+    private fun settle(repeatShow: Boolean = false): Boolean? {
+        if (wanted) {
+            if (engineVisible && !repeatShow) return null
+            engineVisible = true
+            return true
         }
-        return null
+        if (!engineVisible || keep) return null
+        engineVisible = false
+        return false
     }
 }
