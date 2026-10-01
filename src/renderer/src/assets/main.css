@@ -3263,7 +3263,7 @@
     }
   }
   .zen-toast {
-    animation: zen-toast-in 180ms var(--zen-ease);
+    animation: zen-toast-in var(--zen-motion-message) var(--zen-ease);
   }
   /* The sidebar's toast under reduced motion: the rise goes, a 120 ms fade in place stays (§11.3). */
   @media (prefers-reduced-motion: reduce) {
@@ -3724,11 +3724,12 @@
    * so the sentence sits on two lines inside its 288 (16 of padding a side, Chrome's own
    * `textbubble_text.xml` l.17–23); `--v2-accent` filled with `--v2-on-accent` ink and no
    * hairline – the fill is the edge, a tip reads as a tip and not a toast – under the panel
-   * shadow, the body 15/400 (`.zen-message`), the same tokens in dark. Motion is Chrome's:
-   * up over 200 ms as alpha 0 → 1 with 10 px of travel out of the bar's band
-   * (`textbubble_in.xml`; `--zen-hint-from` turns it round under a top-docked bar), out on a
-   * 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade §11.3
-   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down and
+   * shadow, the body 15/400 (`.zen-message`), the same tokens in dark. Motion is Chrome's shape
+   * on the house's tokens: up on the pop (motion spec §2, §10 (a): 180 ms on `--zen-ease`, where
+   * Chrome's `textbubble_in.xml` runs 200 ms linear) as alpha 0 → 1 with 10 px of travel out of
+   * the bar's band (`--zen-hint-from` turns it round under a top-docked bar), out on the
+   * message's 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade
+   * §11.3 keeps, declared below `!important`. No clock: the first touch anywhere takes it down and
    * passes through to what it touched (§9.33) – and a finger on the bubble touched the bubble:
    * it stays the touch's target through its fade (`.zen-message`'s `pointer-events: auto`,
    * kept under `[data-leaving]`), so the tap that took it down does not land on what the
@@ -3749,7 +3750,7 @@
     border: 0;
     background: var(--v2-accent);
     color: var(--v2-on-accent);
-    animation: zen-hint-bubble-in 200ms linear;
+    animation: zen-hint-bubble-in var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-hint-bubble[data-edge='bottom'] {
     bottom: 0;
@@ -3991,7 +3992,7 @@
   .zen-pill-ghost {
     background: var(--zen-bg-solid);
     box-shadow: var(--zen-shadow-1);
-    transition: box-shadow 200ms var(--zen-ease);
+    transition: box-shadow var(--zen-motion-state) var(--zen-ease);
     will-change: transform;
   }
   .zen-pill-ghost[data-lifted='true'] {
@@ -4154,7 +4155,7 @@
     corner-shape: var(--zen-corner);
     transition:
       background var(--zen-motion-state) var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+      box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   .zen-space-row:active {
     background: var(--zen-element-bg);
@@ -4318,7 +4319,7 @@
     transition:
       opacity var(--zen-motion-state) var(--zen-ease),
       transform var(--zen-motion-state) var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+      box-shadow var(--zen-motion-state) var(--zen-ease);
     will-change: transform;
   }
   .zen-overview-ghost[data-landing] {
@@ -4338,7 +4339,7 @@
     isolation: isolate;
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
-    transition: box-shadow 200ms var(--zen-ease);
+    transition: box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The tint is a layer of its own, under the header and the cards, so that it can fade on its
@@ -7595,8 +7596,8 @@
 }
 [data-fade-axis] {
   transition:
-    --zen-fade-start 180ms var(--zen-ease),
-    --zen-fade-end 180ms var(--zen-ease);
+    --zen-fade-start var(--zen-motion-state) var(--zen-ease),
+    --zen-fade-end var(--zen-motion-state) var(--zen-ease);
 }
 [data-fade-axis='y'] {
   -webkit-mask-image: linear-gradient(
@@ -8167,8 +8168,8 @@
     right: 0;
     margin: 0 auto;
     width: min(320px, 100% - 16px);
-    /* The toast's rise, the one number the sidebar's `.zen-toast` runs it at. */
-    animation: zen-toast-in 180ms var(--zen-ease);
+    /* The toast's rise on the message token, the one the sidebar's `.zen-toast` runs it on. */
+    animation: zen-toast-in var(--zen-motion-message) var(--zen-ease);
   }
   /* One line (§9.33): the line never breaks; a folder's long name ends in an ellipsis. */
   .zen-capture-toast .zen-message-text {
@@ -8545,7 +8546,7 @@
     transition:
       background-color var(--zen-motion-state) var(--zen-ease),
       transform var(--zen-motion-state) var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+      box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   /* The one hover left on the media query: `newTabSharedCss` cuts this rule into the scriptless
      `zen://newtab` document, whose root never carries the chrome's live `data-hover`. */
@@ -10643,7 +10644,7 @@
     -webkit-user-select: none;
     transition:
       background var(--zen-motion-state) var(--zen-ease),
-      box-shadow 200ms var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease),
       opacity var(--zen-motion-state) var(--zen-ease),
       scale var(--zen-motion-state) var(--zen-ease);
   }

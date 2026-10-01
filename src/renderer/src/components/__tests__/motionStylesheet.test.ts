@@ -25,11 +25,6 @@ import { MOTION_MESSAGE_MS, MOTION_POP_MS, MOTION_STATE_MS } from '@renderer/lib
  *     text (`V2TokensPinTest.kt`, `TabHoverCardSpecTest.kt`); each is tagged with its token and
  *     held to the token's value here, so the two faces cannot drift apart. They fold into the
  *     face the day those pins read `var(--zen-motion-*)`.
- *   - A value that is not its class's token. §10 (a) rules the class and the value together
- *     (a shadow's 200 → 120, the hint bubble's linear 200 → the pop on `--zen-ease`, a toast's
- *     travel the message token); W8-M1b changes no value, so a declaration whose number is not
- *     its class's stays digits, listed with the clause that moves it and the token it goes to in
- *     W8-M1c, the sweep that makes those conversions.
  *   - Not a motion. A progress fill's width catching up with its value is a progress (§2's one
  *     linear place), none of the three classes; its number is its own.
  */
@@ -84,48 +79,6 @@ const LEFT: Record<string, Left> = {
     times: ['120ms'],
     face: 'state',
     why: 'the sheet chassis’ reduced-motion fade (§0.5) at the state token’s value; digits because Android’s V2TokensPinTest.kt reads the whole declaration `transition: opacity 120ms var(--zen-ease) !important;` (PromptSheetSpec.FADE_MS)'
-  },
-  // A value that is not its class's token: §10 (a)'s conversion, seeded as W8-M1c (the next
-  // sweep); each names the token it goes to there.
-  '.zen-toast': {
-    times: ['180ms'],
-    why: '`animation: zen-toast-in` 180ms today → `var(--zen-motion-message)` (200) in W8-M1c: a toast’s travel is the message token (§1 / §2), ruled with its class by §10 (a)'
-  },
-  '.zen-capture-toast': {
-    times: ['180ms'],
-    why: '`animation: zen-toast-in` 180ms today → `var(--zen-motion-message)` (200) in W8-M1c: the capture toast rises as `.zen-toast` does, a toast’s travel the message token (§1 / §2, §10 (a))'
-  },
-  '.zen-hint-bubble': {
-    times: ['200ms'],
-    why: '`animation: zen-hint-bubble-in` 200ms `linear` today → `var(--zen-motion-pop)` (180) on `var(--zen-ease)` in W8-M1c: the hint bubble’s linear 200 in becomes the pop on --zen-ease (§10 (a), §2)'
-  },
-  '.zen-pill-ghost': {
-    times: ['200ms'],
-    why: '`transition: box-shadow` 200ms today → `var(--zen-motion-state)` (120) in W8-M1c: the carried pill’s level swap is a transition on a control’s shadow, the state token (§10 (a))'
-  },
-  '.zen-space-row': {
-    times: ['200ms'],
-    why: 'the `transition` list’s `box-shadow` 200ms today → `var(--zen-motion-state)` (120) in W8-M1c: a space row’s lift shadow is a transition on a control’s shadow, the state token (§10 (a))'
-  },
-  '.zen-overview-ghost': {
-    times: ['200ms'],
-    why: 'the `transition` list’s `box-shadow` 200ms today → `var(--zen-motion-state)` (120) in W8-M1c: the carried card’s lift shadow is a transition on a control’s shadow, the state token (§10 (a))'
-  },
-  '.zen-group': {
-    times: ['200ms'],
-    why: '`transition: box-shadow` 200ms today → `var(--zen-motion-state)` (120) in W8-M1c: a group card’s shadow is a transition on a control’s shadow, the state token (§10 (a))'
-  },
-  '.zen-ntp-tile': {
-    times: ['200ms'],
-    why: 'the `transition` list’s `box-shadow` 200ms today → `var(--zen-motion-state)` (120) in W8-M1c: a new tab page tile’s shadow is a transition on a control’s shadow, the state token (§10 (a))'
-  },
-  '.zen-bar-row': {
-    times: ['200ms'],
-    why: 'the `transition` list’s `box-shadow` 200ms today → `var(--zen-motion-state)` (120) in W8-M1c: a bookmarks bar row’s shadow is a transition on a control’s shadow, the state token (§10 (a))'
-  },
-  '[data-fade-axis]': {
-    times: ['180ms', '180ms'],
-    why: '`transition: --zen-fade-start, --zen-fade-end` 180ms and 180ms today → `var(--zen-motion-state)` (120) for both in W8-M1c: the scroll edges’ fade lengths easing to a new edge are a transition on the element’s own property, the state token (§10 (a))'
   },
   // Not a motion.
   '.zen-settings-progress > div': {
