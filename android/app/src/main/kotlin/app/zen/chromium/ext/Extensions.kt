@@ -380,6 +380,11 @@ class Extensions(private val host: Host) {
         }
     ) { userAgent }
     /**
+     * The `webRequest` report of an extension page's own subresource loads, and their relay for
+     * the response stage ([PageRequestReport], compat round 27): [interceptPageRequest].
+     */
+    private val pageRequests = PageRequestReport()
+    /**
      * The engine's last decisions on the tabs' requests ("allow|block|redirect|upgrade type
      * <micros>us <cpuMicros>cpu url": the wall-clock time `EngineSnapshot.decide` took and the
      * CPU time the thread spent in it, `?cpu` where the platform cannot tell), kept while `debug`
@@ -2185,6 +2190,43 @@ class Extensions(private val host: Host) {
             }
         }
         return null
+    }
+
+    /**
+     * An EXTENSION WEBVIEW's request ([ExtensionWebView.Client.shouldInterceptRequest], the
+     * intercept thread): answered as [intercept] answers it and – while an extension listens for
+     * `webRequest` – reported as the page's own load ([PageRequestReport], compat round 27,
+     * R27-2), the request stage as `ext.request` with the served origin as the `initiator` and
+     * no tab, the response stage as `ext.response` while a response-stage listener exists
+     * (`ext.observeResponses`, the engine's switch the tab path's media relay turns on too):
+     * whole where the host answered – the extension's own file, the CORS proxy's reply, a
+     * refusal – and from the relay otherwise, which fetches the load the host would have left to
+     * WebView and streams it on. Without a listener for the response stage the request goes
+     * back to WebView as before. Chrome's events for an extension page's requests are the
+     * extension's own to see (`web_request_permissions.cc`); the runtime addresses them so.
+     */
+    fun interceptPageRequest(request: WebResourceRequest, page: Served, backgroundDocument: Boolean): WebResourceResponse? {
+        val answer = intercept(request, null, page, backgroundDocument)
+        if (!observeRequests) return answer
+        val load = PageRequestReport.Load(request.url.toString(), request.method ?: "GET", request.isForMainFrame, request.requestHeaders ?: emptyMap())
+        if (!PageRequestReport.reports(load)) return answer
+        val origin = "https://${page.id}$ORIGIN_SUFFIX"
+        val type = PageRequestReport.typeOf(load)
+        val requestId = requestIds.getAndIncrement().toString()
+        val sink = PageRequestReport.Sink { name, payload -> main.post { chromeEvent(name, payload) } }
+        sink.event(PageRequestReport.REQUEST, PageRequestReport.request(load, load.url, origin, requestId, type))
+        val observeResponses = host.blocking.observeResponses
+        if (answer != null) {
+            if (observeResponses) {
+                for (payload in PageRequestReport.answered(requestId, load, type, answer.statusCode, answer.reasonPhrase, answer.responseHeaders, answer.mimeType, answer.encoding)) {
+                    sink.event(PageRequestReport.RESPONSE, payload)
+                }
+            }
+            return answer
+        }
+        if (!observeResponses) return null
+        val relayed = pageRequests.relay(load, origin, type, requestId, { requestIds.getAndIncrement().toString() }, userAgent, sink) ?: return null
+        return WebResourceResponse(relayed.mime, relayed.charset, relayed.status, relayed.reason, relayed.headers, relayed.body)
     }
 
     /**

@@ -83,7 +83,11 @@ import {
 } from '@core/extensions/searchProvider'
 import { stripJsonComments } from '@core/extensions/manifest'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
-import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
+import {
+  extensionUrl,
+  parseExtensionUrl,
+  type RegisteredContentScript
+} from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
 import {
   foldFilesFor,
@@ -3055,6 +3059,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Pages, popups and content scripts get it now; the background gets it when it runs, has it
    * held while it starts (its listeners register as its script runs, ahead of `ready`), and is
    * woken for it when it is stopped and persisted a listener for the event.
+   *
+   * A request an extension's own page made – its `initiator` the extension's origin, as the
+   * extension view's intercept reports its subresource loads (`Extensions.interceptPageRequest`,
+   * compat round 27 R27-2) – is that extension's alone: Chrome lets an extension see a
+   * subresource request when it has host access to the request's initiator, and an extension
+   * has that access to its own origin and never to another extension's
+   * (`WebRequestPermissions::CanExtensionAccessURL`, `web_request_permissions.cc`).
    */
   private emitRequest(
     tabId: string | null,
@@ -3068,6 +3079,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       tabId: details.tabId,
       windowId: WINDOW_ID
     }
+    const owner = details.initiator ? (parseExtensionUrl(details.initiator)?.id ?? null) : null
     const matching = (endpointId: string): Array<[number, RequestListener]> =>
       this.requestListenersOf(endpointId, key).filter(([, listener]) =>
         requestFilterMatches(listener.filter, probe)
@@ -3084,6 +3096,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         })
     }
     for (const [id, ext] of this.extensions) {
+      if (owner !== null && id !== owner) continue
       if (tabId !== null && !this.sees(ext, tabId)) continue
       for (const endpoint of this.router.of(id)) {
         if (endpoint.context !== 'background') send(endpoint.id)
