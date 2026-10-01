@@ -897,9 +897,6 @@ abstract class DemoHarness(
      */
     protected fun awaitOverview(timeoutMs: Long = 5_000): Rect? = waitFor(OVERVIEW_LABEL, timeoutMs)
 
-    /** The overview has gone (its landmark unmounts with it); false when it still stands after `timeoutMs`. */
-    protected fun awaitOverviewGone(timeoutMs: Long = 5_000): Boolean = waitForGone(OVERVIEW_LABEL, timeoutMs)
-
     /**
      * The overview's title – the space switcher of the cleanup spec's §1 ("● Work · 6 tabs", a
      * button whose tap opens the Spaces sheet; in the private view a heading) – as its accessible

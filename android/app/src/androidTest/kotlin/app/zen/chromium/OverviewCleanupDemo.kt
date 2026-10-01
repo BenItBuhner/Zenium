@@ -326,7 +326,7 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
             awaitUntil(6_000) { overviewMenuRows().isEmpty() }
             SystemClock.sleep(500)
             back()
-            expect("back from the private view the overview opened on leaves the overview (its own state, as from the regular view)", awaitOverviewGone(6_000))
+            expect("back from the private view the overview opened on leaves the overview (its own state, as from the regular view)", awaitUntil(6_000) { !inDom(".zen-overview") })
             SystemClock.sleep(1_000)
             // The rows switch the views; the PICKED private view's back returns to the regular view.
             openOverview()
