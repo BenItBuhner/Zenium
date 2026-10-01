@@ -3,6 +3,7 @@ import type {
   AgentMode,
   AgentPromptKind,
   Folder,
+  HostCapabilities,
   Space,
   Tab
 } from '../../shared/types'
@@ -1965,6 +1966,20 @@ const browserDialogPolicy: AgentTool = {
   }
 }
 
+/**
+ * How a page dialog is answered on this host, for an agent that asked `browser_respond_prompt`
+ * about one: names only the tools the host lists (`AgentTool.needs`).
+ */
+function pageDialogsAnsweredBy(
+  caps: Pick<HostCapabilities, 'agentDialogs' | 'agentDialogPolicy'>
+): string {
+  if (caps.agentDialogs)
+    return `A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog${caps.agentDialogPolicy ? ', or ahead of time by browser_dialog_policy' : ''}.`
+  return caps.agentDialogPolicy
+    ? 'A page dialog (alert, confirm, prompt) is answered by this browser – from your dialog policy (browser_dialog_policy) where you set one, else by default – and reported in a "Notice:" line.'
+    : 'A page dialog (alert, confirm, prompt) is answered by this browser, not by you.'
+}
+
 /** The prompt `browser_respond_prompt` / `browser_file_upload` answer: the named one, or the tab's only one. */
 function promptToAnswer(
   ctx: ToolContext,
@@ -2091,7 +2106,7 @@ const browserRespondPrompt: AgentTool = {
     const prompt = promptToAnswer(ctx, args)
     if (!prompt)
       return textError(
-        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog, or ahead of time by browser_dialog_policy.`
+        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. ${pageDialogsAnsweredBy(ctx.browser.platform.capabilities)}`
       )
     const action = need(args, 'action', `one of ${Object.keys(prompt.actions).join(', ')}`)
     const answer: AgentPromptAnswer = { ...args, action }

@@ -672,6 +672,29 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     expect(later.service.instructions(l)).toContain(
       'else by default: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave'
     )
+
+    // browser_respond_prompt, asked about a page dialog, names only the tools its host lists
+    // (#766's known gap: Android was told to use browser_handle_dialog, which it does not list).
+    const noPrompt = async (agentDialogs: boolean, agentDialogPolicy: boolean): Promise<string> => {
+      const fake = browser({ agentDialogs, agentDialogPolicy, agentPrompts: ['permission'] })
+      const { s } = await named(fake, 'Invoice reconciliation')
+      await openTab(fake, s, 'https://billing.test')
+      const res = await fake.call(s, 'browser_respond_prompt', { action: 'allow' })
+      expect(res.isError).toBe(true)
+      return textOf(res)
+    }
+    expect(await noPrompt(true, true)).toContain(
+      'A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog, or ahead of time by browser_dialog_policy.'
+    )
+    expect(await noPrompt(true, false)).toContain(
+      'A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog.'
+    )
+    expect(await noPrompt(false, true)).toContain(
+      'answered by this browser – from your dialog policy (browser_dialog_policy) where you set one, else by default – and reported in a "Notice:" line.'
+    )
+    expect(await noPrompt(false, false)).toContain(
+      'A page dialog (alert, confirm, prompt) is answered by this browser, not by you.'
+    )
   })
 
   it('set names the policy in force, marks the kinds left to their defaults, and clear says what went', async () => {
