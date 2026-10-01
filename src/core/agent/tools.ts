@@ -1,9 +1,16 @@
-import type { AgentMode, AgentPromptKind, Folder, Space, Tab } from '../../shared/types'
+import type {
+  AgentDialogPolicy,
+  AgentMode,
+  AgentPromptKind,
+  Folder,
+  Space,
+  Tab
+} from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import { folderTabs } from '../model'
-import { describeDialog } from '../pageDialogs'
+import { describeDialog, dialogSite } from '../pageDialogs'
 import type { AgentCapture, InputModifier, TabView } from '../platform'
 import {
   deepSnapshot,
@@ -62,10 +69,11 @@ export interface AgentTool {
   /** Runs arbitrary JavaScript – hidden when scripts are disabled in Settings. */
   scripting?: boolean
   /**
-   * Listed only where the host has this: page dialogs for agents, native prompts for agents (any
+   * Listed only where the host has this: page dialogs for agents, a dialog policy answered by
+   * the host (`HostCapabilities.agentDialogPolicy`), native prompts for agents (any
    * `HostCapabilities.agentPrompts`), or file choosers among them.
    */
-  needs?: 'agentDialogs' | 'agentPrompts' | 'fileUpload'
+  needs?: 'agentDialogs' | 'agentDialogPolicy' | 'agentPrompts' | 'fileUpload'
   run(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult>
 }
 
@@ -1579,6 +1587,10 @@ const browserTabs: AgentTool = {
 // Tools: navigation and the page
 // ---------------------------------------------------------------------------
 
+/** The headline of a navigation the agent's dialog policy's `stay` cancelled. */
+const STAYED =
+  'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.'
+
 const browserNavigate: AgentTool = {
   definition: {
     name: 'browser_navigate',
@@ -1611,6 +1623,7 @@ const browserNavigate: AgentTool = {
     if (!view) throw new RpcError(-32002, 'The tab went away while loading')
     const pos = ctx.agents.cursorPosition(s, tab.id)
     if (pos) await ctx.agents.cursor(s, tab.id, view, pos.x, pos.y, 'show')
+    if (ctx.agents.takeStayed(tab.id)) return pageResult(ctx, tab, view, STAYED)
     return pageResult(
       ctx,
       tab,
@@ -1636,7 +1649,13 @@ const browserNavigateBack: AgentTool = {
       )
     ctx.browser.tabs.goBack(tab.id)
     await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
-    return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Went back.')
+    const stayed = ctx.agents.takeStayed(tab.id)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      stayed ? STAYED : 'Went back.'
+    )
   }
 }
 
@@ -1656,7 +1675,13 @@ const browserNavigateForward: AgentTool = {
       )
     ctx.browser.tabs.goForward(tab.id)
     await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
-    return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Went forward.')
+    const stayed = ctx.agents.takeStayed(tab.id)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      stayed ? STAYED : 'Went forward.'
+    )
   }
 }
 
@@ -1674,7 +1699,13 @@ const browserReload: AgentTool = {
     const { tab, view } = await actOn(ctx, args)
     ctx.browser.tabs.reload(tab.id, bool(args, 'ignoreCache'))
     await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
-    return pageResult(ctx, tab, ctx.browser.tabs.view(tab.id) ?? view, 'Reloaded.')
+    const stayed = ctx.agents.takeStayed(tab.id)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      stayed ? STAYED : 'Reloaded.'
+    )
   }
 }
 
@@ -1684,7 +1715,7 @@ const browserHandleDialog: AgentTool = {
     name: 'browser_handle_dialog',
     title: 'Answer a page dialog',
     description:
-      'Answer the dialog a page opened on one of your tabs (alert, confirm or prompt): the page is blocked until it is answered, so a call that runs into one returns with it, and page tools refuse the tab until then. accept: true presses OK (default), false Cancel; promptText is what a prompt receives. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Returns a snapshot of the page afterwards.',
+      'Answer the dialog a page opened on one of your tabs (alert, confirm or prompt) that your dialog policy did not: the page is blocked until it is answered, so a call that runs into one returns with it, and page tools refuse the tab until then. accept: true presses OK (default), false Cancel; promptText is what a prompt receives. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Where browser_dialog_policy is listed, a confirm or prompt your policy covers is answered at once from it, an alert always gets OK at once, and a "Leave site?" is never handed to you – your policy\'s leave or stay answers it, leave by default; each such answer comes back as a "Notice:" line. Returns a snapshot of the page afterwards.',
     inputSchema: schema(
       {
         tabId: TAB_ID,
@@ -1706,6 +1737,231 @@ const browserHandleDialog: AgentTool = {
     if (next) return text(`${said} The page opened another one: ${describeDialog(next)}.`)
     const view = await ctx.agents.prepare(ctx.session, tab.id, { activate: false })
     return pageResult(ctx, tab, view, said)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The dialog policy
+// ---------------------------------------------------------------------------
+
+/** How a tab is named in the policy's results: its id and site ("example.com"), the title failing a site. */
+function policyTabName(tab: Tab): string {
+  return `tab ${tab.id} (${dialogSite(tab.url) || JSON.stringify(titleOf(tab).slice(0, 40))})`
+}
+
+function policyWord(args: Record<string, unknown>, key: string): unknown {
+  const v = pick(args, key)
+  return typeof v === 'string' ? v.trim().toLowerCase() : v
+}
+
+/** The rules a `browser_dialog_policy set` names; an error names what is wrong. */
+function parseDialogPolicy(args: Record<string, unknown>): AgentDialogPolicy {
+  const policy: AgentDialogPolicy = {}
+  const confirm = policyWord(args, 'confirm')
+  if (confirm !== undefined) {
+    if (confirm === 'accept' || confirm === 'ok' || confirm === 'yes' || confirm === true)
+      policy.confirm = 'accept'
+    else if (confirm === 'dismiss' || confirm === 'cancel' || confirm === 'no' || confirm === false)
+      policy.confirm = 'dismiss'
+    else throw new RpcError(-32602, 'confirm must be "accept" (OK) or "dismiss" (Cancel)')
+  }
+  const prompt = pick(args, 'prompt')
+  if (prompt !== undefined) {
+    const word = typeof prompt === 'string' ? prompt.trim().toLowerCase() : prompt
+    if (word === 'accept' || word === 'ok') policy.prompt = 'accept'
+    else if (word === 'dismiss' || word === 'cancel') policy.prompt = 'dismiss'
+    else if (
+      typeof prompt === 'object' &&
+      prompt !== null &&
+      typeof (prompt as { text?: unknown }).text === 'string'
+    )
+      policy.prompt = { text: (prompt as { text: string }).text }
+    else
+      throw new RpcError(
+        -32602,
+        'prompt must be "accept" (OK with the page\'s default text), "dismiss" (Cancel) or {"text":"…"} (OK with that text) – a bare string would be ambiguous'
+      )
+  }
+  const unload = policyWord(args, 'beforeunload')
+  if (unload !== undefined) {
+    if (unload === 'leave') policy.beforeunload = 'leave'
+    else if (unload === 'stay') policy.beforeunload = 'stay'
+    else throw new RpcError(-32602, 'beforeunload must be "leave" or "stay"')
+  }
+  if (!policy.confirm && !policy.prompt && !policy.beforeunload)
+    throw new RpcError(
+      -32602,
+      'Say at least one of confirm, prompt or beforeunload (alerts are not a rule: they always get OK, and are reported)'
+    )
+  return policy
+}
+
+/** The words of a prompt rule in a policy's result. */
+function promptRuleWords(rule: NonNullable<AgentDialogPolicy['prompt']>): string {
+  if (typeof rule === 'object') return `OK with ${JSON.stringify(rule.text)}`
+  return rule === 'accept' ? "OK with the page's default" : 'Cancel'
+}
+
+/**
+ * The lines of a `set` result: the policy in force, kind by kind, with the kinds the agent said
+ * nothing about marked `(default)` – and, for a tab, the kinds its session-wide rule supplies
+ * marked `(for every tab)`.
+ */
+function describeDialogPolicy(own: AgentDialogPolicy, inherited: AgentDialogPolicy | null): string {
+  const marks = new Set<string>()
+  const line = (words: string, mark: 'default' | 'for every tab' | null): string => {
+    if (mark) marks.add(mark)
+    return mark ? `${words} (${mark})` : words
+  }
+  const confirm =
+    own.confirm !== undefined
+      ? line(own.confirm === 'accept' ? 'OK' : 'Cancel', null)
+      : inherited?.confirm !== undefined
+        ? line(inherited.confirm === 'accept' ? 'OK' : 'Cancel', 'for every tab')
+        : line('Cancel', 'default')
+  const prompt =
+    own.prompt !== undefined
+      ? line(promptRuleWords(own.prompt), null)
+      : inherited?.prompt !== undefined
+        ? line(promptRuleWords(inherited.prompt), 'for every tab')
+        : line('Cancel', 'default')
+  const unload =
+    own.beforeunload !== undefined
+      ? line(own.beforeunload, null)
+      : inherited?.beforeunload !== undefined
+        ? line(inherited.beforeunload, 'for every tab')
+        : line('leave', 'default')
+  const notes = [
+    ...(marks.has('default') ? ['Kinds marked (default) had no word from you.'] : []),
+    ...(marks.has('for every tab')
+      ? ['Kinds marked (for every tab) follow your policy for every tab you own.']
+      : [])
+  ]
+  return `confirm → ${confirm}; prompt → ${prompt}; "Leave site?" → ${unload}; alerts → OK.${notes.length ? ` ${notes.join(' ')}` : ''}`
+}
+
+/** How long a rule stands, as a `set` result says it. */
+function describeDialogPolicyLife(ttl: number | undefined, once: boolean, tab: boolean): string {
+  const until = tab
+    ? 'until you clear it (action: "clear"), let the tab go or end the session'
+    : 'until you clear it (action: "clear") or end the session'
+  if (once && ttl)
+    return `In force once per kind – each kind's rule is spent by the first dialog it answers – for ${ttl} s at most, or ${until}.`
+  if (once)
+    return `In force once per kind – each kind's rule is spent by the first dialog it answers – or ${until}.`
+  if (ttl) return `In force for ${ttl} s, or ${until}.`
+  return `In force ${until}.`
+}
+
+const browserDialogPolicy: AgentTool = {
+  needs: 'agentDialogPolicy',
+  definition: {
+    name: 'browser_dialog_policy',
+    title: 'Set how page dialogs are answered',
+    description:
+      'Say ahead of an action how the dialogs a page opens on your tabs are to be answered, and the browser answers them at once from your policy instead of handing them to you: confirm "accept" (OK) or "dismiss" (Cancel); prompt "accept" (OK with the page\'s default text), "dismiss" (Cancel) or {"text":"…"} (OK with that text); beforeunload "leave" or "stay" for a page\'s "Leave site?" under your navigations. Alerts are not a rule – they always get OK. Without a policy the defaults apply: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave. With tabId the policy is that tab\'s and overrides your session-wide one kind by kind; without tabId it covers every tab you own, now and later. A set replaces the earlier rule of the same scope; action: "clear" drops that scope\'s rule only (the session-wide one without tabId, the tab\'s own with it). ttl: seconds the rule stands; once: true spends each kind\'s rule with the first dialog it answers (then the next rule, else the default, applies). Every dialog answered by the policy or by a default is reported in your next result as a "Notice:" line with the page\'s words. A navigation or close the user makes on your tab follows the user\'s rules, never your policy.',
+    inputSchema: schema({
+      action: {
+        type: 'string',
+        enum: ['set', 'clear'],
+        description: '"set" (default) or "clear"'
+      },
+      tabId: {
+        type: 'string',
+        description:
+          "One of your tabs (its id, or a unique prefix): the policy is that tab's own. Omit it for every tab you own, now and later."
+      },
+      confirm: {
+        type: 'string',
+        enum: ['accept', 'dismiss'],
+        description: 'confirm(): "accept" presses OK, "dismiss" Cancel'
+      },
+      prompt: {
+        description:
+          'prompt(): "accept" (OK with the page\'s default text), "dismiss" (Cancel), or {"text":"…"} (OK with that text)',
+        oneOf: [
+          { type: 'string', enum: ['accept', 'dismiss'] },
+          {
+            type: 'object',
+            properties: { text: { type: 'string' } },
+            required: ['text']
+          }
+        ]
+      },
+      beforeunload: {
+        type: 'string',
+        enum: ['leave', 'stay'],
+        description:
+          '"Leave site?" under your navigations and the page\'s own: "leave" lets the page go, "stay" cancels the navigation'
+      },
+      ttl: {
+        type: 'number',
+        description: 'Seconds the rule stands (from now); it drops silently when they run out'
+      },
+      once: {
+        type: 'boolean',
+        description:
+          "Each kind's rule is spent by the first dialog it answers; the next dialog of that kind gets the next rule, else the default"
+      }
+    }),
+    annotations: { openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const s = ctx.session
+    const action = policyWord(args, 'action') ?? 'set'
+    if (action !== 'set' && action !== 'clear')
+      return textError('action must be "set" (the default) or "clear"')
+    const raw = pick(args, 'tabId')
+    const tab = raw !== undefined ? ctx.agents.resolveTab(s, raw, false) : null
+    const agents = ctx.agents
+    if (action === 'clear') {
+      const had = agents.clearDialogRule(s, tab?.id ?? null)
+      const after = agents.dialogPolicyOf(s)
+      if (tab) {
+        const rest = after.all
+          ? 'your policy for every tab you own applies to it now'
+          : 'dialogs there are answered as without a policy again'
+        return text(
+          had
+            ? `Cleared the dialog policy of ${policyTabName(tab)}; ${rest}.`
+            : `${policyTabName(tab)[0].toUpperCase()}${policyTabName(tab).slice(1)} had no dialog policy of its own; ${after.all ? 'your policy for every tab you own applies to it' : 'nothing changed'}.`
+        )
+      }
+      const own = [...after.tabs.keys()]
+      const keep = own.length
+        ? `; ${own.length} tab${own.length === 1 ? ' keeps' : 's keep'} a policy of ${own.length === 1 ? 'its' : 'their'} own: ${own.join(', ')} (clear those with their tabId)`
+        : ''
+      return text(
+        had
+          ? `Cleared your dialog policy for every tab you own${keep}.`
+          : `You had no dialog policy for every tab you own${keep}.`
+      )
+    }
+    const policy = parseDialogPolicy(args)
+    const ttlRaw = pick(args, 'ttl')
+    const ttl = ttlRaw === undefined ? undefined : num(args, 'ttl')
+    if (ttlRaw !== undefined && (ttl === undefined || ttl <= 0 || ttl > 86_400))
+      return textError('ttl is the number of seconds the rule stands: more than 0, at most 86400')
+    const once = bool(args, 'once')
+    agents.setDialogPolicy(s, tab?.id ?? null, policy, {
+      ttlMs: ttl === undefined ? undefined : Math.round(ttl * 1000),
+      once
+    })
+    const state = agents.dialogPolicyOf(s)
+    const life = describeDialogPolicyLife(ttl, once, tab !== null)
+    const reported =
+      "Every dialog it answers is reported in your next result with the page's words."
+    if (tab)
+      return text(
+        `Dialog policy for ${policyTabName(tab)}: ${describeDialogPolicy(policy, state.all?.policy ?? null)} ${life} ${reported}`
+      )
+    const own = [...state.tabs.keys()]
+    const keep = own.length
+      ? ` ${own.length === 1 ? 'Tab' : 'Tabs'} ${own.join(', ')} ${own.length === 1 ? 'keeps its' : 'keep their'} own policy over it.`
+      : ''
+    return text(
+      `Dialog policy for every tab you own, now and later: ${describeDialogPolicy(policy, null)} ${life}${keep} ${reported}`
+    )
   }
 }
 
@@ -1749,7 +2005,7 @@ const browserPrompts: AgentTool = {
     name: 'browser_prompts',
     title: 'List waiting prompts',
     description:
-      'List what your tabs wait for you to answer instead of showing the user: file choosers, downloads asking where to save, sign-ins (HTTP authentication), client certificates, permission requests (camera, microphone, location, notifications, clipboard…), screen sharing, Bluetooth/USB/serial/HID device pickers, links to other apps – and page dialogs (alert, confirm, prompt). Each comes with its details, the actions it takes and the default it gets when you leave it: answer with browser_respond_prompt (browser_file_upload for files, browser_handle_dialog for page dialogs). Never use OS automation for these: they are never on screen.',
+      'List what your tabs wait for you to answer instead of showing the user: file choosers, downloads asking where to save, sign-ins (HTTP authentication), client certificates, permission requests (camera, microphone, location, notifications, clipboard…), screen sharing, Bluetooth/USB/serial/HID device pickers, links to other apps – and page dialogs (alert, confirm, prompt) waiting for browser_handle_dialog. Each comes with its details, the actions it takes and the default it gets when you leave it: answer with browser_respond_prompt (browser_file_upload for files, browser_handle_dialog for page dialogs). A dialog policy you set (browser_dialog_policy) is not listed here: its set result and the "Notice:" lines report what it answers. Never use OS automation for these: they are never on screen.',
     inputSchema: schema({ tabId: TAB_ID }),
     annotations: { readOnlyHint: true, openWorldHint: false }
   },
@@ -1835,7 +2091,7 @@ const browserRespondPrompt: AgentTool = {
     const prompt = promptToAnswer(ctx, args)
     if (!prompt)
       return textError(
-        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog.`
+        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog, or ahead of time by browser_dialog_policy.`
       )
     const action = need(args, 'action', `one of ${Object.keys(prompt.actions).join(', ')}`)
     const answer: AgentPromptAnswer = { ...args, action }
@@ -2646,6 +2902,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserReadPage,
   browserEvaluate,
   browserHandleDialog,
+  browserDialogPolicy,
   browserPrompts,
   browserRespondPrompt,
   browserFileUpload,
@@ -2680,12 +2937,28 @@ function nativePromptsLine(kinds: readonly AgentPromptKind[]): string {
  * is how many other agents are connected right now – with any, background mode is the
  * recommendation.
  */
+/**
+ * The instructions' line about page dialogs, by what the host does with them: hands them to
+ * the agent (`agentDialogs`), answers them from the agent's policy (`dialogPolicy`), both, or
+ * neither.
+ */
+function pageDialogsLine(agentDialogs: boolean, dialogPolicy: boolean): string {
+  if (dialogPolicy)
+    return agentDialogs
+      ? '- Page dialogs (alert, confirm, prompt) on your tabs never reach the user. browser_dialog_policy says ahead of an action how they are answered on a tab (confirm OK or Cancel, a prompt\'s text, "Leave site?" leave or stay), and the browser answers them at once from your policy; a confirm or prompt no rule covers returns with the call that opened it, and browser_handle_dialog answers it. Without a policy: alert OK, confirm and prompt wait for browser_handle_dialog, "Leave site?" leave. Every dialog answered without you is reported in a "Notice:" line with the page\'s words. A navigation or close the user makes on your tab follows the user\'s rules, never your policy. '
+      : '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are answered by this browser, never handed to you – from your dialog policy where you set one (browser_dialog_policy: confirm OK or Cancel, a prompt\'s text, "Leave site?" leave or stay), else by default: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave. Every dialog answered is reported in a "Notice:" line with the page\'s words. A navigation or close the user makes on your tab follows the user\'s rules, never your policy. '
+  return agentDialogs
+    ? '- Page dialogs (alert, confirm, prompt) on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. A "Leave site?" never reaches you: when a page of yours objects to leaving, your tab leaves without a question. '
+    : '- Page dialogs on your tabs are answered by this browser, not by you. A "Leave site?" never reaches you: when a page of yours objects to leaving, your tab leaves without a question. '
+}
+
 export function agentInstructions(
   mode: AgentMode,
   allowScripts: boolean,
   others = 0,
   agentDialogs = true,
-  promptKinds: readonly AgentPromptKind[] = []
+  promptKinds: readonly AgentPromptKind[] = [],
+  dialogPolicy = false
 ): string {
   const company =
     others > 0
@@ -2698,7 +2971,7 @@ export function agentInstructions(
     '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
     `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
-    `${agentDialogs ? '- Page dialogs (alert, confirm, prompt) on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A "Leave site?" never reaches you: when a page of yours objects to leaving, your tab leaves without a question. A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
+    `${pageDialogsLine(agentDialogs, dialogPolicy)}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
     ...(promptKinds.length ? [nativePromptsLine(promptKinds)] : []),
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',

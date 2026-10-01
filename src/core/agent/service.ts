@@ -1,4 +1,6 @@
 import type {
+  AgentDialogAnswer,
+  AgentDialogPolicy,
   AgentInfo,
   AgentPromptKind,
   AwayAgentInfo,
@@ -8,6 +10,8 @@ import type {
   AgentSkillStatus,
   Folder,
   PageDialog,
+  PageDialogAnswered,
+  PageDialogKind,
   PageDialogResponse,
   Space,
   Tab
@@ -23,7 +27,14 @@ import {
   regularTabs,
   sectionIndexOf
 } from '../model'
-import { describeDialog } from '../pageDialogs'
+import {
+  answeredDialogOf,
+  CANCELLED,
+  describeAnsweredDialog,
+  describeDialog,
+  dialogSite,
+  LEAVE_SITE_MESSAGE
+} from '../pageDialogs'
 import type {
   AgentSkillsHost,
   AgentTransport,
@@ -303,6 +314,29 @@ interface AgentDialog {
   timer: ReturnType<typeof setTimeout>
 }
 
+/** One rule set of an agent's dialog policy (`browser_dialog_policy`): the session's, or one tab's. */
+export interface DialogRule {
+  policy: AgentDialogPolicy
+  /** `clock()` time the rule expires (`ttl`), null for a standing one. */
+  expiresAt: number | null
+  /** Each kind's rule is spent by the first dialog it answers (`once`). */
+  once: boolean
+}
+
+/**
+ * A session's dialog policy: the rule for every tab it owns, now and later (`all`), and the
+ * rules single tabs were given, which override it kind by kind (`tabs`).
+ */
+interface DialogPolicyState {
+  all: DialogRule | null
+  tabs: Map<string, DialogRule>
+}
+
+/** The kinds of a dialog policy that carry a rule. */
+type DialogRuleKind = keyof AgentDialogPolicy
+
+const DIALOG_RULE_KINDS: readonly DialogRuleKind[] = ['confirm', 'prompt', 'beforeunload']
+
 /**
  * The browser side of the MCP server: sessions (one per agent), which groups and tabs each one
  * owns, foreground vs background behaviour and the screen lease, notices, the visible cursor,
@@ -340,6 +374,14 @@ export class AgentService implements SessionStore, McpHandlers {
   private readonly agentDialogs = new Map<string, AgentDialog>()
   /** Per session, the running call's way out when a dialog opens on one of its tabs. */
   private readonly dialogWaiters = new Map<string, (tabId: string) => void>()
+  /** Per session, its dialog policy (`browser_dialog_policy`): the session-wide rule and the tabs' own. */
+  private readonly dialogPolicies = new Map<string, DialogPolicyState>()
+  /** Timers that drop an expiring dialog rule (`ttl`) from the hosts' views, by rule. */
+  private readonly dialogRuleTimers = new Map<DialogRule, ReturnType<typeof setTimeout>>()
+  /** The tabs an agent's call acts on right now (from `prepare` to the call's end), by tab: `takesLeave`. */
+  private readonly acting = new Map<string, string>()
+  /** Tabs whose page a dialog policy's `stay` just kept, until the navigating call reads it. */
+  private readonly stayed = new Set<string>()
   /** Native prompts of agents' tabs (file choosers, permissions, sign-ins…) waiting for their agent. */
   readonly prompts: AgentPromptQueue
   /** Per session, the running call's way out when a prompt the page waits on opens on its tab. */
@@ -815,7 +857,10 @@ export class AgentService implements SessionStore, McpHandlers {
     for (const s of this.sessions.values()) {
       s.cursors.delete(tabId)
       s.frames.delete(tabId)
+      this.dropTabDialogRule(s, tabId)
     }
+    this.acting.delete(tabId)
+    this.stayed.delete(tabId)
     this.dismissAgentDialog(tabId)
     this.prompts.dismissTab(tabId)
     this.browser.permissions.forgetAgentTab(tabId)
@@ -981,6 +1026,7 @@ export class AgentService implements SessionStore, McpHandlers {
     }
     s.cursors.clear()
     s.frames.clear()
+    this.clearDialogPolicy(s)
     this.memos.delete(s.id)
     this.callStates.delete(s.id)
     for (const [win, lease] of this.leases) if (lease.sessionId === s.id) this.leases.delete(win)
@@ -1386,6 +1432,8 @@ export class AgentService implements SessionStore, McpHandlers {
         return true
       case 'agentDialogs':
         return this.browser.platform.capabilities.agentDialogs
+      case 'agentDialogPolicy':
+        return this.browser.platform.capabilities.agentDialogPolicy
       case 'agentPrompts':
         return this.promptKinds().length > 0
       case 'fileUpload':
@@ -1448,6 +1496,7 @@ export class AgentService implements SessionStore, McpHandlers {
       if (timer) clearTimeout(timer)
       this.dialogWaiters.delete(s.id)
       this.promptWaiters.delete(s.id)
+      this.doneActing(s)
       // A background agent (or a foreground one that had to act in the background) may have
       // focused one of its hidden pages; hand keyboard focus back to what the user looks at.
       if (s.mode === 'background' || state.degraded) this.restoreUserFocus(s)
@@ -1654,12 +1703,16 @@ export class AgentService implements SessionStore, McpHandlers {
     const m = /^zenium:\/\/tab\/([^/]+)\/text$/.exec(path)
     if (m) {
       const tab = this.resolveTab(s, m[1], isTruthy(query.get('allowForeign')))
-      const view = await this.prepare(s, tab.id, { activate: false })
-      const result = (await this.evalPage(view, pageCall('text', 100_000))) as {
-        title: string
-        text: string
+      try {
+        const view = await this.prepare(s, tab.id, { activate: false })
+        const result = (await this.evalPage(view, pageCall('text', 100_000))) as {
+          title: string
+          text: string
+        }
+        return [{ uri, mimeType: 'text/plain', text: `${result.title}\n\n${result.text}` }]
+      } finally {
+        this.doneActing(s)
       }
-      return [{ uri, mimeType: 'text/plain', text: `${result.title}\n\n${result.text}` }]
     }
     throw new RpcError(-32002, `Unknown resource ${uri}`)
   }
@@ -1674,7 +1727,8 @@ export class AgentService implements SessionStore, McpHandlers {
       this.settings.allowScripts,
       others.length,
       this.browser.platform.capabilities.agentDialogs,
-      this.promptKinds()
+      this.promptKinds(),
+      this.browser.platform.capabilities.agentDialogPolicy
     )
   }
 
@@ -2617,10 +2671,15 @@ export class AgentService implements SessionStore, McpHandlers {
     s.cursors.delete(tabId)
     const frames = s.frames.get(tabId)
     s.frames.delete(tabId)
+    // The tab's own dialog rule goes with the tab; the session-wide one stays for the rest.
+    this.dropTabDialogRule(s, tabId)
+    this.acting.delete(tabId)
+    this.stayed.delete(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!view) return
     view.setBackgroundThrottling?.(true)
     view.setAgentDriven?.(false)
+    view.setDialogPolicy?.(null)
     view.interceptAgentPrompts?.(false)
     void this.evalPage(view, pageDispose(s.id)).catch(() => undefined)
     for (const node of frames?.nodes ?? []) {
@@ -2664,6 +2723,12 @@ export class AgentService implements SessionStore, McpHandlers {
     // layout viewport and paint nothing lays it out and paints it where the user cannot see it
     // (`TabView.setAgentDriven`). A tab in front of the user is the layout's as before.
     view.setAgentDriven?.(!this.isShown(tab, win))
+    // The call acts on this tab until it returns: a "Leave site?" its navigation raises is the
+    // agent's dialog policy's to answer, not the user's (`takesLeave`).
+    this.acting.set(tabId, s.id)
+    // A host that answers page dialogs itself answers from the agent's policy for this tab.
+    if (this.browser.platform.capabilities.agentDialogPolicy)
+      view.setDialogPolicy?.(this.effectiveDialogPolicy(s, tabId))
     // The page's file choosers and print come to the agent (`AgentService.takesPrompt`) instead
     // of opening the system's dialog; the host asks per request, so a tab shown to the user later
     // still gets its native UI.
@@ -2752,17 +2817,362 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   // ---------------------------------------------------------------------------
+  // The dialog policy (`browser_dialog_policy`)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `browser_dialog_policy set`: the rule for one tab of the session or – without a tab – for
+   * every tab it owns, now and later. Replaces the scope's earlier rule; a tab's own rule
+   * overrides the session-wide one kind by kind. `ttlMs` drops the rule silently when it runs
+   * out; `once` spends each kind's rule with the first dialog it answers. The tabs' live views
+   * get their effective policy at once (`TabView.setDialogPolicy`).
+   */
+  setDialogPolicy(
+    s: AgentSession,
+    tabId: string | null,
+    policy: AgentDialogPolicy,
+    opts: { ttlMs?: number; once?: boolean } = {}
+  ): DialogRule {
+    let state = this.dialogPolicies.get(s.id)
+    if (!state) {
+      state = { all: null, tabs: new Map() }
+      this.dialogPolicies.set(s.id, state)
+    }
+    const rule: DialogRule = {
+      policy: { ...policy },
+      expiresAt: opts.ttlMs ? this.clock() + opts.ttlMs : null,
+      once: opts.once === true
+    }
+    const old = tabId ? state.tabs.get(tabId) : state.all
+    if (old) this.forgetDialogRule(old)
+    if (tabId) state.tabs.set(tabId, rule)
+    else state.all = rule
+    if (opts.ttlMs)
+      this.dialogRuleTimers.set(
+        rule,
+        setTimeout(() => this.expireDialogRule(s, rule), opts.ttlMs)
+      )
+    this.log(
+      `dialog policy ${tabId ? `of tab ${tabId}` : 'for every tab'} of ${s.name}: ${JSON.stringify(policy)}${opts.ttlMs ? ` for ${Math.round(opts.ttlMs / 1000)} s` : ''}${rule.once ? ', once per kind' : ''}`
+    )
+    this.syncDialogPolicy(s, tabId)
+    return rule
+  }
+
+  /**
+   * `browser_dialog_policy clear`: drop the tab's own rule or – without a tab – the session-wide
+   * one only; the other tabs' own rules stand. Returns whether there was one to drop.
+   */
+  clearDialogRule(s: AgentSession, tabId: string | null): boolean {
+    const state = this.liveDialogPolicy(s)
+    const old = state ? (tabId ? state.tabs.get(tabId) : state.all) : undefined
+    if (!state || !old) return false
+    this.forgetDialogRule(old)
+    if (tabId) state.tabs.delete(tabId)
+    else state.all = null
+    this.log(`dialog policy ${tabId ? `of tab ${tabId}` : 'for every tab'} of ${s.name} cleared`)
+    this.syncDialogPolicy(s, tabId)
+    if (!state.all && !state.tabs.size) this.dialogPolicies.delete(s.id)
+    return true
+  }
+
+  /** The session's dialog rules that stand: the session-wide one and the tabs' own. */
+  dialogPolicyOf(s: AgentSession): {
+    all: DialogRule | null
+    tabs: ReadonlyMap<string, DialogRule>
+  } {
+    const state = this.liveDialogPolicy(s)
+    return state ? { all: state.all, tabs: state.tabs } : { all: null, tabs: new Map() }
+  }
+
+  /**
+   * The rule that answers `kind` on the tab – the tab's own when it carries the kind, else the
+   * session-wide one – or null when neither does (the default answer applies).
+   */
+  dialogRuleFor(
+    s: AgentSession,
+    tabId: string,
+    kind: DialogRuleKind
+  ): { rule: DialogRule; scope: 'tab' | 'all' } | null {
+    const state = this.liveDialogPolicy(s)
+    if (!state) return null
+    const own = state.tabs.get(tabId)
+    if (own && own.policy[kind] !== undefined) return { rule: own, scope: 'tab' }
+    if (state.all && state.all.policy[kind] !== undefined) return { rule: state.all, scope: 'all' }
+    return null
+  }
+
+  /**
+   * The policy in force on the tab, kind by kind – its own rules over the session-wide ones –
+   * or null when no rule covers it. What a host that answers dialogs itself is handed.
+   */
+  effectiveDialogPolicy(s: AgentSession, tabId: string): AgentDialogPolicy | null {
+    const state = this.liveDialogPolicy(s)
+    if (!state) return null
+    const own = state.tabs.get(tabId)?.policy
+    const all = state.all?.policy
+    const out: AgentDialogPolicy = {}
+    const confirm = own?.confirm ?? all?.confirm
+    if (confirm) out.confirm = confirm
+    const prompt = own?.prompt ?? all?.prompt
+    if (prompt) out.prompt = prompt
+    const beforeunload = own?.beforeunload ?? all?.beforeunload
+    if (beforeunload) out.beforeunload = beforeunload
+    return confirm || prompt || beforeunload ? out : null
+  }
+
+  /** The session's policy state with the rules whose `ttl` ran out dropped; null when nothing stands. */
+  private liveDialogPolicy(s: AgentSession): DialogPolicyState | null {
+    const state = this.dialogPolicies.get(s.id)
+    if (!state) return null
+    const now = this.clock()
+    if (state.all && state.all.expiresAt !== null && state.all.expiresAt <= now) {
+      this.forgetDialogRule(state.all)
+      state.all = null
+    }
+    for (const [tabId, rule] of state.tabs)
+      if (rule.expiresAt !== null && rule.expiresAt <= now) {
+        this.forgetDialogRule(rule)
+        state.tabs.delete(tabId)
+      }
+    if (!state.all && !state.tabs.size) {
+      this.dialogPolicies.delete(s.id)
+      return null
+    }
+    return state
+  }
+
+  /** A rule's `ttl` ran out: it goes silently, and the hosts' views hear of what is left. */
+  private expireDialogRule(s: AgentSession, rule: DialogRule): void {
+    this.dialogRuleTimers.delete(rule)
+    const state = this.dialogPolicies.get(s.id)
+    if (!state) return
+    let scope: string | null | undefined
+    if (state.all === rule) {
+      state.all = null
+      scope = null
+    } else
+      for (const [tabId, r] of state.tabs)
+        if (r === rule) {
+          state.tabs.delete(tabId)
+          scope = tabId
+        }
+    if (scope === undefined) return
+    this.log(`dialog policy ${scope ? `of tab ${scope}` : 'for every tab'} of ${s.name} expired`)
+    this.syncDialogPolicy(s, scope)
+    if (!state.all && !state.tabs.size) this.dialogPolicies.delete(s.id)
+  }
+
+  private forgetDialogRule(rule: DialogRule): void {
+    const timer = this.dialogRuleTimers.get(rule)
+    if (timer) clearTimeout(timer)
+    this.dialogRuleTimers.delete(rule)
+  }
+
+  /** The tab's own rule goes with the tab (closed, let go); the session-wide one stays for the rest. */
+  private dropTabDialogRule(s: AgentSession, tabId: string): void {
+    const state = this.dialogPolicies.get(s.id)
+    const rule = state?.tabs.get(tabId)
+    if (!state || !rule) return
+    this.forgetDialogRule(rule)
+    state.tabs.delete(tabId)
+    if (!state.all && !state.tabs.size) this.dialogPolicies.delete(s.id)
+  }
+
+  /** The session is released: its whole policy goes with its groups. */
+  private clearDialogPolicy(s: AgentSession): void {
+    const state = this.dialogPolicies.get(s.id)
+    if (!state) return
+    if (state.all) this.forgetDialogRule(state.all)
+    for (const rule of state.tabs.values()) this.forgetDialogRule(rule)
+    this.dialogPolicies.delete(s.id)
+  }
+
+  /**
+   * `once`: the kind's rule is spent by the dialog it answered – the rule that answered, never
+   * another (a tab's `once` leaves the session-wide standing rule alone) – and an emptied rule
+   * goes. The next dialog of the kind falls back to the next rule, else the default.
+   */
+  private spendDialogRule(
+    s: AgentSession,
+    tabId: string,
+    hit: { rule: DialogRule; scope: 'tab' | 'all' },
+    kind: DialogRuleKind
+  ): void {
+    if (!hit.rule.once) return
+    delete hit.rule.policy[kind]
+    const state = this.dialogPolicies.get(s.id)
+    if (state && !DIALOG_RULE_KINDS.some((k) => hit.rule.policy[k] !== undefined)) {
+      this.forgetDialogRule(hit.rule)
+      if (hit.scope === 'tab') state.tabs.delete(tabId)
+      else state.all = null
+      if (!state.all && !state.tabs.size) this.dialogPolicies.delete(s.id)
+    }
+    this.syncDialogPolicy(s, hit.scope === 'tab' ? tabId : null)
+  }
+
+  /**
+   * Hand the live views their effective policy – one tab's, or (null) every tab the session
+   * owns – where the host answers dialogs itself from it.
+   */
+  private syncDialogPolicy(s: AgentSession, tabId: string | null): void {
+    if (!this.browser.platform.capabilities.agentDialogPolicy) return
+    const tabs = tabId ? [this.browser.tabs.tab(tabId)] : this.ownedTabs(s)
+    for (const tab of tabs) {
+      if (!tab) continue
+      this.browser.tabs.view(tab.id)?.setDialogPolicy?.(this.effectiveDialogPolicy(s, tab.id))
+    }
+  }
+
+  /** A call of the session is through: the tabs it acted on are no longer under its hand. */
+  private doneActing(s: AgentSession): void {
+    for (const [tabId, sessionId] of this.acting) if (sessionId === s.id) this.acting.delete(tabId)
+  }
+
+  /** The navigating call reads – once – that the policy's `stay` kept the tab's page. */
+  takeStayed(tabId: string): boolean {
+    return this.stayed.delete(tabId)
+  }
+
+  /**
+   * Whether a "Leave site?" of the tab is its agent's dialog policy's to answer
+   * (`PageDialogService.confirmLeave`): the tab is an agent's (`takesDialog`) and the question
+   * comes from the agent's own navigation or the page's – never from the USER. The user outranks
+   * the policy: an unload check the user started (`TabManager.unloadingForUser` – the tab's ×,
+   * the overview's swipe, a window's or the app's close) or a navigation on a tab in front of
+   * the user while no call of its agent acts on it is the user's question, answered by the
+   * user's rules. Only where the host has the policy (`HostCapabilities.agentDialogPolicy`).
+   */
+  takesLeave(tabId: string): boolean {
+    if (!this.browser.platform.capabilities.agentDialogPolicy) return false
+    const tabs = this.browser.tabs
+    if (tabs.unloadingForUser(tabId)) return false
+    if (!this.takesDialog(tabId)) return false
+    if (this.acting.has(tabId)) return true
+    const tab = tabs.tab(tabId)
+    return tab !== undefined && !this.isShown(tab, tabs.windowFor(tabId))
+  }
+
+  /**
+   * A "Leave site?" on an agent's tab under the agent's or the page's own navigation
+   * (`takesLeave`): `stay` in the agent's dialog policy keeps the page – the navigating call's
+   * result says so (`takeStayed`) – anything else leaves, and every answer is reported to the
+   * agent in the Notice every host uses. Returns whether the page may go.
+   */
+  onLeaveSite(tabId: string, reload: boolean): boolean {
+    const owner = this.driver(tabId)
+    const hit = owner ? this.dialogRuleFor(owner, tabId, 'beforeunload') : null
+    const stay = hit?.rule.policy.beforeunload === 'stay'
+    if (stay) this.stayed.add(tabId)
+    if (owner) {
+      if (hit) this.spendDialogRule(owner, tabId, hit, 'beforeunload')
+      this.reportAnswered(
+        owner,
+        {
+          tabId,
+          kind: 'beforeunload',
+          site: dialogSite(this.browser.tabs.tab(tabId)?.url ?? ''),
+          embedded: false,
+          message: LEAVE_SITE_MESSAGE,
+          defaultValue: ''
+        },
+        stay ? 'stay' : 'leave',
+        hit !== null
+      )
+    }
+    this.log(
+      `tab ${tabId}: "${reload ? 'Reload' : 'Leave'} site?" answered ${stay ? 'stay' : 'leave'} ${hit ? 'by the policy' : 'by default'}`
+    )
+    return !stay
+  }
+
+  /**
+   * A host that answers page dialogs itself answered one on an agent's tab
+   * (`TabViewEvents.onPageDialogAnswered`): the agent reads it in its next result, and the
+   * `once` rule that answered is spent.
+   */
+  onPageDialogAnswered(tabId: string, report: PageDialogAnswered): void {
+    const owner = this.driver(tabId)
+    if (!owner) return
+    if (report.byPolicy && report.kind !== 'alert') {
+      const hit = this.dialogRuleFor(owner, tabId, report.kind)
+      if (hit) this.spendDialogRule(owner, tabId, hit, report.kind)
+    }
+    this.reportAnswered(owner, answeredDialogOf(tabId, report), report.answer, report.byPolicy)
+  }
+
+  /**
+   * The answer the tab's agent's dialog policy gives a dialog at once, reported to the agent –
+   * or null when no rule covers the kind, and the dialog is held for `browser_handle_dialog`.
+   * An alert has one answer, OK: it is never held, and reported like the rest. Only where the
+   * host has the policy; a held tab of an away agent has nobody to report to and waits as today.
+   */
+  private answerFromPolicy(dialog: PageDialog): PageDialogResponse | null {
+    if (!this.browser.platform.capabilities.agentDialogPolicy) return null
+    const owner = this.driver(dialog.tabId)
+    if (!owner) return null
+    const kind: PageDialogKind = dialog.kind
+    if (kind === 'alert') {
+      this.reportAnswered(
+        owner,
+        dialog,
+        'ok',
+        this.effectiveDialogPolicy(owner, dialog.tabId) !== null
+      )
+      return { accepted: true, value: null }
+    }
+    if (kind === 'beforeunload') return null
+    const hit = this.dialogRuleFor(owner, dialog.tabId, kind)
+    if (!hit) return null
+    let response: PageDialogResponse
+    let answer: AgentDialogAnswer
+    if (kind === 'confirm') {
+      const accepted = hit.rule.policy.confirm === 'accept'
+      response = { accepted, value: null }
+      answer = accepted ? 'ok' : 'cancel'
+    } else {
+      const rule = hit.rule.policy.prompt
+      if (rule === 'dismiss' || rule === undefined) {
+        response = CANCELLED
+        answer = 'cancel'
+      } else {
+        const text = rule === 'accept' ? dialog.defaultValue : rule.text
+        response = { accepted: true, value: text }
+        answer = { text }
+      }
+    }
+    this.spendDialogRule(owner, dialog.tabId, hit, kind)
+    this.reportAnswered(owner, dialog, answer, true)
+    return response
+  }
+
+  private reportAnswered(
+    owner: AgentSession,
+    d: Parameters<typeof describeAnsweredDialog>[0],
+    answer: AgentDialogAnswer,
+    byPolicy: boolean
+  ): void {
+    owner.notices.push(describeAnsweredDialog(d, answer, byPolicy))
+    this.log(
+      `dialog on tab ${d.tabId} (${d.kind}) answered ${typeof answer === 'object' ? 'with text' : answer} ${byPolicy ? 'by the policy' : 'by default'}`
+    )
+  }
+
+  // ---------------------------------------------------------------------------
   // Agent page dialogs
   // ---------------------------------------------------------------------------
 
   /**
-   * A page dialog on an agent's tab (`PageDialogService.ask` routes it here): held for the
-   * agent to answer with `browser_handle_dialog`, never shown to the user. A running call of the
-   * owner returns at once with the dialog; unanswered for `AGENT_DIALOG_TTL_MS` it is dismissed,
-   * so the page is never blocked for good.
+   * A page dialog on an agent's tab (`PageDialogService.ask` routes it here): answered at once
+   * when the agent's dialog policy covers its kind (`answerFromPolicy`; an alert always), else
+   * held for the agent to answer with `browser_handle_dialog`, never shown to the user. A
+   * running call of the owner returns at once with the held dialog; unanswered for
+   * `AGENT_DIALOG_TTL_MS` it is dismissed, so the page is never blocked for good.
    */
   onPageDialog(dialog: PageDialog): Promise<PageDialogResponse> {
     this.dismissAgentDialog(dialog.tabId)
+    const answered = this.answerFromPolicy(dialog)
+    if (answered) return Promise.resolve(answered)
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         if (this.agentDialogs.get(dialog.tabId)?.dialog.id !== dialog.id) return

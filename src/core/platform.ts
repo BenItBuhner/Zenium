@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AgentDialogPolicy,
   AgentSkillStatus,
   AppLinkState,
   AppWindowInfo,
@@ -37,6 +38,7 @@ import type {
   NewTabPageAction,
   NewTabPageCommand,
   NewTabPageState,
+  PageDialogAnswered,
   PageDialogResponse,
   PageRules,
   PermissionPrompt,
@@ -858,6 +860,15 @@ export interface TabViewEvents {
    * (the core told it), the host shows nothing; `user`: the host carries on as it would have.
    */
   onPagePrompt?(prompt: PagePromptRequest): 'agent' | 'user'
+  /**
+   * The host answered a page dialog on an agent's tab itself – from the policy it was handed
+   * through `TabView.setDialogPolicy`, or with the default answer when no rule covered the
+   * kind (`report.byPolicy`). The core reports it to the tab's agent in its next result, in
+   * the same words every host gets. Hosts whose dialogs reach the core (`onDialog`,
+   * `onLeaveSite`; `HostCapabilities.agentDialogs`) never call it: the core answers and
+   * reports those itself.
+   */
+  onPageDialogAnswered?(report: PageDialogAnswered): void
 }
 
 /**
@@ -1232,6 +1243,16 @@ export interface TabView {
    * Hosts whose hidden pages lay out anyway (Android's WebView) leave it out.
    */
   setAgentDriven?(driven: boolean): void
+  /**
+   * The effective dialog policy of this page's agent (`HostCapabilities.agentDialogPolicy`):
+   * set beside `setAgentDriven` at each prepare and whenever the policy changes, `null` when
+   * no rule covers the tab (any more) or the session lets it go. A host that answers page
+   * dialogs itself (Android's WebChromeClient) answers from it at once and reports every
+   * answer through `TabViewEvents.onPageDialogAnswered` – the default answers too, marked
+   * as such. Hosts whose dialogs reach the core leave it out: the core answers from the
+   * policy before holding a dialog for `browser_handle_dialog`.
+   */
+  setDialogPolicy?(policy: AgentDialogPolicy | null): void
   /**
    * An agent works this page (`true` from the session's prepare, `false` once it lets the tab
    * go): the page's file choosers, `window.print()` and File System Access pickers come to the

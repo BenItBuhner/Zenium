@@ -168,7 +168,8 @@ const ANDROID: HostCapabilities = {
   genericFontFamilies: false,
   caretBrowsing: false,
   placementAnswered: true,
-  agentDialogs: false
+  agentDialogs: false,
+  agentDialogPolicy: false
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {

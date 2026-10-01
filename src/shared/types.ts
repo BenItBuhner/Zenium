@@ -370,6 +370,16 @@ export interface HostCapabilities {
    */
   agentDialogs: boolean
   /**
+   * An AI agent may say AHEAD of an action how page dialogs on its tabs are to be answered
+   * (`browser_dialog_policy` is listed): the host answers a dialog a rule covers at once from
+   * that `AgentDialogPolicy` and reports it (`PageDialogAnswered` → the agent's next result).
+   * On hosts with `agentDialogs` the core answers before holding the dialog for
+   * `browser_handle_dialog`; a host that answers dialogs itself (Android's WebChromeClient)
+   * takes the policy through `TabView.setDialogPolicy` and reports through
+   * `TabViewEvents.onPageDialogAnswered`. Off until a host does one of the two.
+   */
+  agentDialogPolicy: boolean
+  /**
    * The browser-level prompts this host hands to an AI agent's tab's agent instead of showing
    * them (`AgentPromptKind`; listed by `browser_prompts`). A kind the host leaves out keeps
    * its usual UI on agents' tabs too, and agents are told it is not routed here. Absent: none.
@@ -4952,6 +4962,61 @@ export interface PageDialog {
 export interface PageDialogResponse {
   accepted: boolean
   value: string | null
+}
+
+/**
+ * How an AI agent wants the page dialogs on one of its tabs answered, said ahead of an action
+ * through `browser_dialog_policy` (`HostCapabilities.agentDialogPolicy`). Each kind is a rule
+ * of its own; a kind left out keeps the default answer (confirm Cancel, prompt Cancel,
+ * "Leave site?" leave). Alerts have no rule: OK is their only answer, and they are reported
+ * like the rest. The core hands the EFFECTIVE policy of a tab (its own rules over the
+ * session-wide ones) to a host that answers dialogs itself through `TabView.setDialogPolicy`,
+ * and `null` when no rule covers the tab any more.
+ */
+export interface AgentDialogPolicy {
+  /** `confirm()`: OK (`accept`) or Cancel (`dismiss`). */
+  confirm?: 'accept' | 'dismiss'
+  /**
+   * `prompt()`: OK with the page's default text (`accept`), Cancel (`dismiss`), or OK with
+   * the agent's own text.
+   */
+  prompt?: 'accept' | 'dismiss' | { text: string }
+  /**
+   * "Leave site?" (`beforeunload`): let the navigation go (`leave`) or cancel it (`stay`).
+   * Governs the agent's own navigations and the page's; a navigation or close the USER makes
+   * on the tab follows the user's rules and is never held by `stay`.
+   */
+  beforeunload?: 'leave' | 'stay'
+}
+
+/**
+ * The answer a page dialog on an agent's tab got: `ok` / `cancel` for alert, confirm and a
+ * prompt answered without text; `{ text }` for a prompt answered OK with that text (the
+ * page's default or the agent's); `leave` / `stay` for "Leave site?".
+ */
+export type AgentDialogAnswer = 'ok' | 'cancel' | { text: string } | 'leave' | 'stay'
+
+/**
+ * A page dialog on an agent's tab that was answered without the agent – by its dialog policy
+ * (`byPolicy`) or by the default answer when no rule covered the kind. The core turns it into
+ * the `Notice:` line of the agent's next result, the same words on every host. A host that
+ * answers dialogs itself reports through `TabViewEvents.onPageDialogAnswered`; the core
+ * reports what it answered on hosts with `HostCapabilities.agentDialogs` itself.
+ */
+export interface PageDialogAnswered {
+  kind: PageDialogKind
+  /** The URL of the page that opened the dialog (the site is derived from it). */
+  url: string
+  /**
+   * The dialog's message. For `beforeunload` Chrome shows its own line – "Changes you made
+   * may not be saved." – whatever the page set, and that line is what a host reports.
+   */
+  message: string
+  /** `prompt`: the field's initial text; '' for the other kinds. */
+  defaultValue: string
+  answer: AgentDialogAnswer
+  /** `true` when a rule of the agent's policy answered; `false` for the default answer. */
+  byPolicy: boolean
 }
 
 /**
