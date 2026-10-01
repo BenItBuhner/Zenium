@@ -2099,10 +2099,13 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
 
     await setup(a)
     // Nothing of the entries is readable in the folder: the number, the name, the postcode.
+    // The whole values: a four-character needle such as `4111` turns up in the envelope's
+    // random base64 ciphertext by chance (p ≈ 64⁻⁴ per position; about once in a thousand
+    // runs over this device file's ~8 000 characters); the full number cannot.
     for (const text of folderFiles('/drive').values()) {
-      expect(text).not.toContain('4111')
+      expect(text).not.toContain(card.number)
       expect(text).not.toContain('Lovelace')
-      expect(text).not.toContain('SW1Y')
+      expect(text).not.toContain(address.postalCode)
     }
     const aRecords = await vaultRecords(a, 'address', 'payment-method')
     expect(aRecords.map((r) => r.id).sort()).toEqual([aAddress.id, aCard.id].sort())
