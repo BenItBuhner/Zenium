@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
@@ -2489,22 +2490,41 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
     }
 
+    /**
+     * `clipboard.writeImage` (the Copy Image row, a shared picture's Copy image, a capture's
+     * copy): the image's bytes – fetched, or a `data:` URL's – onto the system clipboard as a
+     * `content://` URI of the app's `FileProvider` over `cacheDir/clipboard`. The file is named
+     * and the clip typed by what the BYTES are (`ImageBytes.sniff`, the declared type the
+     * fallback; PUI-38): WebView's `ClipboardImpl.getPng()` hands a `content://` image to
+     * Blink's paste as the bytes it finds when `ContentResolver.getType` says `image/png` and
+     * decodes and PNG-encodes it when it says anything else, so the real type on the file (the
+     * provider types by extension) is what makes the page's `image/png` promise true, and
+     * every other reader of the clipboard gets the bytes as they are with an honest type. The
+     * clip's description carries the sniffed type itself rather than the provider's, which an
+     * older release's `MimeTypeMap` may not know (`avif` before API 31). Bytes that are no
+     * image – a hot-link protected server's HTML page, an empty body behind an image type –
+     * fail the copy (false: the chrome's "Could not copy image") before anything is written,
+     * instead of going on the clipboard as a picture. The cache dir keeps the newest
+     * `ImageBytes.CACHE_KEPT` copies.
+     */
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {
             val ok = runCatching {
-                val bytes = if (url.startsWith("data:")) {
-                    val comma = url.indexOf(',')
-                    android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
+                val (bytes, declared) = if (url.startsWith("data:", ignoreCase = true)) {
+                    val data = ImageBytes.decodeDataUrl(url) ?: return@runCatching false
+                    data.bytes to data.mediaType
                 } else {
-                    (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 8000 }
-                        .inputStream.use { it.readBytes() }
+                    val connection = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 8000 }
+                    connection.inputStream.use { it.readBytes() } to connection.contentType
                 }
+                val type = ImageBytes.decide(bytes, declared) ?: return@runCatching false
                 val dir = File(activity.cacheDir, "clipboard").apply { mkdirs() }
-                val file = File(dir, "image-${System.currentTimeMillis()}.png")
+                val file = File(dir, "image-${System.currentTimeMillis()}.${type.extension}")
                 file.writeBytes(bytes)
+                ImageBytes.prune(dir)
                 val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newUri(activity.contentResolver, "Image", uri))
+                cm.setPrimaryClip(ClipData(ClipDescription("Image", arrayOf(type.mime)), ClipData.Item(uri)))
                 true
             }.getOrDefault(false)
             main.post { reply(ok) }
