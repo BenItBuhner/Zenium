@@ -6687,7 +6687,8 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'New Live Folder…',
       'New Space…',
       '-',
-      'Clear Unpinned Tabs',
+      // The key table's words (P-9), read from the string table.
+      'Close Unpinned Tabs',
       '-',
       'Task Manager',
       '-',
@@ -6716,10 +6717,10 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     tablet.browser.handleCommand(tablet.win, 'newtab.contextMenu', {})
     expect(topLabels(tablet.shown())).not.toContain('Name Window…')
     // The window rows are a windowed host's alone: the phone has one window, no task manager
-    // window and no Close for it – its sheet ends at Clear Unpinned Tabs.
+    // window and no Close for it – its sheet ends at Close Unpinned Tabs.
     const phone = pageHarness(ANDROID, { formFactor: 'phone' })
     phone.browser.handleCommand(phone.win, 'newtab.contextMenu', {})
-    expect(topLabels(phone.shown()).at(-1)).toBe('Clear Unpinned Tabs')
+    expect(topLabels(phone.shown()).at(-1)).toBe('Close Unpinned Tabs')
     expect(topLabels(phone.shown())).not.toContain('Task Manager')
     expect(topLabels(phone.shown())).not.toContain('Close Window')
   })
@@ -6729,7 +6730,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
     const menu = topLabels(h.shown())
     expect(menu.slice(0, 5)).toEqual(['Restore', 'Minimize', 'Maximize', '-', 'New Tab'])
-    expect(menu.slice(-5)).toEqual(['Clear Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
+    expect(menu.slice(-5)).toEqual(['Close Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
     expect(menu).not.toContain('Close Window')
     // Move and Size stay out: Electron has no way into the OS's keyboard move and size modes.
     expect(menu).not.toContain('Move')

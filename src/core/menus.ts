@@ -107,6 +107,7 @@ import {
   splitViewSubmenu,
   tabDirectionLabels
 } from './menuBar'
+import { S } from '../shared/strings'
 import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { isSendableUrl } from './sync/sendTab'
 import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
@@ -2848,11 +2849,11 @@ export class Menus {
    * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
    * it. Chrome's strip rows first – New tab, Reopen closed tab, Bookmark all tabs…, and on the
    * desktop Name window… (context-menus-108) – then Zenium's own: the space's folders and
-   * spaces, Clear Unpinned Tabs; last the window's own rows, as Chrome's frame menu
-   * (`SystemMenuModelBuilder`) ends: Task manager after a separator, then the window's Close.
-   * The window rows are a windowed host's alone (`capabilities.windows`): the phone has one
-   * window, no task manager window and no Close for it, so its sheet ends at Clear Unpinned
-   * Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's rows inside it, so
+   * spaces, Close Unpinned Tabs (P-9: the key table's words); last the window's own rows, as
+   * Chrome's frame menu (`SystemMenuModelBuilder`) ends: Task manager after a separator, then
+   * the window's Close. The window rows are a windowed host's alone (`capabilities.windows`):
+   * the phone has one window, no task manager window and no Close for it, so its sheet ends at
+   * Close Unpinned Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's rows inside it, so
    * the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize –
    * and the OS's Close ends the menu; Move and Size stay out, Electron having no way into the
    * OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's "Use system title bar
@@ -2948,7 +2949,7 @@ export class Menus {
               { type: 'separator' as const }
             ]),
         {
-          label: 'Clear Unpinned Tabs',
+          label: S.menu('space.closeUnpinned'),
           ...(space.id === win.activeSpaceId ? { action: 'space.closeUnpinned' as const } : {}),
           enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
           click: () => tabs.closeUnpinned(space.id, win)
@@ -3073,7 +3074,7 @@ export class Menus {
           click: () => this.browser.unloadOtherSpaces(win)
         },
         { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
-        { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId, win) },
+        { label: S.menu('space.closeUnpinned'), click: () => tabs.closeUnpinned(spaceId, win) },
         { type: 'separator' },
         {
           label: 'Space Routing Settings…',

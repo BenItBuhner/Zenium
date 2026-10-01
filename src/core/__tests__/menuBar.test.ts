@@ -814,11 +814,12 @@ describe('the macOS menu bar', () => {
         'Close Tabs Below',
         'Move Tab to New Window',
         'Add Tab to New Split View',
-        'Search Tabs…'
+        // The string table's words (P-10): the search surface is no ask, so no ellipsis.
+        'Search Tabs'
       ])
       // The tab rows left the Window menu for it, as Chrome's Window menu has none.
       const window = labels(submenu(last(h), 'Window'))
-      for (const row of ['Select Next Tab', 'Select Previous Tab', 'Search Tabs…'])
+      for (const row of ['Select Next Tab', 'Select Previous Tab', 'Search Tabs'])
         expect(window).not.toContain(row)
     })
 
@@ -884,7 +885,7 @@ describe('the macOS menu bar', () => {
       expectChord('Duplicate Tab', 'tab.duplicate')
       expectChord('Pin Tab', 'tab.togglePin')
       expectChord('Add Tab to New Split View', 'split.newEmpty')
-      expectChord('Search Tabs…', 'tab.search')
+      expectChord('Search Tabs', 'tab.search')
       // Chrome's chords, in the chrome preset; Add Tab to New Split View has none in Chrome and
       // shows the key table's own (the View menu's New Empty Split View row's, the same action).
       expect(chords['Select Next Tab']).toBe('Ctrl+Tab')
@@ -892,7 +893,7 @@ describe('the macOS menu bar', () => {
       expect(chords['Duplicate Tab']).toBe('Cmd+Shift+K')
       expect(chords['Pin Tab']).toBe('Cmd+Ctrl+P')
       expect(chords['Add Tab to New Split View']).toBe('Cmd+Shift+*')
-      expect(chords['Search Tabs…']).toBe('Cmd+Shift+A')
+      expect(chords['Search Tabs']).toBe('Cmd+Shift+A')
       for (const label of [
         'New Tab Below',
         'Mute Site',
@@ -920,7 +921,7 @@ describe('the macOS menu bar', () => {
         ['Duplicate Tab', 'tab.duplicate'],
         ['Pin Tab', 'tab.togglePin'],
         ['Add Tab to New Split View', 'split.newEmpty'],
-        ['Search Tabs…', 'tab.search']
+        ['Search Tabs', 'tab.search']
       ] as Array<[string, ShortcutAction]>)
         expect(item(menu, label).accelerator ?? null).toBe(toAccelerator(bindingFor(table, action)))
     })
@@ -930,14 +931,14 @@ describe('the macOS menu bar', () => {
       try {
         const h = harness()
         // The fresh window holds no tab (this host's New Tab is the URL bar alone): every row
-        // about a tab greys; Search Tabs… wants a window alone.
+        // about a tab greys; Search Tabs wants a window alone.
         const none = enabled(h)
-        expect(none['Search Tabs…']).toBe(true)
+        expect(none['Search Tabs']).toBe(true)
         expect(
           Object.entries(none)
             .filter(([, on]) => on)
             .map(([l]) => l)
-        ).toEqual(['Search Tabs…'])
+        ).toEqual(['Search Tabs'])
         // A new tab page: no site to mute, nothing else to close, no folder to leave; the one
         // tab the window shows is not moved to a window of its own (Chrome's
         // `CanMoveTabsToNewWindow`), but it can head a split.
@@ -956,7 +957,7 @@ describe('the macOS menu bar', () => {
           'Close Tabs Below': false,
           'Move Tab to New Window': false,
           'Add Tab to New Split View': true,
-          'Search Tabs…': true
+          'Search Tabs': true
         })
         const site = h.browser.tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
         h.browser.tabs.createTab({ url: 'https://b.test/', active: false }, h.win)
