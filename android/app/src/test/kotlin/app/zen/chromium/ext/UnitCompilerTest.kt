@@ -334,16 +334,28 @@ class UnitCompilerTest {
         val compiler = UnitCompiler { "/*boot*/" }
         val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("src/pages/contentInject/index.js", "big.js", "cs.js")), true, read, size)
         val script = compiled[0].script
-        assertTrue(script.contains("""import("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js").then(n=>n.i)"""))
-        assertTrue(script.contains("""import("https://$id.ext.zenium.invalid/chunk.js");"""))
+        // The content script's own call goes through the bootstrap's helper (compat round 25, Web
+        // Scrobbler: the page's policy refused the served origin, and the script awaits its promise).
+        val helper = RelativeImports.HELPER
+        assertTrue(script.contains("""$helper("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js").then(n=>n.i)"""))
+        assertTrue(script.contains("""$helper("https://$id.ext.zenium.invalid/chunk.js");"""))
         assertFalse(script.contains("""import("../../../assets"""))
+        assertFalse(script.contains("""import("https://"""))
         // The CSS travels JSON-quoted; its `import(` and `url(` are as written, nothing of it rewritten.
         assertTrue(script.contains("not-a-script.js") && script.contains("./x.css") && script.contains("./b.png"))
         assertFalse(script.contains("ext.zenium.invalid/not-a-script.js") || script.contains("ext.zenium.invalid/x.css"))
+        assertFalse(script.contains("""$helper("./not-a-script.js")"""))
         // The text is rewritten as it goes into a unit, never in the cache: a re-plan reads the file again and rewrites it the same way.
         val again = compiler.compile(id, "1.0.0", units("k2" to listOf("src/pages/contentInject/index.js")), true, read, size)
         assertEquals(6, reads) // index.js and the CSS again
-        assertTrue(again[0].script.contains("""import("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js")"""))
+        assertTrue(again[0].script.contains("""$helper("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js")"""))
+        // A `world: "MAIN"` group (isolation "none") is the page's own script in Chrome too: its
+        // specifier is still resolved, its keyword stays the native `import(`.
+        val main = units("k3" to listOf("src/pages/contentInject/index.js"))
+        main.getJSONObject(0).getJSONArray("groups").getJSONObject(0).put("isolation", "none")
+        val page = compiler.compile(id, "1.0.0", main, true, read, size)[0].script
+        assertTrue(page.contains("""import("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js").then(n=>n.i)"""))
+        assertFalse(page.contains(helper))
     }
 
     @Test
@@ -490,7 +502,7 @@ class UnitCompilerTest {
         assertEquals(3, compiled.size)
         for (unit in compiled.take(2)) {
             assertNull(unit.refused)
-            assertTrue(unit.script.contains("""import("https://$id.ext.zenium.invalid/chunk.js")"""))
+            assertTrue(unit.script.contains("""${RelativeImports.HELPER}("https://$id.ext.zenium.invalid/chunk.js")"""))
             // The public org.json leaves `/` alone where Android's escapes it; the count covers both, so it may sit over the JVM's text by the CSS's slashes alone.
             assertTrue("${unit.key}: presized ${unit.presized} for ${unit.script.length}", unit.presized >= unit.script.length)
             assertTrue(unit.presized - unit.script.length <= files["style.css"]!!.count { it == '/' })

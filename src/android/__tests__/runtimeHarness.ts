@@ -6,7 +6,8 @@ import type {
   SearchEngineControl,
   Space,
   Tab,
-  TabSection
+  TabSection,
+  TopSite
 } from '@shared/types'
 import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '@shared/fonts'
 import { DEFAULT_AUTOFILL_SETTINGS } from '@shared/defaults'
@@ -552,6 +553,8 @@ export interface Harness {
    * (`zen://pdf?id=…`) → the URL of the PDF it shows, which the tab reads as to extensions.
    */
   pdfDocuments: Map<string, string>
+  /** The browser's most visited sites (`browser.history.topSites`, the new tab page's ranking), mutable: what `chrome.topSites.get` lists. */
+  topSites: TopSite[]
   /** Turn the phone's screen to `angle` degrees (0, 90, 180, 270): `system.display.onDisplayChanged`. */
   turnScreen: (angle: number) => void
   /**
@@ -641,6 +644,7 @@ export function harness(
     }
   } as unknown as ZenWindow
   const pdfDocuments = new Map<string, string>()
+  const topSites: TopSite[] = []
   const search: Harness['search'] = []
   const fonts: PageFontSettings = { ...DEFAULT_FONT_SETTINGS }
   const passwords = { offerToSave: true }
@@ -684,6 +688,7 @@ export function harness(
     },
     extensions: { list: () => infos },
     pdf: { documentUrl: (url: string) => pdfDocuments.get(url) ?? null },
+    history: { topSites: (n: number) => topSites.slice(0, Math.max(0, n)) },
     tabs: {
       tab: (id: string) => tabs[id],
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
@@ -796,6 +801,7 @@ export function harness(
     toasts,
     infos,
     pdfDocuments,
+    topSites,
     search,
     fonts,
     passwords,
