@@ -1,8 +1,7 @@
 import type { JSX } from 'react'
-import { useBackSurface } from '@renderer/lib/back'
+import { closeChromeForBack, useBackSurface } from '@renderer/lib/back'
 import { bandStore, chooseBand, dismissBand } from '@renderer/lib/band'
 import { useAndroidBand } from '@renderer/lib/band/mount'
-import { closeAllPopovers, openPopoverCount } from '@renderer/lib/popoverStore'
 import { PageEdgeBand } from './PageEdgeBand'
 
 /**
@@ -19,10 +18,13 @@ import { PageEdgeBand } from './PageEdgeBand'
  *
  * The band's tenants are unasked offers and notices: the band takes no focus on open (nothing
  * here or in the content moves it; TalkBack hears the title through `role="status"` alone), and
- * the system Back gesture is its Escape (spec §9 item 6) – a standing band is the chrome's
- * topmost back surface and Back puts it away UNANSWERED (`escape`: no cooldown, no campaign
- * dismissal; `lib/band/tenants.ts`). A §9.20 popover over the page is lighter still and goes
- * first, as the plain back chain has it.
+ * the system Back gesture is its Escape (spec §9 item 6) – a standing band is a back surface
+ * and Back puts it away UNANSWERED (`escape`: no cooldown, no campaign dismissal;
+ * `lib/band/tenants.ts`). The band stands over the page and under the rest of the chrome: a
+ * surface registered after it (a sheet, the overview) is above it on the registry's stack, and
+ * on its own commit the band yields to the chrome that registers no surface – a §9.20 popover,
+ * the find bar, a glance (`closeChromeForBack`, the legacy chain's order) – so a Back with the
+ * find bar open over a band closes the find bar, and the next Back the band.
  */
 export function TouchBandLayer(): JSX.Element | null {
   const host = useAndroidBand()
@@ -32,8 +34,8 @@ export function TouchBandLayer(): JSX.Element | null {
       ? {
           name: 'band',
           onCommit: () => {
-            if (openPopoverCount() > 0) closeAllPopovers()
-            else dismissBand(entry.id, 'escape')
+            if (closeChromeForBack()) return
+            dismissBand(entry.id, 'escape')
           }
         }
       : null

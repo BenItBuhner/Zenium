@@ -28,6 +28,7 @@ vi.mock('@renderer/lib/formFactor', async (importOriginal) => {
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { TouchBandLayer } = await import('../TouchBandLayer')
+const { run } = await import('@renderer/lib/api')
 const { backStore, dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { bandStore, resetBands } = await import('@renderer/lib/band')
 const { mountedAndroidBand } = await import('@renderer/lib/band/mount')
@@ -115,8 +116,15 @@ describe('TouchBandLayer – the band on the touch hosts', () => {
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
     setPullHost({ setOffset: () => undefined })
     browserStore.set({ state: stateWith('t1') })
-    uiStore.set({ frameDialogsOpen: 0, frameDialogCover: 0, banners: [] })
+    uiStore.set({
+      frameDialogsOpen: 0,
+      frameDialogCover: 0,
+      banners: [],
+      findOpen: false,
+      findTabId: null
+    })
     resetBands()
+    vi.mocked(run).mockClear()
   })
 
   afterEach(() => {
@@ -233,5 +241,45 @@ describe('TouchBandLayer – the band on the touch hosts', () => {
     })
     expect(bandStore.get().entries).toEqual([])
     expect(tenant.away).toBe(1)
+  })
+
+  it('the shell’s order holds with a band up: the find bar, which registers no surface, closes on the first Back and the band stands; the next Back puts the band away', () => {
+    render()
+    const tenant = postInstall()
+    expect(topBackSurface()?.name).toBe('band')
+    act(() => uiStore.set({ findOpen: true, findTabId: 't1' }))
+
+    act(() => {
+      expect(dispatchBackEvent('commit')).toBe(true)
+    })
+    expect(uiStore.get().findOpen).toBe(false)
+    expect(vi.mocked(run)).toHaveBeenCalledWith('find.stop', { tabId: 't1', keepSelection: true })
+    expect(bandStore.get().entries.map((e) => e.key)).toEqual(['install'])
+    expect(tenant.away).toBe(0)
+    expect(topBackSurface()?.name).toBe('band')
+
+    act(() => {
+      expect(dispatchBackEvent('commit')).toBe(true)
+    })
+    expect(bandStore.get().entries).toEqual([])
+    expect(tenant.away).toBe(1)
+    expect(tenant.ends).toEqual([])
+  })
+
+  it('a glance over the page goes before the band too: Back closes the glance, never the band under it', () => {
+    render()
+    const tenant = postInstall()
+    act(() => {
+      browserStore.set({
+        state: { ...stateWith('t1'), glance: {} as unknown as NonNullable<UIState['glance']> }
+      })
+    })
+
+    act(() => {
+      expect(dispatchBackEvent('commit')).toBe(true)
+    })
+    expect(vi.mocked(run)).toHaveBeenCalledWith('glance.close', undefined)
+    expect(bandStore.get().entries.map((e) => e.key)).toEqual(['install'])
+    expect(tenant.away).toBe(0)
   })
 })
