@@ -66,6 +66,7 @@ import type {
 import type { TranslateUIState } from '../shared/translate'
 import type { ContentDefault } from '../shared/contentSettings'
 import type { InstalledWebApp } from '../shared/webApp'
+import type { ShareChooser } from '../shared/shareTarget'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
@@ -352,6 +353,8 @@ export interface StateExtras {
   closingTabIds: string[]
   screenCaptureRequests: ScreenCaptureRequest[]
   shareRequests: ShareRequest[]
+  /** The share waiting on this window's chooser (MW-63), null while none does. */
+  shareChooser: ShareChooser | null
   crashRestore: CrashRestoreOffer | null
   autofill: AutofillUIState
   blocking: BlockingStatus
@@ -554,6 +557,7 @@ export class BrowserState {
     closingTabIds: [],
     screenCaptureRequests: [],
     shareRequests: [],
+    shareChooser: null,
     crashRestore: null,
     autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),

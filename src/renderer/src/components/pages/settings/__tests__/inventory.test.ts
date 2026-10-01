@@ -682,7 +682,7 @@ const INVENTORY: Record<string, readonly string[]> = {
   ],
   passwords: ['Manage passwords', 'Offer to save passwords', 'Ask again before showing or copying'],
   // #259's Import (ID-23): the pane's two dialog rows; the last import's one row comes and goes.
-  import: ['Bookmarks, history and passwords', 'Bookmarks HTML or passwords CSV'],
+  import: ['Bookmarks, history, passwords and addresses', 'Bookmarks HTML or passwords CSV'],
   security: ['meet.example', 'Forget sign-ins and certificates'],
   sync: [
     'Sync now',

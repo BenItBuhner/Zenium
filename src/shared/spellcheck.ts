@@ -177,13 +177,21 @@ const LANGUAGE_NAMES: Record<string, string> = {
   gl: 'Galician'
 }
 
+interface LanguageDisplayNames {
+  of(code: string): string | undefined
+}
+
 /**
- * The display name of a dictionary code in `uiLocale` (`en-US` → "English (United States)",
- * `de` → "German"), the way Chrome's list labels them. `Intl.DisplayNames` where the runtime
- * has it, a short table otherwise, and the code itself as the last resort.
+ * One `Intl.DisplayNames` per UI locale, kept for the process (as `languageNames.ts` keeps
+ * its own): the names are read for every available dictionary each time the core snapshots
+ * its state, and building the formatter is the cost of the read – `null` where the runtime
+ * has no `Intl.DisplayNames` or cannot build one for the locale.
  */
-export function spellcheckLanguageName(code: string, uiLocale = 'en'): string {
-  const normalized = code.replace('_', '-')
+const DISPLAY_NAMES = new Map<string, LanguageDisplayNames | null>()
+
+function displayNamesFor(uiLocale: string): LanguageDisplayNames | null {
+  let names = DISPLAY_NAMES.get(uiLocale)
+  if (names !== undefined) return names
   const IntlAny = Intl as unknown as {
     DisplayNames?: new (
       locales: string[],
@@ -192,18 +200,38 @@ export function spellcheckLanguageName(code: string, uiLocale = 'en'): string {
         languageDisplay?: 'standard' | 'dialect'
         fallback?: 'code' | 'none'
       }
-    ) => { of(code: string): string | undefined }
+    ) => LanguageDisplayNames
   }
+  names = null
   if (IntlAny.DisplayNames) {
     try {
       // `standard` keeps region names spelled out ("Portuguese (Brazil)", not "Brazilian
       // Portuguese"), which is how Chrome's Languages settings list them; `none` leaves a code
       // the runtime has no name for to the table rather than "zz (Unknown Region)".
-      const name = new IntlAny.DisplayNames([uiLocale, 'en'], {
+      names = new IntlAny.DisplayNames([uiLocale, 'en'], {
         type: 'language',
         languageDisplay: 'standard',
         fallback: 'none'
-      }).of(normalized)
+      })
+    } catch {
+      /* an unsupported locale: the table names the codes */
+    }
+  }
+  DISPLAY_NAMES.set(uiLocale, names)
+  return names
+}
+
+/**
+ * The display name of a dictionary code in `uiLocale` (`en-US` → "English (United States)",
+ * `de` → "German"), the way Chrome's list labels them. `Intl.DisplayNames` where the runtime
+ * has it, a short table otherwise, and the code itself as the last resort.
+ */
+export function spellcheckLanguageName(code: string, uiLocale = 'en'): string {
+  const normalized = code.replace('_', '-')
+  const names = displayNamesFor(uiLocale)
+  if (names) {
+    try {
+      const name = names.of(normalized)
       if (name && name.toLowerCase() !== normalized.toLowerCase()) return name
     } catch {
       /* an unsupported code: fall through */

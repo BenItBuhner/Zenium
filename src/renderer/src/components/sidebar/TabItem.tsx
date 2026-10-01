@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   BluetoothConnected,
   Bot,
@@ -74,7 +74,12 @@ interface Props {
   slot?: StripSlot
 }
 
-export function TabItem({
+/**
+ * The row renders again only for its own change: its tab's object (a snapshot keeps an
+ * unchanged tab's identity, `lib/structuralShare.ts`), its place and its form (`sameProps`);
+ * the stores and contexts it reads reach it on their own.
+ */
+export const TabItem = memo(function TabItem({
   tab,
   active,
   compact,
@@ -424,6 +429,26 @@ export function TabItem({
         </>
       )}
     </div>
+  )
+}, sameProps)
+
+/**
+ * The row's props one by one; the segment by its place, since `SplitGroupRow` builds the object
+ * afresh on each of its renders.
+ */
+function sameProps(a: Props, b: Props): boolean {
+  return (
+    a.tab === b.tab &&
+    a.active === b.active &&
+    a.compact === b.compact &&
+    a.indent === b.indent &&
+    a.parent === b.parent &&
+    a.slot === b.slot &&
+    (a.segment === b.segment ||
+      (a.segment !== undefined &&
+        b.segment !== undefined &&
+        a.segment.index === b.segment.index &&
+        a.segment.count === b.segment.count))
   )
 }
 

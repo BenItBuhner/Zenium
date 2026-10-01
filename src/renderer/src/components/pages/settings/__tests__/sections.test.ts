@@ -5231,7 +5231,7 @@ describe('what a row does', () => {
     ])
     expect(row(idle, 'import-browser')).toMatchObject({
       kind: 'action',
-      label: 'Bookmarks, history and passwords',
+      label: 'Bookmarks, history, passwords and addresses',
       description: 'From Google Chrome, Chromium, Microsoft Edge, Firefox or Safari',
       button: 'Import…'
     })

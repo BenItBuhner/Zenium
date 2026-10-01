@@ -146,6 +146,7 @@ describe('discoverSources', () => {
     host.file(`${ud}/Default/Bookmarks`, '{"roots":{}}')
     host.file(`${ud}/Default/History`, 'sqlite')
     host.file(`${ud}/Default/Login Data`, 'sqlite')
+    host.file(`${ud}/Default/Web Data`, 'sqlite')
     host.file(`${ud}/Profile 2/Bookmarks`, '{"roots":{}}')
     host.dir(`${ud}/Guest Profile`)
     return host
@@ -167,7 +168,7 @@ describe('discoverSources', () => {
       profileId: 'Default',
       name: 'Person 1',
       running: false,
-      kinds: ['bookmarks', 'history', 'passwords'],
+      kinds: ['bookmarks', 'history', 'passwords', 'addresses'],
       limits: {}
     })
     expect(second).toMatchObject({
@@ -215,7 +216,29 @@ describe('discoverSources', () => {
   it('withholds history until the history model can take imported visits', async () => {
     const host = chromeMachine()
     const sources = await discoverSources(host, { ...OPTIONS, historyWritable: false })
-    expect(sources[1].kinds).toEqual(['bookmarks', 'passwords'])
+    expect(sources[1].kinds).toEqual(['bookmarks', 'passwords', 'addresses'])
+  })
+
+  it('offers Chrome’s addresses wherever Web Data is, into the vault: on Windows too, not without a vault (ID-57)', async () => {
+    const host = chromeMachine()
+    const chrome = (await discoverSources(host, OPTIONS)).filter((s) => s.browser === 'chrome')
+    expect(chrome.map((s) => [s.profileId, s.kinds.includes('addresses')])).toEqual([
+      ['Profile 2', false],
+      ['Default', true]
+    ])
+    // Addresses are stored in the clear: Windows reads them though its passwords stay behind DPAPI.
+    const win = new FakeImportHost('C:/Users/b', { LOCALAPPDATA: 'C:/Users/b/AppData/Local' })
+    const profile = 'C:/Users/b/AppData/Local/Google/Chrome/User Data/Default'
+    win.file(`${profile}/Bookmarks`, '{}')
+    win.file(`${profile}/Login Data`, 'sqlite')
+    win.file(`${profile}/Web Data`, 'sqlite')
+    const onWindows = await discoverSources(win, { ...OPTIONS, os: 'win32' })
+    expect(onWindows[0].kinds).toEqual(['bookmarks', 'addresses'])
+    expect(onWindows[0].limits.passwords).toBe(passwordLimit('chrome', 'win32'))
+    // The vault they go into is the passwords capability's: no vault, no addresses, no limit recorded.
+    const noVault = await discoverSources(host, { ...OPTIONS, passwordsAvailable: false })
+    expect(noVault[1].kinds).toEqual(['bookmarks', 'history'])
+    expect(noVault[1].limits).toEqual({})
   })
 
   it('records the Windows DPAPI limit instead of offering Chrome passwords there', async () => {
