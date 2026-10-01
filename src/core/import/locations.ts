@@ -253,7 +253,9 @@ export const CHROMIUM_FILES = {
   bookmarks: 'Bookmarks',
   history: 'History',
   /** The profile's logins; `Login Data For Account` holds the account-store ones (Chrome 8x+). */
-  logins: ['Login Data', 'Login Data For Account']
+  logins: ['Login Data', 'Login Data For Account'],
+  /** The autofill database: saved addresses (local and account ones alike, ID-57), payment methods. */
+  addresses: 'Web Data'
 } as const
 
 export const FIREFOX_FILES = {

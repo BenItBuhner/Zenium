@@ -4783,12 +4783,12 @@ describe('the selection toolbar', () => {
     copied = ''
     h.menu(pageParams({ selectionText: 'quantum foam' }))
     h.viewCalls.length = 0
-    h.sent.length = 0
+    h.toasts.length = 0
     h.click('Copy Link to Highlight')
     expect(answerTextFragment(h, null)).toBeTruthy()
     await settle()
     expect(copied).toBe('')
-    expect(h.sent).toContain('toast')
+    expect(h.toasts).toEqual([{ message: 'Could not make a link to this text', kind: 'info' }])
     // A `zen://` page has no highlight anyone could follow: no item.
     h.browser.tabs.tab(h.tabId)!.url = 'zen://settings'
     expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(

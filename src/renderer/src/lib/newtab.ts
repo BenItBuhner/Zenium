@@ -1,9 +1,8 @@
-import type { NewTabMode, NewTabShortcut, Rect } from '@shared/types'
+import type { Rect } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { BLANK_URL, getHost } from '@shared/url'
 import { cmd } from './api'
 import { closeOverview, overviewIsOpen, setStageLayerShown } from './gestures/stage'
-import type { TopSite } from './historyAdapter'
 import { reducedMotion, type SpringConfig } from './motion/spring'
 import { activeTab } from './selectors'
 import { createStore } from './store'
@@ -378,62 +377,17 @@ export async function readWallpaperFile(file: File): Promise<string> {
 // Tiles
 // ---------------------------------------------------------------------------
 
-export interface TopSiteTile {
-  url: string
-  title: string
-  favicon: string | null
-  pinned: boolean
-}
+/**
+ * The page's grid is composed in the shared module (`composeTiles`), so the core lays the same
+ * list into the omnibox's tile row on the phone (OMN-04).
+ */
+export { composeTiles, type TopSiteTile } from '@shared/newTab'
 
 /** Host without `www.`, lower-cased: the identity a tile stands for. */
 function tileHost(url: string): string {
   return getHost(url)
     .toLowerCase()
     .replace(/^www\./, '')
-}
-
-/**
- * The tiles the page shows, `n` at most: the pinned sites first, in their order, then the most
- * visited sites of other hosts – or only the pinned ones when the shortcuts are "my shortcuts".
- * A pin borrows the icon (and a missing title) from the history of its host, since a pin only
- * knows its URL and title.
- */
-export function composeTiles(opts: {
-  pinned: readonly Pick<NewTabShortcut, 'url' | 'title'>[]
-  ranked: readonly TopSite[]
-  style: NewTabMode
-  n: number
-  /** Icons known from elsewhere (open tabs), by host. */
-  favicons?: ReadonlyMap<string, string>
-}): TopSiteTile[] {
-  const byHost = new Map<string, TopSite>()
-  for (const site of opts.ranked) {
-    const host = tileHost(site.url)
-    if (host && !byHost.has(host)) byHost.set(host, site)
-  }
-  const pinnedHosts = new Set<string>()
-  const tiles: TopSiteTile[] = []
-  for (const pin of opts.pinned) {
-    const host = tileHost(pin.url)
-    if (!host || pinnedHosts.has(host)) continue
-    pinnedHosts.add(host)
-    const known = byHost.get(host)
-    tiles.push({
-      url: pin.url,
-      title: pin.title || known?.title || '',
-      favicon: known?.favicon ?? opts.favicons?.get(host) ?? null,
-      pinned: true
-    })
-  }
-  if (opts.style === 'most-visited') {
-    for (const site of opts.ranked) {
-      const host = tileHost(site.url)
-      if (!host || pinnedHosts.has(host)) continue
-      pinnedHosts.add(host)
-      tiles.push({ url: site.url, title: site.title, favicon: site.favicon, pinned: false })
-    }
-  }
-  return tiles.slice(0, Math.max(0, opts.n))
 }
 
 /** Longest caption a tile carries before the host stands in for the title. */
