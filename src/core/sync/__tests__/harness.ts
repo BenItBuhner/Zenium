@@ -120,6 +120,8 @@ export function device(
     fetch?: SyncFetch
     /** The host's secret store (the app password's home); absent for a host without one. */
     secrets?: SecretStore
+    /** The host's extensions (a desktop or phone with store installs, ID-44); absent for a host without any. */
+    extensions?: Platform['createExtensions']
   } = {}
 ): Device {
   const transports: HarnessTransport[] = []
@@ -193,6 +195,7 @@ export function device(
     },
     sync: host,
     ...(options.secrets ? { secrets: options.secrets } : {}),
+    ...(options.extensions ? { createExtensions: options.extensions } : {}),
     readabilitySource: () => null,
     ...(webNotifications ? { webNotifications } : {})
   }
@@ -262,6 +265,28 @@ export async function published(d: Device, folder = '/drive'): Promise<SyncRecor
     file.envelope as Parameters<typeof decryptJson>[1]
   )
   return payload.records
+}
+
+/**
+ * Every device file the folder holds NOW, decrypted, by the device id its name carries: what a
+ * peer reading the folder at this moment would find on the wire. The folder is the current
+ * map – a file is overwritten at each of its device's rounds – so a claim about what was ever
+ * on the wire is made by calling this at each checkpoint, not once at the end.
+ */
+export async function publishedAll(folder = '/drive'): Promise<Map<string, SyncRecord[]>> {
+  const out = new Map<string, SyncRecord[]>()
+  for (const [name, text] of folderFiles(folder)) {
+    if (!isDeviceFileName(name)) continue
+    const file = JSON.parse(text) as { deviceId: string; envelope: unknown }
+    expect(isEnvelope(file.envelope)).toBe(true)
+    const key = await folderKey((file.envelope as { salt: string }).salt)
+    const payload = await decryptJson<{ v: 1; records: SyncRecord[] }>(
+      key,
+      file.envelope as Parameters<typeof decryptJson>[1]
+    )
+    out.set(file.deviceId, payload.records)
+  }
+  return out
 }
 
 /** Every readable document of one kind a device wrote (its payload decrypted), by file name. */

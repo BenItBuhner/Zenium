@@ -2,9 +2,9 @@
   "id": "reader-ui",
   "order": 71,
   "class": "ReaderUiDemo",
-  "shard": "phone-g",
+  "shard": "phone-h",
   "mirrors": "android-reader-ui-demo.yml",
   "dir": "reader-ui-demo",
   "estimate": 5.5,
-  "note": "Moved from phone-b (68 of its 68 minutes, #610's move there) to phone-g by W6-H's rebalance, with read-aloud: the two largest drivers of phone-b that nothing ties there (a11y-chrome, its largest, is the shard's last by its own note); phone-b at 57.5 without them. The same image, no setup step of its own."
+  "note": "Moved from phone-b (68 of its 68 minutes, #610's move there) to phone-g by W6-H's rebalance, with read-aloud: the two largest drivers of phone-b that nothing ties there (a11y-chrome, its largest, is the shard's last by its own note); phone-b at 57.5 without them. The same image, no setup step of its own. Moved on to phone-h when that shard opened (W6-S24c-b; phone-g at 65 of its 68 minutes, past the headroom line), with sync-webdav and site-data-ui: the third largest of phone-g that nothing ties there (autofill and passwords-ui carry the PIN and their own wrapper, inactive-tabs prepares phone-g as its first, search-choice wants its last); phone-g at 42 without the three."
 }

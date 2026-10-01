@@ -18,6 +18,7 @@ import { run } from '@renderer/lib/api'
 import { errorCounts, errorSummary } from '@renderer/lib/extensions/errorText'
 import { relativeTime } from '@renderer/lib/extensions/format'
 import { extensionRevealStore, takeExtensionReveal } from '@renderer/lib/extensions/manage'
+import { SYNCED_PENDING_LINE } from '@renderer/lib/extensions/promptCopy'
 import { parseStoreInput, versionAndSource } from '@renderer/lib/extensions/storeInput'
 import { browserStore, closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -393,6 +394,15 @@ function ExtensionCard({
           {mv2 && !ext.error && (
             <span className="zen-ext-sub" data-tone="warn">
               Manifest V2 extensions are being retired
+            </span>
+          )}
+          {/*
+            A synced landing waiting for the user's approval (ID-44): off until the switch is
+            turned on, which opens the install prompt with the permission warnings first.
+          */}
+          {ext.pendingApproval && (
+            <span className="zen-ext-sub" data-tone="warn" data-pending-approval="">
+              {SYNCED_PENDING_LINE}
             </span>
           )}
         </span>

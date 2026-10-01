@@ -1083,6 +1083,15 @@ export interface ExtensionInfo {
   pinned: boolean
   /** Shown as a toolbar button; other extensions live in the puzzle-piece panel. */
   toolbarPinned: boolean
+  /**
+   * When `enabled` and `toolbarPinned` were last written on this device (ms), each switch's own
+   * clock for the sync merge (ID-44: a peer's record lands a switch only when its clock for that
+   * switch is the later one). Written by every flip made on the device (the desktop's and the
+   * phone's alike); absent on a record from before the clocks and on a switch never flipped
+   * here, which the merge reads as written at 0 – older than any clocked switch.
+   */
+  enabledAt?: number
+  toolbarPinnedAt?: number
   /** Chrome's "Allow access to file URLs"; off by default. */
   allowFileAccess: boolean
   /**
@@ -1109,6 +1118,13 @@ export interface ExtensionInfo {
   warnings: string[]
   /** Warning lines an update added; the extension stays disabled until they are approved. */
   pendingWarnings: string[] | null
+  /**
+   * Installed here by sync from another device's record (ID-44) and not yet approved: it landed
+   * turned off, and enabling it opens the install prompt with its permission warnings first.
+   * Absent on a host that applies no synced extension (the phone) and on an extension the user
+   * installed here.
+   */
+  pendingApproval?: boolean
   updateState: ExtensionUpdateState
   /** The version the last check offered, while `updateState` is `available` or `updating`. */
   availableVersion: string | null
@@ -1324,6 +1340,23 @@ export interface SyncScope {
    * for it, so `collectLocal` under one publishes no Mod (`__tests__/compat.test.ts`).
    */
   mods: boolean
+  /**
+   * The extensions installed from a store (Chrome's "Extensions" type, `syncer::EXTENSIONS`;
+   * services pass 16, ID-44): one `extension` record per extension whose `source` is a store id
+   * – `chrome-web-store` or `edge-add-ons` – under the extension's own id, carrying the store,
+   * whether it is enabled and whether it is pinned to the toolbar (`ExtensionRecordData`); on
+   * by default, as Chrome's is. An extension installed from a `.crx` or `.zip` file or loaded
+   * unpacked stays on its device, as Chrome keeps its unpacked ones out of sync, and so does
+   * every per-device grant (file access, private windows, user scripts). Every host whose
+   * registry holds store installs publishes the type; a device that applies it (the desktop)
+   * installs a synced extension from its store and lands it TURNED OFF, waiting for the user's
+   * approval of its permissions (`ExtensionInfo.pendingApproval`) – nothing is granted by sync.
+   * While off, the device neither publishes the type nor takes it in, and its metadata for the
+   * type is frozen, as with every scoped type. Absent on a `sync.json` older than the key, where
+   * the engine completes it with the default; a scope object from an older build says nothing
+   * for it, so `collectLocal` under one publishes no extension (`__tests__/compat.test.ts`).
+   */
+  extensions: boolean
 }
 
 /** One open tab of another device, as its `open-tabs` record carries it (ID-28). */
@@ -7607,6 +7640,14 @@ export interface Events {
    * `unpack: false` when the user confirms. A folder with nothing in it is deleted without asking.
    */
   'folder.confirmDelete': { folderId: string }
+  /**
+   * Close the group's tabs with Undo on the toast (the touch hosts' group menu's "Close Group (N
+   * Tabs)", TAB-16): the chrome runs `folder.close` through its one close-with-undo
+   * (`lib/closeUndo.ts`) so the toast reads "<Name> tab group closed and saved" and Undo brings
+   * the tabs back into the group, which re-opens. The desktop's folder menu never emits it: its
+   * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
+   */
+  'folder.closeUndoable': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
