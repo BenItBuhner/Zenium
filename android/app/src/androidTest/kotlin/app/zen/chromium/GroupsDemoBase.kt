@@ -540,6 +540,36 @@ abstract class GroupsDemoBase(
         SystemClock.sleep(500)
     }
 
+    /**
+     * The text of the first toast up within `windowMs`, or null when none comes: the claim that an
+     * act raised NO toast (a Delete Group after its ask, TAB-13 / TAB-16's option C) is a wait
+     * that finds nothing.
+     */
+    protected fun toastWithin(windowMs: Long): String? {
+        val deadline = SystemClock.uptimeMillis() + windowMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (inDom(TOAST)) return textOf("$TOAST .zen-message-text")
+            SystemClock.sleep(150)
+        }
+        return null
+    }
+
+    /** Touch the toast's action once the toast is at rest; a picked action sends the toast off at once. */
+    protected fun undoToast(): Boolean {
+        if (awaitRect(6_000) { domRect("$TOAST .zen-message-button") } == null) {
+            finding("  (the toast's Undo never showed)")
+            return false
+        }
+        awaitJs("(function(){var e=document.querySelector('$TOAST');return !!e&&!e.hasAttribute('data-moving')})()", true, 1_500)
+        return touchUntil("the toast's Undo", { domRect("$TOAST .zen-message-button") }, { !inDom(TOAST) || jsBoolean("document.querySelector('$TOAST').hasAttribute('data-moving')") }, waitMs = 800)
+    }
+
+    /** The pages on the core's recently closed list (`session.recentlyClosed`), newest first; a window entry's is empty. */
+    protected fun recentlyClosedUrls(): List<String> {
+        val entries = runCatching { JSONArray(coreInvoke("session.recentlyClosed")) }.getOrDefault(JSONArray())
+        return (0 until entries.length()).map { entries.getJSONObject(it).optString("url") }
+    }
+
     companion object {
         const val PORT = 18168
         const val ORIGIN = "http://127.0.0.1:$PORT"

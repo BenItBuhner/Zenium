@@ -30,16 +30,18 @@ import kotlin.math.roundToInt
  *     Group" stands right under "Open Link in New Tab" (Chrome 152's pair, the phone's order
  *     since #492's ruling); the touch on it opens the page in the group right behind Alpha,
  *     Alpha staying active, Beta behind the new tab;
- *  6. Close Group (3 Tabs) from the row's sheet: the tabs go (one toast with Undo), the group
- *     stays listed under SAVED with the ring glyph and "3 tabs", the core keeping the three
- *     pages in order;
+ *  6. Close Group (3 Tabs) from the row's sheet: the tabs go (one toast, "Reading tab group
+ *     closed and saved", with Undo – TAB-16's words on both touch hosts), the group stays listed
+ *     under SAVED with the ring glyph and "3 tabs", the core keeping the three pages in order;
  *  7. the saved row's sheet: Open (3 Tabs), Rename, Delete Group, no Close; Open brings the
  *     three pages back as the group's tabs in their order, and the Tabs pane shows the card;
- *  8. Delete Group: the §9.23 prompt (Cancel keeps the group; Delete in the danger ink deletes
- *     it) – the group's record goes, its tabs close with one toast whose Undo brings them back
- *     loose; the pane at none paints §9.17's one sentence – read off the painted boxes, not the
- *     DOM alone: the note inside the pane's box with height, its first line 48 under the
- *     segment, the finger's point on the sentence hitting it.
+ *  8. Delete Group: the §9.23 prompt – "Its 3 tabs close with it; Recently Closed keeps their
+ *     pages." (Cancel keeps the group; Delete in the danger ink deletes it) – the group's record
+ *     goes, its tabs close with it to Recently Closed, and NO toast follows: the ask was the
+ *     guard (TAB-13 / TAB-16, the Design Lead's option C: Undo for Close, a confirmation for
+ *     Delete, never both); the pane at none paints §9.17's one sentence – read off the painted
+ *     boxes, not the DOM alone: the note inside the pane's box with height, its first line 48
+ *     under the segment, the finger's point on the sentence hitting it.
  *
  * Findings in `tab-groups-findings.txt`, stills `tab-groups-NN-<state>.png`, the traced scene
  * in `frames.jsonl`. Driven by `android-tab-groups-demo.yml`'s phone act. See [GroupsDemoBase]
@@ -236,8 +238,10 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         check("the sheet's Close Group counts three", sheetRow("Close Group (3 Tabs)") != null, "items ${sheetItems()}")
         val closed = touchUntil("Close Group (3 Tabs)", { sheetRow("Close Group (3 Tabs)") }, { !tabExists(ALPHA) && !tabExists(BETA) }, waitMs = 8_000)
         check("the group's tabs close", closed, "alpha ${tabExists(ALPHA)}, beta ${tabExists(BETA)}")
-        val toast = awaitToast("3 tabs closed")
-        check("one toast, \"3 tabs closed\", with Undo", toast != null && inDom("$TOAST .zen-message-button"), "toast '$toast'")
+        // The one toast in the group's words (TAB-16: the same on the tablet's Close Group), not
+        // the tab count's "3 tabs closed", with the one Undo; left to its clock here.
+        val toast = awaitToast("Reading tab group closed and saved")
+        check("one toast, \"Reading tab group closed and saved\", with Undo", toast == "Reading tab group closed and saved" && inDom("$TOAST .zen-message-button"), "toast '${textOf("$TOAST .zen-message-text")}'")
         check(
             "the core keeps the group SAVED with its three pages in order",
             awaitCore { savedUrls(it) == listOf(ALPHA_URL, LINKED_URL, BETA_URL) },
@@ -272,13 +276,19 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
     // --- 8. Delete Group ---------------------------------------------------------------------------
 
     private fun deleteGroup() {
-        section("8. Delete Group: the prompt, Cancel, then Delete with its Undo")
+        section("8. Delete Group: the prompt, Cancel, then Delete – no toast after the ask")
         pickPane("groups")
         awaitDom(GROUPS_PANE, SHEET_WAIT)
         openRowSheet()
         val asked = touchUntil("Delete Group in the sheet", { sheetRow("Delete Group") }, { inDom(DELETE_PROMPT) }, waitMs = SHEET_WAIT)
         check("Delete Group asks first (the group holds tabs)", asked, "prompt ${inDom(DELETE_PROMPT)}")
-        check("the prompt is titled Delete Reading? with the consequence", jsBoolean("(function(){var s=document.querySelector('$DELETE_PROMPT');return !!s&&s.textContent.indexOf('Delete Reading?')>=0&&s.textContent.indexOf('Undo on the toast')>=0})()"), "text '${textOf(DELETE_PROMPT).take(160)}'")
+        // The prompt's words are the three hosts' one source (`folderDeleteWords`, lib/folderDelete.ts):
+        // the consequence, and no promise of an Undo.
+        check(
+            "the prompt is titled Delete Reading? with the consequence, \"Its 3 tabs close with it; Recently Closed keeps their pages.\"",
+            jsBoolean("(function(){var s=document.querySelector('$DELETE_PROMPT');return !!s&&s.textContent.indexOf('Delete Reading?')>=0&&s.textContent.indexOf('Its 3 tabs close with it; Recently Closed keeps their pages.')>=0&&s.textContent.indexOf('Undo')<0})()"),
+            "text '${textOf(DELETE_PROMPT).take(200)}'"
+        )
         check("Delete takes the danger ink, Cancel the plain", inDom("$DELETE_CONFIRM[data-danger]") && jsBoolean("(function(){var b=Array.prototype.find.call(document.querySelectorAll('$DELETE_PROMPT .zen-sheet-footer button'),function(n){return n.textContent.trim()==='Cancel'});return !!b&&!b.hasAttribute('data-danger')})()"), "confirm ${inDom(DELETE_CONFIRM)}")
         SystemClock.sleep(800)
         still("delete-prompt")
@@ -293,8 +303,10 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         val deleted = touchUntil("Delete", { domRect(DELETE_CONFIRM) }, { folder() == null }, waitMs = 8_000)
         check("Delete removes the group's record", deleted, "folder ${folder()}")
         check("its tabs close with it", members.size == 3 && awaitCore { s -> members.none { tabExists(it, s) } }, "members $members, live ${members.filter { tabExists(it) }}")
-        val toast = awaitToast("3 tabs closed")
-        check("one toast, \"3 tabs closed\"", toast != null, "toast '$toast'")
+        // The ask was the guard: no toast, so no Undo, after it (option C – never both). The
+        // window is longer than a close's settle wait (`CLOSE_SETTLE_MS`, 1.5 s) and the filing.
+        val toastAfter = toastWithin(3_000)
+        check("no toast follows the Delete", toastAfter == null, "toast '${toastAfter ?: ""}'")
         // The empty room off the painted boxes, not the DOM alone (the first-line review's ask): the
         // §9.17 note stands inside the pane's box with height, its sentence's line 48 under the
         // segment, and the point at the sentence's centre hits the sentence – nothing over it,
@@ -321,15 +333,14 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         check("the header counts no group", textOf(COUNT) == "0 groups", "count '${textOf(COUNT)}'")
         SystemClock.sleep(600)
         still("deleted-empty")
-        val undone = undo()
-        // Recently closed keeps a tab's id, the one Open gave it: the pages are the constant.
+        // The three pages are Recently Closed's to bring back – each an entry of its own on the
+        // core's list – and none is back in the track: nothing restored them loose.
         val pages = listOf(ALPHA_URL, LINKED_URL, BETA_URL)
-        check(
-            "Undo brings the three tabs back, loose",
-            undone && awaitCore { s -> pages.all { url -> tabIdAt(url, s)?.let { folderOf(it, s) == null } == true } },
-            "back ${pages.map { url -> url.removePrefix(ORIGIN) + " " + (tabIdAt(url)?.let { "as $it in ${folderOf(it)}" } ?: "missing") }}"
-        )
+        val recent = recentlyClosedUrls()
+        check("the three pages are on the recently closed list", pages.all { it in recent }, "recent ${recent.map { it.removePrefix(ORIGIN) }}")
+        check("none is restored: the track holds none of the three", pages.none { tabIdAt(it) != null }, "track ${trackOrder().map { (id, _) -> tabUrl(id)?.removePrefix(ORIGIN) ?: id }}")
         check("the group's record stays gone", folder() == null, "folder ${folder()}")
+        check("still no toast", !inDom(TOAST), "toast '${textOf("$TOAST .zen-message-text")}'")
         SystemClock.sleep(1_000)
     }
 
@@ -433,16 +444,6 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         jsText("(function(){var g=document.querySelector('$GROUPS_PANE .zen-group-row-glyph');if(!g)return '';var c=getComputedStyle(g).getPropertyValue('--zen-group-rgb').trim();return c?'rgb('+c.split(/\\s+/).join(', ')+')':''})()")
 
     private fun card(tabId: String) = ".zen-overview-grid [data-tab-id=\"$tabId\"]"
-
-    /** Touch the toast's action once the toast is at rest; a picked action sends the toast off at once. */
-    private fun undo(): Boolean {
-        if (awaitRect(6_000) { domRect("$TOAST .zen-message-button") } == null) {
-            finding("  (the toast's Undo never showed)")
-            return false
-        }
-        awaitJs("(function(){var e=document.querySelector('$TOAST');return !!e&&!e.hasAttribute('data-moving')})()", true, 1_500)
-        return touchUntil("the toast's Undo", { domRect("$TOAST .zen-message-button") }, { !inDom(TOAST) || jsBoolean("document.querySelector('$TOAST').hasAttribute('data-moving')") }, waitMs = 800)
-    }
 
     /** The pane section `kind` (open / saved) holds a row titled `title` whose subtitle starts with `subtitle`. */
     private fun rowUnder(kind: String, title: String, subtitle: String): String =
