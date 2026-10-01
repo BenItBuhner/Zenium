@@ -10,7 +10,13 @@ import {
 } from '@renderer/lib/syncSetup'
 import type { RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
-import { ACCOUNT_KEYWORDS, accountSignInRows, deviceRows, mergeRow } from './sync'
+import {
+  ACCOUNT_KEYWORDS,
+  accountSignInRows,
+  accountSignOutRow,
+  deviceRows,
+  mergeRow
+} from './sync'
 import { SyncPassphraseForm } from './syncForms'
 
 /**
@@ -34,7 +40,7 @@ export function accountGroups({ state, navigate }: SectionContext): RowGroup[] {
   if (!sync.accountAvailable) return [unavailableGroup()]
   const signedIn = sync.account !== null && !sync.accountSignedOut
   if (!signedIn) return [signInGroup(sync)]
-  return [accountGroup(sync, navigate), devicesGroup(sync), signOutGroup()]
+  return [accountGroup(sync, navigate), devicesGroup(sync), signOutGroup(sync)]
 }
 
 function unavailableGroup(): RowGroup {
@@ -199,32 +205,19 @@ function devicesGroup(sync: SyncStatus): RowGroup {
 }
 
 /**
- * Sign out, confirmed first with the verb in the plain ink (§9.23's third form): the service
- * forgets this device's sign-in and nothing this device holds is lost.
+ * Sign out (Sync's `accountSignOutRow`): the service forgets this device's sign-in and nothing
+ * this device holds is lost; the words say whether sync stops with it.
  */
-function signOutGroup(): RowGroup {
+function signOutGroup(sync: SyncStatus): RowGroup {
+  const syncing = sync.enabled && sync.transport === 'account'
   return {
     id: 'account-sign-out',
     heading: null,
     rows: [
-      {
-        kind: 'action',
-        id: 'account-sign-out',
-        label: SYNC_COPY.accountSignOut,
-        description: SYNC_COPY.accountSignOutSyncHint,
-        keywords: ACCOUNT_KEYWORDS,
-        button: `${SYNC_COPY.accountSignOut}…`,
-        confirm: {
-          title: SYNC_COPY.accountSignOutTitle,
-          description: SYNC_COPY.accountSignOutDescription,
-          action: SYNC_COPY.accountSignOut,
-          verbTone: 'plain'
-        },
-        onPress: () => {
-          run('sync.accountSignOut', undefined)
-          clearSyncSetup()
-        }
-      }
+      accountSignOutRow('account-sign-out', syncing, () => {
+        run('sync.accountSignOut', undefined)
+        clearSyncSetup()
+      })
     ]
   }
 }

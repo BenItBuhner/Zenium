@@ -258,22 +258,14 @@ function transportRow(sync: SyncStatus, transport: SyncTransportKind): SettingsR
 
 /**
  * The Zenium account before setup: Sign in until the service has approved this device, then the
- * account's email and Sign out (this device forgets the sign-in; nothing else is kept yet). The
- * passphrase is Turn on sync's step, as for a folder or a server.
+ * account's email and Sign out, confirmed first (this device forgets the sign-in; nothing else
+ * is kept yet). The passphrase is Turn on sync's step, as for a folder or a server.
  */
 function accountSetupRows(sync: SyncStatus): SettingsRow[] {
   if (sync.account && !sync.accountLink && !sync.accountSignedOut) {
     return [
       accountRow(sync.account.email),
-      {
-        kind: 'action',
-        id: 'sync-account-sign-out',
-        label: SYNC_COPY.accountSignOut,
-        description: SYNC_COPY.accountSignOutHint,
-        keywords: ACCOUNT_KEYWORDS,
-        button: SYNC_COPY.accountSignOut,
-        onPress: () => run('sync.accountSignOut', undefined)
-      }
+      accountSignOutRow('sync-account-sign-out', false, () => run('sync.accountSignOut', undefined))
     ]
   }
   return accountSignInRows(sync, SYNC_COPY.accountSignIn)
@@ -609,33 +601,41 @@ export function mergeRow(account: boolean, prefix = 'sync'): SettingsRow {
 /**
  * Connected through the Zenium account: while the service has signed this device out, the
  * sign-in rows first – Sign in again, the code and Cancel while it waits – the status row's
- * follow-up (§9.17); then the account by its email and Sign out, which confirms first with
- * the verb in the plain ink (§9.23's third form): the service forgets this device's sign-in, and
- * sync turns off with everything this device has kept.
+ * follow-up (§9.17); then the account by its email and Sign out (`accountSignOutRow`): the
+ * service forgets this device's sign-in, and sync turns off with everything this device has kept.
  */
 function connectedAccountRows(sync: SyncStatus): SettingsRow[] {
   return [
     ...(sync.accountSignedOut ? accountSignInRows(sync, SYNC_COPY.accountSignInAgain) : []),
     ...(sync.account ? [accountRow(sync.account.email)] : []),
-    {
-      kind: 'action',
-      id: 'sync-account-sign-out',
-      label: SYNC_COPY.accountSignOut,
-      description: SYNC_COPY.accountSignOutSyncHint,
-      keywords: ACCOUNT_KEYWORDS,
-      button: `${SYNC_COPY.accountSignOut}…`,
-      confirm: {
-        title: SYNC_COPY.accountSignOutTitle,
-        description: SYNC_COPY.accountSignOutDescription,
-        action: SYNC_COPY.accountSignOut,
-        verbTone: 'plain'
-      },
-      onPress: () => {
-        run('sync.accountSignOut', undefined)
-        clearSyncSetup()
-      }
-    }
+    accountSignOutRow('sync-account-sign-out', true, () => {
+      run('sync.accountSignOut', undefined)
+      clearSyncSetup()
+    })
   ]
+}
+
+/**
+ * Sign out, confirmed first with the verb in the plain ink (§9.23's third form), its words by
+ * what it costs: while the account carries the sync, this device stops syncing and keeps what it
+ * has; otherwise only the sign-in is forgotten (a folder or a server keeps syncing).
+ */
+export function accountSignOutRow(id: string, syncing: boolean, onPress: () => void): SettingsRow {
+  return {
+    kind: 'action',
+    id,
+    label: SYNC_COPY.accountSignOut,
+    description: syncing ? SYNC_COPY.accountSignOutSyncHint : SYNC_COPY.accountSignOutHint,
+    keywords: ACCOUNT_KEYWORDS,
+    button: `${SYNC_COPY.accountSignOut}…`,
+    confirm: {
+      title: SYNC_COPY.accountSignOutTitle,
+      description: syncing ? SYNC_COPY.accountSignOutDescription : SYNC_COPY.accountSignOutHint,
+      action: SYNC_COPY.accountSignOut,
+      verbTone: 'plain'
+    },
+    onPress
+  }
 }
 
 /**

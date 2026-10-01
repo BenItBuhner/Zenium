@@ -9120,7 +9120,14 @@ describe('ID-08’s Sync category on a phone', () => {
     const signOut = actionRow(model, 'sync-account-sign-out')
     expect(signOut).toMatchObject({
       label: 'Sign out',
-      description: 'This device forgets the sign-in.'
+      description: 'This device forgets the sign-in.',
+      button: 'Sign out…',
+      confirm: {
+        title: 'Sign out of your Zenium account?',
+        description: 'This device forgets the sign-in.',
+        action: 'Sign out',
+        verbTone: 'plain'
+      }
     })
     expect(signOut.destructive).toBeUndefined()
     signOut.onPress?.()
@@ -9370,12 +9377,11 @@ describe('ID-08’s Sync category on a phone', () => {
       if (signOut.kind !== 'action') throw new Error('not an action')
       expect(signOut).toMatchObject({
         label: 'Sign out',
-        description: 'This device stops syncing and keeps what it has.',
+        description: 'This device forgets the sign-in.',
         button: 'Sign out…',
         confirm: {
           title: 'Sign out of your Zenium account?',
-          description:
-            'This device stops syncing and keeps what it has. Your other devices keep syncing.',
+          description: 'This device forgets the sign-in.',
           action: 'Sign out',
           verbTone: 'plain'
         }
@@ -9474,6 +9480,10 @@ describe('ID-08’s Sync category on a phone', () => {
       })
       expect(folder.groups[1]).toMatchObject({ rows: [] })
       expect(folder.groups[1]?.aside).toBeUndefined()
+      const folderSignOut = row(folder, 'account-sign-out')
+      if (folderSignOut.kind !== 'action') throw new Error('not an action')
+      expect(folderSignOut.description).toBe('This device forgets the sign-in.')
+      expect(folderSignOut.confirm?.description).toBe('This device forgets the sign-in.')
 
       const none = section('account', syncState(syncStatus()))
       expect(none.groups.map((g) => g.id)).toEqual(['account'])
