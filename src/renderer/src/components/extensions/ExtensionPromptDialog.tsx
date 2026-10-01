@@ -25,18 +25,27 @@ import { WarningRow } from './WarningRow'
  * the content frame over its §9.5 scrim – the frame alone dims; the sidebar and toolbar stay
  * undimmed. While a prompt is queued the content frame counts as covered
  * (`overlayCoversContent`): the page's view is hidden and the frame shows its capture, the way
- * every chrome overlay does; the dialog draws no tint of its own. On a finger the prompt is a
- * bottom sheet, on the body with the other sheets (whose §9.24 stack is their mount order
- * there), with the sheet's own scrim.
+ * every chrome overlay does; the dialog draws no tint of its own. On a phone's finger the prompt
+ * is a bottom sheet, on the body with the other sheets (whose §9.24 stack is their mount order
+ * there), with the sheet's own scrim; a tablet's finger gets the dialog in the coarse pointer's
+ * sizes (§9.36 as the lead amended it on #750: a prompt on the tablet is a dialog, not a sheet –
+ * the split is the form factor's), its glyph at the title block's `--v2-icon`, 20 there and on
+ * a phone, 16 on the desktop (§9.23).
  */
 export function ExtensionPromptDialog(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.extensionPrompts[0] ?? null)
   const viewport = useViewport()
   if (!prompt) return null
-  if (viewport.coarse) {
+  if (viewport.coarse && viewport.formFactor !== 'tablet') {
     return createPortal(<SheetPrompt key={prompt.requestId} prompt={prompt} />, document.body)
   }
-  return <PanelPrompt key={prompt.requestId} prompt={prompt} />
+  return (
+    <PanelPrompt
+      key={prompt.requestId}
+      prompt={prompt}
+      glyph={viewport.formFactor === 'desktop' ? 16 : 20}
+    />
+  )
 }
 
 /** What the extension will be able to do: a row with a glyph per warning kind, or the one line saying there is nothing to warn of. */
@@ -105,15 +114,22 @@ function PromptBody({
 }
 
 /**
- * The desktop dialog: its panel in flow in the frame dialog host, which centres it above its
- * scrim, takes the pointer over the frame, makes the window chrome inert (§9.5) and closes the
- * popover that is open when it appears; a press on the scrim answers no. Focus lands on the
- * accepting button, as Firefox's install prompt has it; Tab wraps inside; nothing in the chrome
- * opened it, so there is no control to return focus to (§9.22). A modal, not a popover: it is
- * not in the layer's popover registry, so a resize re-centres rather than closes it and a
- * popover opening later does not dismiss it.
+ * The dialog (the desktop's, and the tablet's): its panel in flow in the frame dialog host, which
+ * centres it above its scrim, takes the pointer over the frame, makes the window chrome inert
+ * (§9.5) and closes the popover that is open when it appears; a press on the scrim answers no.
+ * Focus lands on the accepting button, as Firefox's install prompt has it; Tab wraps inside;
+ * nothing in the chrome opened it, so there is no control to return focus to (§9.22). A modal,
+ * not a popover: it is not in the layer's popover registry, so a resize re-centres rather than
+ * closes it and a popover opening later does not dismiss it. `glyph` is the title block's icon
+ * size, the form factor's `--v2-icon` (§9.23); the pair's height is the pointer's control token.
  */
-function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Element {
+function PanelPrompt({
+  prompt,
+  glyph
+}: {
+  prompt: ExtensionPromptRequest
+  glyph: number
+}): JSX.Element {
   const answer = (accept: boolean): void => answerExtensionPrompt(prompt, accept)
   const ref = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
@@ -136,7 +152,7 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
         id="zen-ext-dialog-title"
         title={copy.title}
         description={copy.subtitle}
-        glyph={<ExtensionIcon icon={prompt.icon} size={16} box={16} />}
+        glyph={<ExtensionIcon icon={prompt.icon} size={glyph} box={glyph} />}
         scrolled={scrolled}
       />
       <PromptBody prompt={prompt} onAnswer={answer} onScroll={setScrolled} />

@@ -89,6 +89,12 @@ const phone = (): void =>
   viewportStore.set({ ...viewportStore.get(), coarse: true, hover: false, formFactor: 'phone' })
 const desktop = (): void =>
   viewportStore.set({ ...viewportStore.get(), coarse: false, hover: true, formFactor: 'desktop' })
+const tablet = (): void =>
+  viewportStore.set({ ...viewportStore.get(), coarse: true, hover: false, formFactor: 'tablet' })
+
+/** The title block's glyph box (`ExtensionIcon`'s outer span: its inline width is the `box`). */
+const glyphBox = (dialog: HTMLElement): string =>
+  dialog.querySelector<HTMLElement>('.zen-v2-title-block-title > :first-child')!.style.width
 
 describe('the extension prompt on a phone', () => {
   it('puts its buttons in the sheet footer, outside the scroller, with every warning row inside it', () => {
@@ -196,7 +202,7 @@ class Frames {
 }
 
 describe('the extension prompt on a desktop', () => {
-  it('keeps the buttons under the rows in the dialog itself, right-aligned', () => {
+  it('keeps the buttons under the rows in the dialog itself, right-aligned, the glyph at 16', () => {
     desktop()
     uiStore.set(() => ({ extensionPrompts: [prompt()] }))
     render()
@@ -209,5 +215,52 @@ describe('the extension prompt on a desktop', () => {
       'Add extension'
     ])
     expect(dialog.querySelectorAll('.zen-ext-dialog-body .zen-v2-row').length).toBe(WARNINGS.length)
+    expect(glyphBox(dialog)).toBe('16px')
+  })
+})
+
+/*
+ * The tablet (§9.36 as the lead amended it on #750): a prompt on the tablet is a dialog, not a
+ * sheet – the desktop's `PanelPrompt` in the frame's host, in the coarse pointer's sizes: the
+ * title block's glyph at the form factor's `--v2-icon`, 20, the pair at `--v2-control`'s 40
+ * (the token's, which happy-dom does not compute; the stills on #750 measure it). The split is
+ * the form factor's: the phone's finger keeps the sheet above.
+ */
+describe('the extension prompt on a tablet', () => {
+  it("a finger gets the dialog, not the sheet – the desktop's panel with its glyph at 20", () => {
+    tablet()
+    uiStore.set(() => ({ extensionPrompts: [prompt()] }))
+    render()
+    expect(document.querySelector('.zen-sheet')).toBeNull()
+    const dialog = document.querySelector<HTMLElement>('.zen-ext-dialog[role="dialog"]')!
+    expect(dialog).not.toBeNull()
+    expect(dialog.classList.contains('zen-v2-dialog')).toBe(true)
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    const buttons = dialog.querySelector<HTMLElement>('.zen-ext-dialog-buttons')!
+    expect(buttons.parentElement).toBe(dialog)
+    const [cancel, accept] = [...buttons.querySelectorAll('button')]
+    expect([cancel!.textContent, accept!.textContent]).toEqual(['Cancel', 'Add extension'])
+    expect(cancel!.classList.contains('zen-v2-button')).toBe(true)
+    expect(accept!.hasAttribute('data-primary')).toBe(true)
+    expect(glyphBox(dialog)).toBe('20px')
+    expect(dialog.querySelectorAll('.zen-ext-dialog-body .zen-v2-row').length).toBe(WARNINGS.length)
+  })
+
+  it('a mouse on the tablet layout (DeX) gets the same dialog, the glyph still the tablet’s 20', () => {
+    viewportStore.set({ ...viewportStore.get(), coarse: false, hover: true, formFactor: 'tablet' })
+    uiStore.set(() => ({ extensionPrompts: [prompt()] }))
+    render()
+    expect(document.querySelector('.zen-sheet')).toBeNull()
+    const dialog = document.querySelector<HTMLElement>('.zen-ext-dialog[role="dialog"]')!
+    expect(dialog).not.toBeNull()
+    expect(glyphBox(dialog)).toBe('20px')
+  })
+
+  it("the phone's finger keeps the sheet", () => {
+    phone()
+    uiStore.set(() => ({ extensionPrompts: [prompt()] }))
+    render()
+    expect(document.querySelector('.zen-sheet')).not.toBeNull()
+    expect(document.querySelector('.zen-ext-dialog[role="dialog"]')).toBeNull()
   })
 })
