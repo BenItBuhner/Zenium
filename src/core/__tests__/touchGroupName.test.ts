@@ -56,10 +56,11 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
       const h = on(layout)
       const before = folders(h).map((f) => f.id)
       h.browser.menus.showTabContextMenu(h.tabId, h.win)
-      // The row's LABEL keeps the desktop's word on every host – the string under review here
-      // is the group's name, not the menu's.
-      expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Folder')
-      deepItem(h.shown(), 'Add Tab to New Folder').click?.()
+      // The row's LABEL takes the host's noun too (TABLET-22: the touch hosts' tab menu says
+      // Group, the desktop's Folder); the string under review here is the group's name.
+      const row = layout === 'desktop' ? 'Add Tab to New Folder' : 'Add Tab to New Group'
+      expect(labels(h.shown())).toContain(`Move Tab > ${row}`)
+      deepItem(h.shown(), row).click?.()
       const made = newest(h, before)
       expect(made.name).toBe(expected[layout])
       expect(h.browser.tabs.tab(h.tabId)?.folderId).toBe(made.id)
@@ -67,16 +68,16 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
   })
 
   it('Move to Folder ▸ New Folder… (the space already holding a group) names the second group by the host too', () => {
-    for (const [layout, name] of [
-      ['tablet', TOUCH_GROUP_DEFAULT_NAME],
-      ['desktop', NEW_FOLDER_NAME]
+    for (const [layout, name, moveTo, newOne] of [
+      ['tablet', TOUCH_GROUP_DEFAULT_NAME, 'Move to Group', 'New Group…'],
+      ['desktop', NEW_FOLDER_NAME, 'Move to Folder', 'New Folder…']
     ] as const) {
       const h = on(layout)
       h.browser.createFolder(h.win.activeSpaceId, 'Research', '📁', h.win, { rename: false })
       const before = folders(h).map((f) => f.id)
       h.browser.menus.showTabContextMenu(h.tabId, h.win)
-      expect(labels(h.shown())).toContain('Move Tab > Move to Folder')
-      deepItem(h.shown(), 'New Folder…').click?.()
+      expect(labels(h.shown())).toContain(`Move Tab > ${moveTo}`)
+      deepItem(h.shown(), newOne).click?.()
       expect(newest(h, before).name).toBe(name)
     }
   })

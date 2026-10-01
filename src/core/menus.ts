@@ -2466,6 +2466,23 @@ export class Menus {
     // "Remove from Folder" beside it), the domain's route, and – Chrome's pair (tabs-23,
     // context-menus-93) – to a new window or to another, listed by their active tab, most
     // recently focused first and greyed with none to go to.
+    // The four folder rows' words by the window's layout (TABLET-22, parity-android.md; the
+    // overview cleanup spec §7): a touch host says GROUP, as Chrome for Android's tab menu does
+    // and as the phone's own sheets do; the desktop says Folder, its labels byte for byte as
+    // before. One block, so the string table absorbs it whole.
+    const folderRows = touchLayout(win.formFactor)
+      ? {
+          addToNew: 'Add Tab to New Group',
+          moveTo: 'Move to Group',
+          newOne: 'New Group…',
+          remove: 'Remove from Group'
+        }
+      : {
+          addToNew: 'Add Tab to New Folder',
+          moveTo: 'Move to Folder',
+          newOne: 'New Folder…',
+          remove: 'Remove from Folder'
+        }
     const moveTab: Template = joinGroups([
       [
         {
@@ -2489,16 +2506,16 @@ export class Menus {
           !local,
           folders.length === 0
             ? {
-                label: 'Add Tab to New Folder',
+                label: folderRows.addToNew,
                 enabled: !tab.essential && !tab.pinned,
                 click: () => this.browser.newFolderWithTab(space.id, tabId, win)
               }
             : {
-                label: 'Move to Folder',
+                label: folderRows.moveTo,
                 enabled: !tab.essential && !tab.pinned,
                 submenu: [
                   {
-                    label: 'New Folder…',
+                    label: folderRows.newOne,
                     click: () => this.browser.newFolderWithTab(space.id, tabId, win)
                   },
                   { type: 'separator' as const },
@@ -2511,7 +2528,7 @@ export class Menus {
                 ]
               },
           ...when(Boolean(tab.folderId), {
-            label: 'Remove from Folder',
+            label: folderRows.remove,
             click: () => tabs.moveToFolder(tabId, null)
           }),
           {
