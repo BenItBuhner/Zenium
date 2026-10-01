@@ -448,11 +448,9 @@ export class WebAppService {
     this.trimEngagement()
     this.save()
     if (!shouldPrompt(record, now)) return
-    // No ambient banner on the desktop until it has a drawn install promotion (Chrome's desktop
-    // promotes from the omnibox icon, not a banner): its chrome has no surface that draws the
-    // card, and a card nobody saw spent the app's cooldown (Desktop's #740, seed #42). The visit
-    // above still counts, so a desktop surface, once drawn, lights up with the engagement there.
-    if (this.surface === 'desktop') return
+    // Every surface is offered: the phone draws the banner as its card, the desktop as the
+    // pill's "Install <app>?" popover (#740). A window whose chrome draws neither gives no word
+    // inside the grace, and the cooldown is not spent on it (`bannerUndrawn`, seed #42).
     this.schedule(`banner:${tabId}`, DEFER_GRACE_MS, () => {
       const current = this.browser.tabs.tab(tabId)
       if (!current || current.webApp?.id !== info.id || this.deferred.has(tabId)) return

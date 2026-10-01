@@ -485,21 +485,31 @@ describe('WebAppService', () => {
     expect(h.service.installed().map((a) => [a.id, a.windows])).toEqual([[MANIFEST_ID, 0]])
   })
 
-  it('raises no ambient banner on the desktop, whose chrome draws none: the visit counts and the cooldown stays unspent (#740, seed #42)', () => {
+  it('raises the ambient banner on the desktop as on the phone, now that its chrome draws it as the pill’s popover (#740, seed #42): the word stamps, and a window with no word is the grace’s case', () => {
     const h = harness({ desktop: true })
     postManifest(h)
     revisit(h)
-    vi.advanceTimersByTime(5000)
-    expect(bannerEvents(h)).toEqual([])
-    expect(bannerHides(h)).toEqual([])
-    // The page still hears it is installable; the engagement counts without a prompt.
-    expect(h.pageMessages).toContainEqual({ type: 'webapp', action: 'installable' })
+    vi.advanceTimersByTime(1500)
+    // The desktop's launcher name, the full one.
+    expect(bannerEvents(h)).toEqual([
+      expect.objectContaining({ tabId: 't1', name: 'Sketch Studio', origin: 'app.example' })
+    ])
     expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
-    // A later visit counts too, so a drawn desktop promotion finds the engagement there.
-    revisit(h)
-    vi.advanceTimersByTime(5000)
-    expect(bannerEvents(h)).toEqual([])
-    expect(engagement(h)).toMatchObject({ visits: 3, promptedAt: null })
+    // The chrome's word – the popover opened – stamps the cooldown, as the phone's card does,
+    // and the grace running out after it takes nothing back.
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBe(h.now.value)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    // A desktop window whose chrome gave no word – nothing drew the offer – is the grace's case
+    // as anywhere: the banner withdrawn, the cooldown unspent, the record still counting.
+    const quiet = harness({ desktop: true })
+    postManifest(quiet)
+    revisit(quiet)
+    vi.advanceTimersByTime(1200 + BANNER_SHOWN_GRACE_MS)
+    expect(bannerEvents(quiet)).toHaveLength(1)
+    expect(bannerHides(quiet)).toEqual([{ tabId: 't1' }])
+    expect(engagement(quiet)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
   })
 
   it('stamps the cooldown on the chrome’s word that the card is drawn, not on the emit; the timeout path then runs as before', () => {
