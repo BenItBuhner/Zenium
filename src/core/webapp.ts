@@ -197,9 +197,7 @@ export class WebAppService {
    * that ran is the shortcut's – else the installed app whose scope holds `url`.
    */
   appForLaunch(url: string): PinnedWebApp | null {
-    return (
-      this.pinned.find((p) => isShortcutRecord(p) && p.startUrl === url) ?? this.pinnedFor(url)
-    )
+    return this.pinned.find((p) => isShortcutRecord(p) && p.startUrl === url) ?? this.pinnedFor(url)
   }
 
   /**
