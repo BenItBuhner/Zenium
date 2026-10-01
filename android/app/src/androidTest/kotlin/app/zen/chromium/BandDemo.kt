@@ -42,8 +42,9 @@ import kotlin.math.roundToInt
  *     as a surface, the Back takes it and the page home UNANSWERED – the page not navigated, the
  *     campaign's prompt as it was (no "Not now" given; a remembered refusal is only ever an
  *     explicit button).
- *  2. THE INSTALL OFFER (76; the first tenant, §7): "Add Sketch Studio to Home screen" with the
- *     app's origin, one "Add", the ×; a swipe past half dismisses it (`band-swipe-dismiss`), the
+ *  2. THE INSTALL OFFER (76; the first tenant, §7): "Add Sketch to Home screen" (the manifest's
+ *     `short_name`, as the core names an app for the Home screen) with the app's origin, one
+ *     "Add", the ×; a swipe past half dismisses it (`band-swipe-dismiss`), the
  *     page following the finger 1:1 on the way (the host's offset sampled under the drag) –
  *     unanswered: the app's record takes no `dismissedAt` (site A); the × (`band-close-x`,
  *     site B) is the refusal: the record's `dismissedAt`, the cooldown, a reload brings no offer.
@@ -149,7 +150,11 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         for ((i, server) in servers.withIndex()) finding("demo server ${SITES[i]}: ${server.selfCheck()}")
         val state = coreState()
         val caps = state.getJSONObject("capabilities")
-        finding("capabilities: phone=${caps.optBoolean("phone")} defaultBrowser=${caps.optBoolean("defaultBrowser")}")
+        // The default-browser campaign only speaks while another browser holds the role: the
+        // workflow's wrapper (android-band-demo.sh) enables Chrome and hands it the role, as the
+        // first-run demo's does; with Zenium the only browser, Android gives it the role unasked.
+        val roleHolder = runCatching { shellCommand("cmd role get-role-holders --user 0 android.app.role.BROWSER").trim() }.getOrDefault("?")
+        finding("capabilities: defaultBrowser=${caps.optBoolean("defaultBrowser")}; the browser role's holder: '${roleHolder.ifEmpty { "nobody" }}'")
         awaitLoaded("$SITE_A/plain")
         // The default-browser reminder is due in this session: its band is the first on screen.
         val prompt = poll(15_000) { defaultBrowserPrompt() == "banner" }
@@ -996,7 +1001,8 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         private const val DEFAULT_DETAIL = "Make it your default browser"
         private const val DEFAULT_ACTION = "Set as default"
         private const val DEFAULT_SECONDARY = "Not now"
-        private const val INSTALL_TITLE = "Add Sketch Studio to Home screen"
+        /** The app's manifest `short_name`: on the Home-screen surface the core names the app by it (`launcherName`). */
+        private const val INSTALL_TITLE = "Add Sketch to Home screen"
         private const val INSTALL_ACTION = "Add"
         private const val READER_TITLE = "Show Reader View?"
         private const val READER_ACTION = "Show"
