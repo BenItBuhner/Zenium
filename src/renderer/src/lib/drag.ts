@@ -1,6 +1,12 @@
 import type { Tab, TabDragOver } from '@shared/types'
 import { run } from './api'
-import { InsertionCaret, autoscrollStep, type CaretPlacement } from './insertionCaret'
+import {
+  AUTOSCROLL_EDGE_TOUCH,
+  InsertionCaret,
+  autoscrollFrames,
+  autoscrollStep,
+  type CaretPlacement
+} from './insertionCaret'
 import type { SlideMotion } from './motion/slide'
 import { SPRING_GENTLE, SpringAnimation } from './motion/spring'
 import { VelocityTracker } from './motion/velocity'
@@ -878,17 +884,24 @@ function hideCaret(): void {
 
 /**
  * Near the list's top or bottom edge the list scrolls under the pointer, faster the closer to
- * the edge, and the target under the (still) pointer is re-read as it does.
+ * the edge, and the target under the (still) pointer is re-read as it does. The mouse's band is
+ * 32 px and its step per frame; a finger's (`touch`, TABLET-03) band is 56 px
+ * ([AUTOSCROLL_EDGE_TOUCH]) and its step scaled by the frame's real length, so the speed is the
+ * display's refresh rate's no more ([autoscrollFrames]).
  */
 function scheduleAutoscroll(s: Session): void {
-  const tick = (): void => {
+  let last = performance.now()
+  const tick = (now: number): void => {
     s.frame = null
     if (session !== s || s.settling) return
     const el = s.scroller
     if (el) {
       const { x, y } = s.pointer
       const axis: Axis = s.motion?.axis ?? 'y'
-      const step = autoscrollStep(el.getBoundingClientRect(), x, y, axis)
+      const box = el.getBoundingClientRect()
+      const step = s.touch
+        ? autoscrollStep(box, x, y, axis, AUTOSCROLL_EDGE_TOUCH) * autoscrollFrames(now - last)
+        : autoscrollStep(box, x, y, axis)
       if (step !== 0) {
         const before = axis === 'y' ? el.scrollTop : el.scrollLeft
         if (axis === 'y') el.scrollTop += step
@@ -897,6 +910,7 @@ function scheduleAutoscroll(s: Session): void {
         if (after !== before) apply(resolve(x, y, s), s)
       }
     }
+    last = now
     s.frame = requestAnimationFrame(tick)
   }
   s.frame = requestAnimationFrame(tick)

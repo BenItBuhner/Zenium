@@ -778,6 +778,9 @@ export class ElectronPlatform implements Platform {
     const startupHold = new StartupHold()
     this.views.startupHold = startupHold
     this.windows.startupHold = startupHold
+    // The extension records other devices synced wait for the same hold (ID-44): no install,
+    // switch or removal lands in the registry while the layer's first publish is pending.
+    extensionService.startupHold = startupHold
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(
         ses,

@@ -234,6 +234,34 @@ describe('engineApiSpec', () => {
     }
   })
 
+  it("carries a namespace's constructors into the merged table (declarativeContent's classes; iCloud Passwords' onInstalled rule, Android compat round 25)", () => {
+    // Round 24 gave the layer's table `declarativeContent.classes` and the shim defines them,
+    // but the emulated engine installs the shim over this merged table, and the merge copied
+    // methods, events, constants and settings – never the classes: on the phone the namespace
+    // had its event and `new chrome.declarativeContent.PageStateMatcher(...)` was
+    // "is not a constructor" in iCloud Passwords' worker.
+    const spec = engineApiSpec({
+      permissions: ['declarativeContent'],
+      manifestVersion: 3,
+      context: 'page'
+    })
+    expect(spec.declarativeContent.classes).toEqual(API_SPEC.declarativeContent.classes)
+    expect(Object.keys(spec.declarativeContent.classes ?? {})).toEqual([
+      'PageStateMatcher',
+      'ShowAction',
+      'ShowPageAction',
+      'SetIcon',
+      'RequestContentScript'
+    ])
+    expect(spec.declarativeContent.events.onPageChanged).toEqual({ declarative: true })
+    expect(spec.declarativeContent.constants?.PageStateMatcherInstanceType).toEqual({
+      DECLARATIVE_CONTENT_PAGE_STATE_MATCHER: 'declarativeContent.PageStateMatcher'
+    })
+    // The gate travels with it; a namespace without classes gets none.
+    expect(spec.declarativeContent.permissions).toEqual(['declarativeContent'])
+    expect(spec.tabs.classes).toBeUndefined()
+  })
+
   it('builds proxy.settings, gcm and debugger on a bare chrome, as the WebView leaves it', async () => {
     // The phone has no native namespace to patch: what the shim builds from the merged table is
     // all an extension finds. The three workers' first statements, in order.

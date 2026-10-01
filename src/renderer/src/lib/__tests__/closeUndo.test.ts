@@ -95,9 +95,18 @@ vi.stubGlobal('window', {
   }
 })
 
-const { CLOSE_SETTLE_MS, closeWithUndo, closedMessage, createCloseUndo, leavesClosedEntry } =
-  await import('../closeUndo')
+const {
+  CLOSE_SETTLE_MS,
+  closeWithUndo,
+  closedMessage,
+  createCloseUndo,
+  groupClosedMessage,
+  leavesClosedEntry
+} = await import('../closeUndo')
 const { TOAST_ACTION_DURATION, claimMessageCards, pickToastAction, uiStore } = await import('../ui')
+const { TOAST_UNDO_MS } = await import('@shared/toastCard')
+const { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME, isDefaultGroupName } =
+  await import('@shared/groupNames')
 
 // --- fixtures ----------------------------------------------------------------------------------
 
@@ -162,7 +171,12 @@ async function flush(ticks = 8): Promise<void> {
 
 /** An undo over the fake core; `toast` records the toasts, `active` is the tab the user is on. */
 function harness(active: string | null = null): {
-  close: (tabs: Tab[], activeTabId?: string | null, settings?: typeof UNLOAD) => () => void
+  close: (
+    tabs: Tab[],
+    activeTabId?: string | null,
+    settings?: typeof UNLOAD,
+    group?: { name: string }
+  ) => () => void
   toasts: Array<{ message: string; action: MessageAction }>
   now: { value: number }
   active: { value: string | null }
@@ -183,9 +197,9 @@ function harness(active: string | null = null): {
     toasts,
     now,
     active: current,
-    close: (tabs, activeTabId = active, settings = UNLOAD) => {
+    close: (tabs, activeTabId = active, settings = UNLOAD, group) => {
       const close = vi.fn()
-      undo.close({ tabs, settings, activeTabId, close })
+      undo.close({ tabs, settings, activeTabId, close, group })
       return close
     }
   }
@@ -197,7 +211,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + TOAST_ACTION_DURATION + 1000)
+  await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + TOAST_UNDO_MS + 1000)
   uiStore.set({ toasts: [] })
   vi.useRealTimers()
 })
@@ -450,6 +464,72 @@ async function closeAllRun(
   await flush()
 }
 
+// --- a group ------------------------------------------------------------------------------------
+
+describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close, on both touch hosts)', () => {
+  it('the toast reads "<Name> tab group closed and saved" for a group the user named; a group still wearing a default name is not called by it – "Tab group closed and saved" (the Lead’s addendum; the default read through the shared module)', () => {
+    expect(groupClosedMessage({ name: 'Research' })).toBe('Research tab group closed and saved')
+    expect(groupClosedMessage({ name: '  Reading ' })).toBe('Reading tab group closed and saved')
+    // The default names are the shared module's set, never a literal here: the touch hosts'
+    // constant, no name at all, and whatever else `isDefaultGroupName` counts as one.
+    expect(isDefaultGroupName(TOUCH_GROUP_DEFAULT_NAME)).toBe(true)
+    expect(groupClosedMessage({ name: TOUCH_GROUP_DEFAULT_NAME })).toBe(
+      'Tab group closed and saved'
+    )
+    expect(groupClosedMessage({ name: '' })).toBe('Tab group closed and saved')
+    expect(groupClosedMessage({ name: '   ' })).toBe('Tab group closed and saved')
+    // The legacy "New Folder" – a touch group made before the touch hosts had a word of their own
+    // – is a default name too, on every host (the Lead's ruling; no migration renames records).
+    expect(isDefaultGroupName(NEW_FOLDER_NAME)).toBe(true)
+    expect(groupClosedMessage({ name: NEW_FOLDER_NAME })).toBe('Tab group closed and saved')
+    // A name the module does not count as a default is spoken – the constant with more on it.
+    expect(isDefaultGroupName(`${TOUCH_GROUP_DEFAULT_NAME} 2`)).toBe(false)
+    expect(groupClosedMessage({ name: `${TOUCH_GROUP_DEFAULT_NAME} 2` })).toBe(
+      `${TOUCH_GROUP_DEFAULT_NAME} 2 tab group closed and saved`
+    )
+    // The tab closes' words stand as they were: the one by name, several by their count.
+    expect(closedMessage([entry(tab('a', { title: 'Zenium docs' }), 1)])).toBe('Closed Zenium docs')
+    expect(closedMessage([entry(tab('a'), 1), entry(tab('b'), 2)])).toBe('2 tabs closed')
+  })
+
+  it('a group’s close of several takes the group’s words, not the count; Undo restores newest first, back into the group, and the user lands on their tab', async () => {
+    const h = harness('b')
+    const [a, b] = [tab('a', { folderId: 'g' }), tab('b', { folderId: 'g' })]
+    const close = h.close([a, b], 'b', UNLOAD, { name: 'Research' })
+    // The close is the caller's (`folder.close`), at once; nothing is up until the core files.
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(h.toasts).toEqual([])
+    core.file(entry(a, h.now.value), entry(b, h.now.value))
+    await flush()
+    expect(h.toasts.map((t) => t.message)).toEqual(['Research tab group closed and saved'])
+    expect(h.toasts[0].action.label).toBe('Undo')
+    h.toasts[0].action.onPick()
+    await flush()
+    // The core's restore puts each back where it stood – its group record kept while the group
+    // is saved, so each returns INTO the group (`session.restoreTab`) – newest first.
+    expect(core.of('session.restoreClosed')).toEqual([{ id: 'closed:b' }, { id: 'closed:a' }])
+    expect(core.of('tab.activate')).toEqual([{ tabId: 'b' }])
+  })
+
+  it('a group of one tab still reads the group’s words, not "Closed <title>"; a group with the default name is not called by it', async () => {
+    const h = harness()
+    const a = tab('a', { title: 'Zenium docs', folderId: 'g' })
+    h.close([a], null, UNLOAD, { name: TOUCH_GROUP_DEFAULT_NAME })
+    core.file(entry(a, h.now.value))
+    await flush()
+    expect(h.toasts.map((t) => t.message)).toEqual(['Tab group closed and saved'])
+  })
+
+  it('a group close that files nothing (private members alone) gets no toast, as a tab close does', async () => {
+    const h = harness()
+    const p = tab('p', { containerId: PRIVATE_CONTAINER_ID, folderId: 'g' })
+    const close = h.close([p], null, UNLOAD, { name: 'Research' })
+    expect(close).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    expect(h.toasts).toEqual([])
+  })
+})
+
 describe('closing several one page after the other', () => {
   it('the toast waits for the run, however long, and counts the seven; Undo brings the seven back newest first', async () => {
     const h = harness('example')
@@ -583,15 +663,18 @@ describe('the toast on the cards', () => {
     release = null
   })
 
-  it('runs on the action clock, the newer replaces the older, and its Undo restores through the core', async () => {
+  it('runs on §9.33’s Undo clock (TOAST_UNDO_MS, not the action default), the newer replaces the older, and its Undo restores through the core', async () => {
     const a = tab('a', { title: 'Zenium docs' })
     const b = tab('b', { title: 'Release notes' })
     closeWithUndo({ tabs: [a], settings: UNLOAD, activeTabId: 'a', close: () => undefined })
     core.file(entry(a, Date.now()))
     await flush()
     expect(live().map((t) => [t.message, t.kind, t.duration, t.action?.label])).toEqual([
-      ['Closed Zenium docs', 'info', TOAST_ACTION_DURATION, 'Undo']
+      ['Closed Zenium docs', 'info', TOAST_UNDO_MS, 'Undo']
     ])
+    // The Undo clock is the shared constant, above the plain action toast's default: a pin that
+    // fails if the toast falls back to the default by omission.
+    expect(TOAST_UNDO_MS).toBeGreaterThan(TOAST_ACTION_DURATION)
     // A second close: one toast at a time on the cards, the newer sends the older off.
     closeWithUndo({ tabs: [b], settings: UNLOAD, activeTabId: 'b', close: () => undefined })
     core.file(entry(b, Date.now()))
@@ -615,7 +698,10 @@ describe('the toast on the cards', () => {
     core.file(entry(c, Date.now()))
     await flush()
     expect(live()).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(TOAST_ACTION_DURATION - 1)
+    // Still standing past the plain action toast's clock: the Undo clock is the longer one.
+    await vi.advanceTimersByTimeAsync(TOAST_ACTION_DURATION)
+    expect(live()).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(TOAST_UNDO_MS - TOAST_ACTION_DURATION - 1)
     expect(live()).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(live()).toHaveLength(0)

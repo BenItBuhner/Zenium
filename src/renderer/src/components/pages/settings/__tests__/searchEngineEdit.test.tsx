@@ -41,6 +41,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { buildSection } = await import('../sections')
+const { onLayout } = await import('../model')
 const { DialogStack } = await import('../dialogs')
 const { SheetStack } = await import('../sheets')
 
@@ -78,9 +79,22 @@ const WIKI: SearchEngine = {
   source: 'custom',
   favicon: null
 }
+/** A visited site's engine the user deactivated (settings-43): under Inactive, Activate on its sheet. */
+const FORUM: SearchEngine = {
+  id: 'discovered:forum.example',
+  name: 'Forum',
+  searchUrl: 'https://forum.example/search?q=%s',
+  suggestUrl: null,
+  keyword: '@forum',
+  glyph: 'F',
+  source: 'discovered',
+  favicon: null,
+  visitedAt: 5,
+  active: false
+}
 const ENGINES: SearchEngine[] = [...DEFAULT_SEARCH_ENGINES, MINE, WIKI]
 
-function state(): UIState {
+function state(extra: SearchEngine[] = []): UIState {
   return {
     platform: 'linux',
     capabilities: { windows: true, windowControls: true, pageControls: false },
@@ -96,11 +110,11 @@ function state(): UIState {
     splitGroups: {},
     settings: {
       ...DEFAULT_SETTINGS,
-      searchEngines: [MINE, WIKI],
+      searchEngines: [MINE, WIKI, ...extra],
       searchEngineId: MINE.id
     } as Settings,
     shortcuts: defaultShortcuts('linux', 'chrome'),
-    searchEngines: ENGINES,
+    searchEngines: [...ENGINES, ...extra],
     extensionControls: {},
     glance: null,
     compactSidebarRevealed: false,
@@ -128,10 +142,16 @@ function state(): UIState {
   } as unknown as UIState
 }
 
-/** The Search section's groups as the page builds them – the desktop's, or the phone's. */
-function searchGroups(formFactor: 'desktop' | 'phone' = 'desktop'): RowGroups {
+/**
+ * The Search section's groups as the page builds them – the desktop's, or the phone's – with
+ * `extra` engines of the user's beside Mine and Wiki.
+ */
+function searchGroups(
+  formFactor: 'desktop' | 'phone' = 'desktop',
+  extra: SearchEngine[] = []
+): RowGroups {
   const ctx = {
-    state: state(),
+    state: state(extra),
     tab: SETTINGS_TAB,
     pointer: formFactor === 'desktop',
     formFactor,
@@ -153,11 +173,15 @@ function render(element: ReactElement): HTMLElement {
   return host
 }
 
-afterEach(() => {
+function unmount(): void {
   act(() => root?.unmount())
   host?.remove()
   root = null
   host = null
+}
+
+afterEach(() => {
+  unmount()
   invoke.mockReset()
   invoke.mockImplementation(async () => null)
 })
@@ -451,14 +475,16 @@ describe('Search › an engine’s Edit on the phone: the second sheet over the 
     expect(sheet.querySelector('.zen-sheet-title-block p')?.textContent).toBe(
       'Put %s in the URL where the search terms go.'
     )
-    // The engine's sheet under: Make default, Edit, Remove – each the phone's pressable row, the
-    // whole row the target (§10.4); the desktop's inline "Edit…" button is not drawn here.
+    // The engine's sheet under: Make default, Edit, Deactivate, Remove – the desktop's rows in
+    // the desktop's order, each the phone's pressable row, the whole row the target (§10.4);
+    // the desktop's inline "Edit…" button is not drawn here.
     const rows = [...stack[0]!.querySelectorAll<HTMLElement>('[data-row]')].map(
       (r) => r.dataset.row
     )
     expect(rows).toEqual([
       `search-engine:${WIKI.id}:default`,
       `search-engine:${WIKI.id}:edit`,
+      `search-engine:${WIKI.id}:deactivate`,
       `search-engine:${WIKI.id}:remove`
     ])
     const editRow = stack[0]!.querySelector<HTMLElement>(
@@ -507,5 +533,79 @@ describe('Search › an engine’s Edit on the phone: the second sheet over the 
     expect(invoke).not.toHaveBeenCalledWith('search.removeEngine', expect.anything())
     await land()
     expect(closeTop).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * An engine's sheet on the phone over the Search groups as the phone's page draws them –
+   * `onLayout('phone')` applied, so a row kept from the phone would be missing here.
+   */
+  async function openEngineSheet(id: string, extra: SearchEngine[]): Promise<HTMLElement> {
+    const h = render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[{ kind: 'item', rowId: `search-engine:${id}` }]}
+          groups={onLayout(searchGroups('phone', extra), 'phone')}
+          ctx={{ open: () => undefined }}
+          closeTop={vi.fn()}
+        />
+      </FrameDialogHost>
+    )
+    await land()
+    const sheet = layers(h)[0]
+    if (!sheet) throw new Error(`no sheet for ${id}`)
+    return sheet
+  }
+
+  it('Deactivate and Activate stand on the phone’s sheet as the desktop’s rows (SET-10’s tail): an inactive engine’s sheet offers Activate in Deactivate’s place, each press going to search.setEngineActive', async () => {
+    // Wiki, active and not the default: Deactivate between Edit and Remove, pressable.
+    const wiki = await openEngineSheet(WIKI.id, [FORUM])
+    const deactivate = wiki.querySelector<HTMLButtonElement>(
+      `[data-row="search-engine:${WIKI.id}:deactivate"]`
+    )
+    if (!deactivate) throw new Error('no Deactivate row')
+    expect(deactivate.textContent).toContain('Deactivate')
+    expect(deactivate.textContent).toContain(
+      'Keeps Wiki in the list but out of the URL bar until you activate it.'
+    )
+    expect(deactivate.getAttribute('aria-disabled')).toBeNull()
+    act(() => deactivate.click())
+    expect(invoke).toHaveBeenCalledWith('search.setEngineActive', { id: WIKI.id, active: false })
+    unmount()
+    invoke.mockClear()
+
+    // Forum, deactivated: its sheet is Edit, Activate, Remove – no Make default – and Activate
+    // brings the shortcut back.
+    const forum = await openEngineSheet(FORUM.id, [FORUM])
+    expect(forum.querySelector('.zen-sheet-title-block h2')?.textContent).toBe('Forum')
+    expect(
+      [...forum.querySelectorAll<HTMLElement>('[data-row]')].map((r) => r.dataset.row)
+    ).toEqual([
+      `search-engine:${FORUM.id}:edit`,
+      `search-engine:${FORUM.id}:activate`,
+      `search-engine:${FORUM.id}:remove`
+    ])
+    const activate = forum.querySelector<HTMLButtonElement>(
+      `[data-row="search-engine:${FORUM.id}:activate"]`
+    )
+    if (!activate) throw new Error('no Activate row')
+    expect(activate.textContent).toContain('Activate')
+    expect(activate.textContent).toContain('@forum works in the URL bar again.')
+    act(() => activate.click())
+    expect(invoke).toHaveBeenCalledWith('search.setEngineActive', { id: FORUM.id, active: true })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    unmount()
+    invoke.mockClear()
+
+    // The default engine's Deactivate is held on the phone as on the desktop: the row says so
+    // and a press sends nothing.
+    const mine = await openEngineSheet(MINE.id, [FORUM])
+    const held = mine.querySelector<HTMLButtonElement>(
+      `[data-row="search-engine:${MINE.id}:deactivate"]`
+    )
+    if (!held) throw new Error('no held Deactivate row')
+    expect(held.getAttribute('aria-disabled')).toBe('true')
+    expect(held.textContent).toContain('The default search engine stays active.')
+    act(() => held.click())
+    expect(invoke).not.toHaveBeenCalled()
   })
 })

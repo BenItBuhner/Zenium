@@ -96,6 +96,20 @@
       "budget-minutes": 68,
       "note": "The seventh phone shard (W6-H): the six before it stood at 64 to 68 of their 68 minutes and the last three merges each shuffled scenes by hand. Opened with a rebalance that leaves every phone shard at or under 58 minutes, a 10-minute headroom under the budget (nine drivers moved here, the largest movable of each shard; a driver a setup step, a first / last place or a sibling ties to its shard stayed). Same recipe as phone-a. The plan warns of any shard past 60 minutes (android-nightly-drivers.mjs check / estimate)."
     },
+    "phone-h": {
+      "title": "Phone H: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "The eighth phone shard (W6-S24c-b): phone-c and phone-g stood past the 60-minute headroom line (61.5 and 65.0 of their 68, once bookmarks-sort-view and sync-webdav had landed on them) and no other phone shard had the room for their drivers (57.5 to 60 each). Opened with seven drivers off those two alone – the largest of each that no camera, setup step, sibling, first or last place or perf series ties to its shard – leaving phone-c at 44.0, phone-g at 42.0 and this shard at 40.5: the room for what comes after. Same recipe as phone-a. api35 and webview stay past the line: their drivers are bound to their images, a second shard of each is the day's question when a driver next lands there."
+    },
     "api35": {
       "title": "Phone, API 35 Google APIs, pixel_6",
       "api-level": "35",
