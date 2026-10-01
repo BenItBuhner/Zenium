@@ -760,6 +760,132 @@ describe('PageBandHost – a drag on the seated band (motion spec §3.4; W8-M2b)
   })
 })
 
+describe('PageBandHost – a drag that grabs the band mid-travel (motion spec §3.4; W8-M2d, the Design Lead’s seed D8)', () => {
+  const H = BAND_HEIGHT_TWO_LINE
+
+  it('the band travelling down to a lower seat (76 → 56, seated at 56 by the departure) is grabbed before its rest: the take-hold ends the travel for the seam, the drag’s first frame below the seat unseats – seat 0, the frame’s offset, the report { seat: 0, offset }, the layer full-frame – and the frames after write no seat; let go short of half, the return keeps the 0 and the rest re-seats at the height', () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    settle()
+    const el = layer()
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    // The two-line state gives way to a one-line one: a travel 76 → 56 whose departure seats
+    // 56 – the one layout – under which the page rides down.
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    act(() => {
+      bandStore.set((s) => ({ entries: s.entries.filter((e) => e.key !== 'connectivity') }))
+    })
+    renderWithLayer(state({ front: 'settings' }))
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    const { written, off } = seats()
+    frames.tick(3)
+    // Mid-travel: the page between 76 and 56, the seat 56 under it, the layer laid out under
+    // the seat and translated by the rest, frames still pending.
+    const caught = bandOffset()
+    expect(caught).toBeLessThan(H)
+    expect(caught).toBeGreaterThan(BAND_HEIGHT_ONE_LINE)
+    expect(framesPending()).toBeGreaterThan(0)
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe(`translateY(${caught - BAND_HEIGHT_ONE_LINE}px)`)
+    expect(written).toEqual([])
+    run.mockClear()
+    const m = mouse()
+    // Taking hold moves nothing: the pointer has not left the slop circle.
+    m.down()
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(written).toEqual([])
+    // The first frame: the hand stops the travel where it is (the clock idle) and the drag's
+    // 1:1 from the band's height puts the page at 36 – below the seat of 56. No travel is under
+    // way for the seam any more, so it unseats before the page is moved: the seat 0, the
+    // offset the frame's, the report the same pair, the layer the whole frame translated by
+    // the offset – the page covers the frame under it to its bottom, no strip bared.
+    m.move(-20)
+    expect(framesPending()).toBe(0)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE - 20)
+    expect(offsets()).toEqual([BAND_HEIGHT_ONE_LINE - 20])
+    expect(layoutBand()).toEqual({ seat: 0, offset: BAND_HEIGHT_ONE_LINE - 20 })
+    expect(written).toEqual([0])
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_ONE_LINE - 20}px)`)
+    // The frames after it move the page alone.
+    m.move(-25)
+    expect(offsets()).toEqual([BAND_HEIGHT_ONE_LINE - 20, BAND_HEIGHT_ONE_LINE - 25])
+    expect(layoutBand()).toEqual({ seat: 0, offset: BAND_HEIGHT_ONE_LINE - 25 })
+    expect(written).toEqual([0])
+    // Let go at 31 of 56, short of half: the return's departure keeps the 0 the drag left, and
+    // the rest re-seats at the height – the page laid out under the band once more.
+    m.up(-25)
+    expect(standing()).toBe('k1')
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([0])
+    settle()
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe('')
+    expect(written).toEqual([0, BAND_HEIGHT_ONE_LINE])
+    off()
+  })
+
+  it('the band travelling up to a taller seat (56 → 76, the seat the lesser, 56) grabbed mid-travel: the take-hold alone unseats nothing – the drag’s first frame at the seat (76 − 20 = 56) leaves it, the first below it unseats; let go past half, the band under the hand goes and the state behind it stands: its travel departs from the drag’s 0 and the rest re-seats at 56', () => {
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    render(state())
+    settle()
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    const { written, off } = seats()
+    // The two-line state arrives: a travel 56 → 76 whose departure keeps the lesser seat.
+    act(() => {
+      offline()
+    })
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    frames.tick(3)
+    const caught = bandOffset()
+    expect(caught).toBeGreaterThan(BAND_HEIGHT_ONE_LINE)
+    expect(caught).toBeLessThan(H)
+    expect(written).toEqual([])
+    run.mockClear()
+    const m = mouse()
+    m.down()
+    // The first frame lands at the seat: the travel is over for the seam, but a frame at the
+    // seat bares nothing (the page laid out under 56 stands at 56), so the seat is left – the
+    // take-hold itself unseats nothing.
+    m.move(-20)
+    expect(framesPending()).toBe(0)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(offsets()).toEqual([BAND_HEIGHT_ONE_LINE])
+    expect(written).toEqual([])
+    // The first frame below it: the drag's unseat, as on any band.
+    m.move(-50)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 50)
+    expect(layoutBand()).toEqual({ seat: 0, offset: H - 50 })
+    expect(written).toEqual([0])
+    // Let go at 26 of 76, past half: the two-line state under the hand is dismissed and the
+    // one-line state behind it stands – the leave turns into a travel toward 56 whose
+    // departure keeps the 0 the drag left; the rest re-seats at 56, the page laid out under
+    // the band once.
+    m.up(-50)
+    expect(standing()).toBe('k1')
+    expect(band()).not.toBeNull()
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([0])
+    settle()
+    expect(
+      band()!.querySelector('.zen-band-content:not([data-leaving]) .zen-band-title')!.textContent
+    ).toBe('One line')
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    expect(written).toEqual([0, BAND_HEIGHT_ONE_LINE])
+    off()
+  })
+})
+
 describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, §10)', () => {
   it('a chrome-drawn page is moved through the page seam: its layer is translated per frame by the very offset the core hears, laid out under the seat at the rest – offset − seat, as the views’ bounds move – and comes home the same way on a leave; at home it is a plain box', () => {
     offline()
