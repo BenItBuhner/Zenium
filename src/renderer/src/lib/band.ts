@@ -248,11 +248,15 @@ function pauseClock(): void {
   running = null
 }
 
-/** Run the clock of the shown offer (if it is an offer, unheld, in front) and no other. */
+/**
+ * Run the clock of the shown offer (if it is an offer, unheld, in front and uncovered) and no
+ * other: under a cover the page is not in front (§3.2), so the offer keeps what it has left and
+ * resumes when the cover goes.
+ */
 function syncClock(): void {
   const s = bandStore.get()
   const shown = chooseBand(s)
-  const wants = shown !== null && shown.duration !== null && !s.held
+  const wants = shown !== null && shown.duration !== null && !s.held && !s.covered
   if (running && (!wants || running.id !== shown.id)) pauseClock()
   if (!wants || running) return
   const ms = left.has(shown.id) ? Math.max(left.get(shown.id)!, RESUME_FLOOR_MS) : shown.duration!
@@ -343,8 +347,8 @@ export function holdBand(held: boolean): void {
 /**
  * The host's word on the frame: which tab is in front (and what scene that is), whether a band
  * may stand on it at all, whether offers may (a private tab's states show, its offers wait), and
- * whether something stands over the page (a prompt arriving waits; the standing one stays). A
- * band for another tab waits with its clock paused; a band withheld waits.
+ * whether something stands over the page (a prompt arriving waits; the standing one stays, its
+ * clock paused). A band for another tab waits with its clock paused; a band withheld waits.
  */
 export function setBandFrame(frame: BandFrame): void {
   const next = {

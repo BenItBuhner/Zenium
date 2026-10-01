@@ -214,10 +214,27 @@ describe('the band model (motion spec §3.2)', () => {
     expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS - 2500)
   })
 
+  it('under a cover the shown offer\u2019s clock pauses and resumes with the time left (\u00a73.2: the clock runs while the page is in front)', () => {
+    const a = install()
+    vi.advanceTimersByTime(BAND_CLOCK_MS - 3000)
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    expect(shownBand()?.id).toBe(a)
+    expect(bandClockLeft(a)).toBe(3000)
+    vi.advanceTimersByTime(60_000)
+    expect(shownBand()?.id).toBe(a)
+    expect(bandClockLeft(a)).toBe(3000)
+    setBandFrame({ front: 't1', ok: true })
+    expect(bandClockLeft(a)).toBe(3000)
+    vi.advanceTimersByTime(2999)
+    expect(shownBand()?.id).toBe(a)
+    vi.advanceTimersByTime(1)
+    expect(shownBand()).toBeNull()
+  })
+
   it('under a cover (a sheet, a dialog, the keyboard) a prompt arriving waits and the one standing stays: it waits, it does not stack', () => {
     const a = install()
     expect(shownBand()?.id).toBe(a)
-    // The cover comes over the standing offer: it stays, its clock running on.
+    // The cover comes over the standing offer: it stays, its clock paused with what it has left.
     setBandFrame({ front: 't1', ok: true, covered: true })
     expect(shownBand()?.id).toBe(a)
     expect(bandStore.get().shown).toBe(a)
