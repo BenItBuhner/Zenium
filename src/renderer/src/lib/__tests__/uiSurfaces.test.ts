@@ -7,6 +7,7 @@ vi.mock('../api', () => ({
 }))
 
 import type { UIState, WebAppInstallPrompt } from '@shared/types'
+import type { WebAppInfo } from '@shared/webApp'
 import { cmd, run } from '../api'
 import {
   browserStore,
@@ -21,6 +22,7 @@ import {
   openClearBrowsingData,
   openDeleteSearchHistoryConfirm,
   openImportDialog,
+  installPopoverUp,
   openInstallSheet,
   openMediaSheet,
   openNameWindow,
@@ -50,6 +52,7 @@ afterEach(() => {
     snapshot: null,
     snapshotTabId: null,
     install: null,
+    installOffer: null,
     mediaSheet: null,
     importDialog: null,
     overlaySection: null
@@ -73,7 +76,7 @@ const INSTALL_PROMPT: WebAppInstallPrompt = {
 describe('the install sheet', () => {
   it('opens for a Home-screen prompt and for a desktop one alike, over the page with the chrome focused', async () => {
     // One store entry serves both chromes: the phone's `InstallLayer` shows a sheet for it, the
-    // desktop's `InstallDialogLayer` a dialog – each on its own host only.
+    // desktop's `InstallPopoverLayer` the pill's popover – each on its own host only.
     await openInstallSheet({ ...INSTALL_PROMPT, surface: 'desktop' })
     expect(idle().install?.surface).toBe('desktop')
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
@@ -82,6 +85,65 @@ describe('the install sheet', () => {
     await openInstallSheet(INSTALL_PROMPT)
     expect(idle().install?.tabId).toBe('t1')
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+  })
+
+  it('the desktop’s "Install <app>?" popover is a panel over the page’s picture, no dim of its own (§9.5, §9.20); the "Create shortcut" dialog and the phone’s sheet are not', () => {
+    const info: WebAppInfo = {
+      manifestUrl: 'https://sketch.example/manifest.webmanifest',
+      id: 'https://sketch.example/',
+      name: 'Sketch',
+      shortName: null,
+      description: null,
+      startUrl: 'https://sketch.example/',
+      scope: 'https://sketch.example/',
+      display: 'standalone',
+      themeColor: null,
+      backgroundColor: null,
+      icons: [
+        {
+          src: 'https://sketch.example/icon.png',
+          sizes: '192x192',
+          type: 'image/png',
+          purpose: ['any']
+        }
+      ],
+      screenshots: [],
+      shareTarget: null
+    }
+    // An installable manifest on a host with windows: Chrome's form, the popover under the chip.
+    uiStore.set({ install: { ...INSTALL_PROMPT, surface: 'desktop', info } })
+    expect(installPopoverUp(idle())).toBe(true)
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(true)
+    // Over Settings it is not alone: the overlay dims.
+    uiStore.set({ overlay: 'settings' })
+    expect(panelAloneOverContent(idle())).toBe(false)
+    uiStore.set({ overlay: 'none' })
+    // No installable manifest: the "Create shortcut" frame dialog, whose dim is the host's scrim.
+    uiStore.set({ install: { ...INSTALL_PROMPT, surface: 'desktop', info: null } })
+    expect(installPopoverUp(idle())).toBe(false)
+    expect(panelAloneOverContent(idle())).toBe(false)
+    // The phone's sheet carries a scrim of its own: not the popover either.
+    uiStore.set({ install: { ...INSTALL_PROMPT, info } })
+    expect(installPopoverUp(idle())).toBe(false)
+    expect(panelAloneOverContent(idle())).toBe(false)
+  })
+
+  it('the core’s offer is the same popover (lib/installOffer.ts): over the page’s picture, undimmed, holding the keys; the prompt takes its place', async () => {
+    const banner = { tabId: 't1', name: 'Sketch', origin: 'sketch.example', icon: null, tint: null }
+    uiStore.set({ installOffer: { banner, retired: false } })
+    expect(installPopoverUp(idle())).toBe(true)
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(true)
+    expect(chromeNeedsKeyboard()).toBe(true)
+    // Retired by the core, it is still up while it leaves: the page stays under its picture.
+    uiStore.set({ installOffer: { banner, retired: true } })
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(true)
+    // The user's prompt for the tab – the chip, the app menu – stands alone: the offer goes.
+    await openInstallSheet({ ...INSTALL_PROMPT, surface: 'desktop', info: null })
+    expect(idle().installOffer).toBeNull()
+    expect(idle().install?.surface).toBe('desktop')
   })
 })
 

@@ -447,11 +447,9 @@ export class WebAppService {
     this.trimEngagement()
     this.save()
     if (!shouldPrompt(record, now)) return
-    // No ambient banner on the desktop until it has a drawn install promotion (Chrome's desktop
-    // promotes from the omnibox icon, not a banner): its chrome has no surface that draws the
-    // card, and a card nobody saw spent the app's cooldown (Desktop's #740, seed #42). The visit
-    // above still counts, so a desktop surface, once drawn, lights up with the engagement there.
-    if (this.surface === 'desktop') return
+    // Every surface is offered: the phone draws the banner as its card, the desktop as the
+    // pill's "Install <app>?" popover (#740). A window whose chrome draws neither gives no word
+    // inside the grace, and the cooldown is not spent on it (`bannerUndrawn`, seed #42).
     this.schedule(`banner:${tabId}`, DEFER_GRACE_MS, () => {
       const current = this.browser.tabs.tab(tabId)
       if (!current || current.webApp?.id !== info.id || this.deferred.has(tabId)) return
@@ -543,10 +541,11 @@ export class WebAppService {
   }
 
   /**
-   * The grace ran out with no word of the card: the window's chrome has no surface that draws
-   * banners (the desktop today, #740). Nobody saw the prompt, so the cooldown is not spent and
-   * the engagement record keeps counting; the tab leaves `banners` and the chrome hears
-   * `bannerHide`, so a surface mounting late never shows a card the core has let go of.
+   * The grace ran out with no word of the card: the window's chrome drew nothing within it –
+   * no surface that draws banners is mounted there, or the one mounted could not open the card.
+   * Nobody saw the prompt, so the cooldown is not spent and the engagement record keeps
+   * counting; the tab leaves `banners` and the chrome hears `bannerHide`, so a surface mounting
+   * late never shows a card the core has let go of.
    */
   private bannerUndrawn(tabId: string): void {
     if (!this.banners.has(tabId)) return
