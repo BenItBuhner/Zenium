@@ -85,19 +85,36 @@ import kotlin.math.roundToInt
  * `android-tab-wake-spans.py` to find the host's own marks in (`zen:TabHost.create`,
  * `zen:TabHost.warm`).
  *
- * THE CLAIMS, each a `PASS` / `FAIL` line with its numbers in `tab-wake-findings.txt`; under
- * `-e assert true` a failed one fails the run once the record is written:
+ * THE CLAIMS, in `tab-wake-findings.txt`. A `PASS` / `FAIL` line is a claim the run stands or
+ * falls on (under `-e assert true` a failed one fails the run once the record is written); a
+ * `FACT` line is a reading and not a pass – it never fails a run. THE RULE: every frame-time
+ * comparison is a FACT line on a lane whose warm control cannot hold 60 fps (the emulator's
+ * software GPU), because there the longest frame in any state is one host-GL-pipe stall drawn
+ * from the same distribution as the control's, so a ratio rule over two single frames failed
+ * one run in three and taught nothing ([WakeFrames.Bar]); the claims that keep asserting on
+ * every lane are the deterministic ones – the view's construction, the spare's lifecycle, its
+ * memory.
  *
- *  - `spare`: every sleeping wake took the spare view, and [TabHost.create] held the UI thread
- *    no longer than [CREATE_CAP_MS] (the cold wakes' construction time is written beside it);
- *  - `switch` and `out`, sleeping against warm, on the `own` reading (the UI thread's own work in
- *    the frame): the program's bar – p95 at or under one vsync, no frame over two – where the warm
- *    control holds it, and RELATIVE to the control (the lane's ratios) where the recipe's software
- *    GPU cannot hold 60 fps for anything ([WakeFrames.bar] says which applied). The `ui` and
- *    `total` readings, and every cold reading, are reported beside the claims and not asserted
- *    here: `ui` carries the chrome WebView's wait on the renderer's compositor, which the one
- *    renderer every page shares stretches while the page's first tiles raster, and `total` the
- *    software composite – neither is the host's work (the profile in the PR names both).
+ *  - `spare` (PASS / FAIL): every sleeping wake took the spare view, and [TabHost.create] held
+ *    the UI thread no longer than [CREATE_CAP_MS] (the cold wakes' construction time is written
+ *    beside it, and the Perfetto trace reads the same slices: `android-tab-wake-spans.py`);
+ *  - `spare lifecycle` (PASS / FAIL, exercised off the record after the scenes): a spare that
+ *    stood is dropped by a memory trim ([Host.onTrimMemory], `RUNNING_MODERATE`) and, stood
+ *    again, by its renderer going ([TabHost.replaceCrashed] on the spare);
+ *  - `spare memory` (PASS / FAIL): one spare built off the record grows this process's PSS by no
+ *    more than [SPARE_PSS_CAP_KB];
+ *  - `switch` and `out`, sleeping and cold against warm, in the three readings: where the warm
+ *    control holds the program's bar (p95 at or under one vsync, no frame over two – a device),
+ *    the sleeping `own` reading is asserted against it and the rest are notes; where it cannot,
+ *    each is a FACT line – p95, longest and the frames over two vsyncs, each with its ratio
+ *    against the denominator max(the control's longest frame, the run's p95 over every frame it
+ *    recorded) ([WakeFrames.judge]);
+ *  - the moments of a wake (FACT): the show, the first paint and the load after the tap, each
+ *    against the warm control's ([WakeFrames.factDuration]);
+ *  - the trace's own two (the dispatch workflow's post-script, `tab-wake-spans.md`): `create`
+ *    inside the sleeping scenes under the same cap, and no spare built inside a measured
+ *    `switch` window (`windows.txt`: the windows in the trace's clock) – the spare is built off
+ *    the morph, by construction.
  */
 @RunWith(AndroidJUnit4::class)
 class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "tab-wake-perf") {
@@ -110,8 +127,14 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
     private val findings = StringBuilder()
     private val scenes = JSONArray()
     private val sceneWindows = StringBuilder()
+    /** The measured windows in the trace's clock (`windows.txt`: scene, window, start, end in CLOCK_BOOTTIME ns). */
+    private val measuredWindows = StringBuilder()
     private val verdicts = ArrayList<WakeFrames.Verdict>()
     private val summaries = LinkedHashMap<String, WakeFrames.Summary>()
+    /** The moments of each scene after its tap, in ms (`<scene>/shown`, `/paint`, `/load`); -1 when not seen. */
+    private val moments = LinkedHashMap<String, Double>()
+    /** Every frame recorded in every scene: the run's own p95 per reading is read over these. */
+    private val allFrames = ArrayList<WakeFrames.Frame>()
     private val spareWakes = ArrayList<WakeFrames.Wake>()
     private val coldWakes = ArrayList<WakeFrames.Wake>()
     private var perfettoOn = false
@@ -149,7 +172,8 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             writeRecord()
         }
         if (assertBar) {
-            val failed = verdicts.filter { !it.pass }
+            // A FACT line is a reading, not a pass: only an asserted claim fails the run.
+            val failed = verdicts.filter { it.failed }
             if (failed.isNotEmpty()) throw AssertionError("${failed.size} wake claim(s) failed:\n" + failed.joinToString("\n") { it.line() })
         }
     }
@@ -164,12 +188,15 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
                 .put("scenes", scenes)
                 .put("spareWakes", JSONArray().apply { spareWakes.forEach { put(JSONObject().put("tookSpare", it.tookSpare).put("createMs", r1(it.createMs))) } })
                 .put("coldWakes", JSONArray().apply { coldWakes.forEach { put(JSONObject().put("tookSpare", it.tookSpare).put("createMs", r1(it.createMs))) } })
-                .put("verdicts", JSONArray().apply { verdicts.forEach { put(JSONObject().put("scene", it.scene).put("pass", it.pass).put("reasons", JSONArray(it.reasons))) } })
+                .put("verdicts", JSONArray().apply { verdicts.forEach { put(JSONObject().put("scene", it.scene).put("pass", it.pass).put("fact", it.fact).put("reasons", JSONArray(it.reasons))) } })
                 .toString(2)
         )
         File(out, "scenes.txt").writeText(sceneWindows.toString())
+        File(out, "windows.txt").writeText(measuredWindows.toString())
         val table = WakeFrames.table(summaries.entries.map { it.key to it.value })
         findings.append("\n").append(table)
+        val asserted = verdicts.count { it.asserted }
+        findings.append("claims: $asserted asserted (${verdicts.count { it.failed }} failed), ${verdicts.size - asserted} FACT lines (readings, not passes)\n")
         for (v in verdicts) findings.append(v.line()).append('\n')
         File(out, "tab-wake-findings.txt").writeText(findings.toString())
         Log.i(tag, "findings:\n$findings")
@@ -235,6 +262,9 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         runScenes(State.COLD)
         setWarming(true)
         finishCaptures()
+        // Off the record and after the trace: the memory trim's side on the core (hidden pages
+        // put to sleep at the level's share) is no part of any measured scene.
+        spareLifecycle()
         judge()
     }
 
@@ -311,18 +341,24 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             capture.sceneEnd(name, cookie)
         }
         val all = frames.stop()
+        allFrames += all
         sceneWindows.append("$name $startBoot $endBoot\n")
         val wake = if (state.sleeping) recordWake(state, name, spareBefore) else null
         val switchEnd = if (marks.shownNs > 0) marks.shownNs else tapNs + SWITCH_CAP_MS * 1_000_000
+        // The switch window in the trace's clock (startBoot and tapNs were read back to back).
+        measuredWindows.append("$name switch $startBoot ${startBoot + (switchEnd - tapNs)}\n")
         val switchWindow = WakeFrames.window(all, tapNs, switchEnd)
         val landWindow = if (marks.shownNs > 0 && marks.paintedNs > marks.shownNs) WakeFrames.window(all, marks.shownNs, marks.paintedNs) else emptyList()
         val loadEnd = if (marks.loadedNs > 0) marks.loadedNs else tapNs + LOAD_TIMEOUT_MS * 1_000_000
         val loadWindow = WakeFrames.window(all, tapNs, loadEnd)
+        moments["$name/shown"] = msOr(marks.shownNs - tapNs, marks.shownNs > 0)
+        moments["$name/paint"] = msOr(marks.paintedNs - tapNs, marks.paintedNs > 0)
+        moments["$name/load"] = msOr(marks.loadedNs - tapNs, marks.loadedNs > 0)
         val json = sceneJson(name, result, all)
             .put("tapNs", tapNs).put("shownNs", marks.shownNs).put("paintedNs", marks.paintedNs).put("loadedNs", marks.loadedNs)
-            .put("toShowMs", msOr(marks.shownNs - tapNs, marks.shownNs > 0))
-            .put("toFirstPaintMs", msOr(marks.paintedNs - tapNs, marks.paintedNs > 0))
-            .put("toLoadMs", msOr(marks.loadedNs - tapNs, marks.loadedNs > 0))
+            .put("toShowMs", moments["$name/shown"])
+            .put("toFirstPaintMs", moments["$name/paint"])
+            .put("toLoadMs", moments["$name/load"])
             .put("sparesBuiltInScene", sparesBuilt() - sparesBefore)
             .put("switch", windowJson(switchWindow))
             .put("land", windowJson(landWindow))
@@ -398,12 +434,16 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             capture.sceneEnd(name, cookie)
         }
         val all = frames.stop()
+        allFrames += all
         sceneWindows.append("$name $startBoot $endBoot\n")
         val wake = if (state.sleeping) recordWake(state, name, spareBefore) else null
-        val outWindow = WakeFrames.window(all, outNs, outNs + OUT_WINDOW_MS * 1_000_000)
+        val outEnd = outNs + OUT_WINDOW_MS * 1_000_000
+        measuredWindows.append("$name out ${startBoot + (outNs - tapNs)} ${startBoot + (outEnd - tapNs)}\n")
+        val outWindow = WakeFrames.window(all, outNs, outEnd)
+        moments["$name/shown"] = msOr(shownNs - tapNs, shownNs > 0)
         val json = sceneJson(name, result, all)
             .put("tapNs", tapNs).put("shownNs", shownNs).put("outNs", outNs)
-            .put("toShowMs", msOr(shownNs - tapNs, shownNs > 0))
+            .put("toShowMs", moments["$name/shown"])
             .put("loadingAtOut", loadingAtOut).put("canGoBackAtOut", canGoBackAtOut)
             .put("sparesBuiltInScene", sparesBuilt() - sparesBefore)
             .put("out", windowJson(outWindow))
@@ -450,7 +490,12 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         return wake
     }
 
-    /** The claims: the construction one, then each sleeping window against the warm control's under the bar the control sets. */
+    /**
+     * The claims: the construction one, then each sleeping and cold window against the warm
+     * control's under the bar the control sets ([WakeFrames.bar]: asserted where the control
+     * holds 60 fps, a FACT line where the lane cannot), then the moments of each wake against the
+     * control's as FACT lines.
+     */
     private fun judge() {
         verdicts += WakeFrames.judgeCreate(
             "spare: every sleeping wake took the spare view and TabHost.create held the UI thread <= ${r1(CREATE_CAP_MS)} ms",
@@ -463,28 +508,51 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
                     (spareWakes.takeIf { it.isNotEmpty() }?.let { " – with the spare: " + it.joinToString(", ") { w -> r1(w.createMs).toString() } + " ms" } ?: "")
             )
         }
-        for ((scene, window) in listOf("wake-tap" to "switch", "wake-pull-out" to "out", "wake-back-out" to "out")) {
-            if (scene == "wake-back-out" && !gestural) continue
-            claim(scene, window, State.SLEEPING)
-            claim(scene, window, State.COLD)
+        val runP95 = READINGS.associateWith { reading -> WakeFrames.percentile(allFrames.map { readingOf(it, reading) }, 95.0) }
+        finding("the run's p95 over every frame recorded (${allFrames.size} frames): " + READINGS.joinToString(", ") { "$it ${r1(runP95.getValue(it))}" } + " ms – the denominator's second term where the lane cannot hold 60 fps")
+        val gestures = listOf("wake-tap" to "switch", "wake-pull-out" to "out", "wake-back-out" to "out").filter { gestural || it.first != "wake-back-out" }
+        for ((scene, window) in gestures) {
+            claim(scene, window, State.SLEEPING, runP95)
+            claim(scene, window, State.COLD, runP95)
+        }
+        for (state in listOf(State.SLEEPING, State.COLD)) {
+            for ((what, key) in listOf("shown" to "shown", "first paint" to "paint", "load" to "load")) {
+                verdicts += WakeFrames.factDuration("wake-tap ${state.word}", what, moments["wake-tap-${state.word}/$key"] ?: -1.0, moments["wake-tap-warm/$key"] ?: -1.0)
+            }
+            for ((scene, _) in gestures) {
+                if (scene == "wake-tap") continue
+                verdicts += WakeFrames.factDuration("$scene ${state.word}", "shown", moments["$scene-${state.word}/shown"] ?: -1.0, moments["$scene-warm/shown"] ?: -1.0)
+            }
         }
     }
 
-    private fun claim(scene: String, window: String, state: State) {
+    private fun claim(scene: String, window: String, state: State, runP95: Map<String, Double>) {
         for (reading in READINGS) {
             val control = summaries["$scene-warm/$window $reading"] ?: WakeFrames.Summary.EMPTY
             val subject = summaries["$scene-${state.word}/$window $reading"] ?: WakeFrames.Summary.EMPTY
-            val bar = WakeFrames.bar(control)
-            val verdict = WakeFrames.judge("$scene $window ${state.word} ($reading frame time, bar $bar)", subject, control, bar)
+            val bar = WakeFrames.bar(control, runP95.getValue(reading))
+            val label = "$scene $window ${state.word} ($reading frame time)"
+            if (bar is WakeFrames.Bar.Fact) {
+                // The lane's reading: the bar said once per window, every comparison a FACT line.
+                if (state == State.SLEEPING) finding("$scene $window ($reading): $bar")
+                verdicts += WakeFrames.judge(label, subject, control, bar)
+                continue
+            }
+            val verdict = WakeFrames.judge("$label, bar $bar", subject, control, bar)
             val why = when {
                 state == State.COLD -> "the before-reading, warming off"
-                bar is WakeFrames.Bar.Absolute -> null
-                reading == "ui" -> "the warm control's whole frames miss 60 fps on this recipe, and `ui` carries the WebView's wait on the renderer"
-                reading == "total" -> "the warm control's whole frames miss 60 fps on this recipe (the software composite)"
+                reading == "ui" -> "`ui` carries the chrome WebView's wait on the renderer's compositor, not the host's work"
+                reading == "total" -> "`total` carries the composite, not the host's work"
                 else -> null
             }
             if (why == null) verdicts += verdict else findings.append("note ${verdict.line()} – reported, not asserted: $why\n")
         }
+    }
+
+    private fun readingOf(frame: WakeFrames.Frame, reading: String): Double = when (reading) {
+        "own" -> frame.ownMs
+        "ui" -> frame.uiMs
+        else -> frame.totalMs
     }
 
     // --- the gestures ----------------------------------------------------------------------------------
@@ -736,9 +804,11 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         return false
     }
 
-    /** What one spare view costs this process, read off the record: built, measured, dropped. */
+    /** What one spare view costs this process, read off the record: built, measured, dropped – the memory claim. */
     private fun spareMemory() {
         var line = ""
+        var built = false
+        var deltaKb = 0L
         instrumentation.runOnMainSync {
             val container = host.tabs.get(START_TAB)?.containerId
             if (container == null) {
@@ -749,13 +819,51 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             System.gc()
             val before = Debug.getPss()
             val started = System.nanoTime()
-            val built = host.tabs.warm(container)
+            built = host.tabs.warm(container)
             val tookMs = (System.nanoTime() - started) / 1e6
             val after = Debug.getPss()
+            deltaKb = after - before
             host.tabs.dropSpare()
-            line = String.format(Locale.ROOT, "spare memory: one spare page view built in %.1f ms (%s), PSS of this process %d -> %d KB (+%d KB; the renderer is another process and untouched until a navigation)", tookMs, if (built) "built" else "NOT built", before, after, after - before)
+            line = String.format(Locale.ROOT, "spare memory: one spare page view built in %.1f ms (%s), PSS of this process %d -> %d KB (+%d KB; the renderer is another process and untouched until a navigation)", tookMs, if (built) "built" else "NOT built", before, after, deltaKb)
         }
         finding(line)
+        verdicts += WakeFrames.judgeSpareMemory("spare memory: one spare page view grows this process's PSS by <= $SPARE_PSS_CAP_KB KB", built, deltaKb, SPARE_PSS_CAP_KB)
+    }
+
+    /**
+     * The spare's lifecycle, exercised off the record after the scenes – the lifecycle claim: a
+     * spare stood and a memory trim dropped it (the platform's `onTrimMemory` path into
+     * [Host.onTrimMemory], graded at least `moderate` from `RUNNING_MODERATE`); stood again, its
+     * renderer's going dropped it ([TabHost.replaceCrashed] with the spare as the dead view – the
+     * path `TabWebView` takes on `onRenderProcessGone`). Both on the main thread, synchronous.
+     */
+    private fun spareLifecycle() {
+        var container: String? = null
+        var stoodForPressure = false
+        var droppedOnPressure = false
+        var stoodForRenderer = false
+        var droppedWithRenderer = false
+        instrumentation.runOnMainSync {
+            val c = host.tabs.get(START_TAB)?.containerId ?: return@runOnMainSync
+            container = c
+            host.tabs.dropSpare()
+            stoodForPressure = host.tabs.warm(c) && host.tabs.hasSpare
+            host.onTrimMemory(HostLifecycle.TRIM_MEMORY_RUNNING_MODERATE)
+            droppedOnPressure = !host.tabs.hasSpare
+        }
+        SystemClock.sleep(500)
+        instrumentation.runOnMainSync {
+            val c = container ?: return@runOnMainSync
+            host.tabs.dropSpare()
+            stoodForRenderer = host.tabs.warm(c) && host.tabs.hasSpare
+            host.tabs.get(TabHost.SPARE_ID)?.let { host.tabs.replaceCrashed(it) }
+            droppedWithRenderer = !host.tabs.hasSpare
+        }
+        finding(
+            if (container == null) "spare lifecycle: no view for $START_TAB to read the container from"
+            else "spare lifecycle: stood for the trim $stoodForPressure, dropped by it $droppedOnPressure; stood for the renderer's going $stoodForRenderer, dropped with it $droppedWithRenderer"
+        )
+        verdicts += WakeFrames.judgeSpareDrop("spare lifecycle: dropped under memory pressure and with its renderer", stoodForPressure, droppedOnPressure, stoodForRenderer, droppedWithRenderer)
     }
 
     // --- the chrome ----------------------------------------------------------------------------------
@@ -984,8 +1092,20 @@ requestAnimationFrame(chunk);next(0);})();
         private const val OUT_WINDOW_MS = 1_500L
         /** How long a sleeping scene waits for the host's spare after the overview came to rest. */
         private const val SPARE_WAIT_MS = 4_000L
-        /** The most `TabHost.create` may hold the UI thread with the spare, in ms. */
-        private const val CREATE_CAP_MS = 5.0
+        /**
+         * The most `TabHost.create` may hold the UI thread with the spare, in ms: a hard bound
+         * from the trace – the spare taken, `create` held it 0.20–0.29 ms over nine wakes on
+         * three emulator runs (the view built on the spot: 12.4–45.0 ms), so 2 ms is seven times
+         * the slowest take and a sixth of the quickest build. The trace reads the same cap
+         * (`android-tab-wake-spans.py --cap-ms`).
+         */
+        private const val CREATE_CAP_MS = 2.0
+        /**
+         * The most one spare page view may grow this process's PSS, in KB: 1.8–2.1 MB measured on
+         * the emulator (a WebView's Java and native side; the renderer is another process), so
+         * 8 MB is four times the reading.
+         */
+        private const val SPARE_PSS_CAP_KB = 8_192L
         private val READINGS = listOf("own", "ui", "total")
         private const val PULL_FRACTION = 0.75f
         private const val PULL_MS = 600L

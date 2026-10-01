@@ -141,80 +141,123 @@ object WakeFrames {
     }
 
     /**
-     * How a sleeping scene is judged against its warm control. ABSOLUTE is the program's bar
-     * (p95 at or under one vsync, no frame over two) and applies when the control itself holds it
-     * on this recipe; where even the warm control cannot (the emulator's software GPU), the bar is
-     * RELATIVE: the sleeping scene's p95 within [P95_RATIO] of the control's, its longest frame
-     * within [LONGEST_RATIO] of the control's (and never under the absolute two-vsync line: a
-     * control with no long frame does not forbid one of 20 ms), and – where both windows have
-     * [SHARE_MIN_FRAMES] frames or more, so that ten points are a frame – its share of frames over
-     * two vsyncs no more than [OVER32_POINTS] above the control's. A window of six frames moves
-     * its share in steps of 17 points: there the share is reported beside the verdict and the p95
-     * and longest ratios carry the window. The ratios are the lane's (`JankBudget`'s gesture and
-     * spring budgets): a scene has two to fourteen frames and HWUI's whole frames run 100 ms and
-     * more, so one frame of run-to-run noise is already 1.3x.
+     * How a sleeping scene's frames are read against its warm control. ABSOLUTE is the program's
+     * bar (p95 at or under one vsync, no frame over two): it applies, and is asserted, where the
+     * control itself holds it on the lane – a device. Where even the warm control cannot hold it
+     * (the emulator's software GPU: HWUI's whole frames run 100 ms and more for anything, and the
+     * UI thread's own `delay` 150–480 ms a frame is the host GL pipe's backpressure), no
+     * frame-time comparison is a claim: every one is a FACT line – the window's p95, longest and
+     * share of frames over two vsyncs, each with its ratio against [Fact.denominator], the greater
+     * of the control's longest frame and the run's p95 over every frame it recorded (the lane's
+     * stall size, not one sample of it) – printed, never asserted. The reason is in the record:
+     * the lane's longest frame in any state is one GL-pipe stall drawn from the same distribution
+     * (the warm control's own longest switch frame was 554, 339 and 294 ms on three runs), so a
+     * ratio rule over two single frames failed one run in three on the host GL pipe and taught
+     * nothing. The deterministic claims (`create`, the spare's lifecycle, its memory) assert on
+     * every lane.
      */
     sealed class Bar {
         object Absolute : Bar() {
             override fun toString(): String = "absolute (p95 <= 16.7 ms, no frame > 32 ms)"
         }
 
-        data class Relative(val p95Ratio: Double, val longestRatio: Double, val over32Points: Double) : Bar() {
+        /**
+         * The emulator lane's reading: no frame-time claim asserted, every comparison a FACT line
+         * against [denominator] = max(`controlLongest`, `runP95`).
+         */
+        data class Fact(val controlLongest: Double, val runP95: Double) : Bar() {
+            val denominator: Double get() = maxOf(controlLongest, runP95)
+
             override fun toString(): String = String.format(
                 Locale.ROOT,
-                "relative to the warm control (p95 <= %.2fx, longest <= %.2fx or <= 32 ms, frames > 32 ms share <= control + %.0f points where both windows have %d frames or more)",
-                p95Ratio, longestRatio, over32Points * 100, SHARE_MIN_FRAMES
+                "FACT, not asserted: the warm control misses 60 fps on this lane; ratios against max(the control's longest %.1f, the run's all-frames p95 %.1f) = %.1f ms",
+                controlLongest, runP95, denominator
             )
         }
     }
 
-    /** The frames both windows need before their shares of frames over two vsyncs are compared: ten, so that [OVER32_POINTS] is a frame. */
-    const val SHARE_MIN_FRAMES = 10
-
-    /** Whether the share test reads for windows of `subjectFrames` and `controlFrames`. */
-    fun shareReads(subjectFrames: Int, controlFrames: Int): Boolean =
-        subjectFrames >= SHARE_MIN_FRAMES && controlFrames >= SHARE_MIN_FRAMES
-
-    const val P95_RATIO = 2.0
-    const val LONGEST_RATIO = 2.0
-    const val OVER32_POINTS = 0.10
-
-    /** The bar for a control: absolute where the control holds 60 fps, relative where the recipe cannot. */
-    fun bar(control: Summary): Bar =
+    /**
+     * The bar for a control: absolute where the control holds 60 fps, FACT where the lane cannot.
+     * `runP95` is the p95 of the same reading over every frame the run recorded, in every scene
+     * and state.
+     */
+    fun bar(control: Summary, runP95: Double): Bar =
         if (control.frames > 0 && control.p95 <= FRAME_MS && control.longest <= HITCH_MS) Bar.Absolute
-        else Bar.Relative(P95_RATIO, LONGEST_RATIO, OVER32_POINTS)
+        else Bar.Fact(control.longest, runP95)
 
-    /** One claim's result: the `PASS` / `FAIL` line the findings carry and the reasons. */
-    data class Verdict(val scene: String, val pass: Boolean, val reasons: List<String>) {
-        fun line(): String = "${if (pass) "PASS" else "FAIL"} $scene" + if (reasons.isEmpty()) "" else ": ${reasons.joinToString("; ")}"
+    /**
+     * One claim's result: the `PASS` / `FAIL` line the findings carry and the reasons – or, with
+     * `fact`, a `FACT` line that is a reading and not a pass: it never fails a run, and `reasons`
+     * holds what it read.
+     */
+    data class Verdict(val scene: String, val pass: Boolean, val reasons: List<String>, val fact: Boolean = false) {
+        /** Whether the line is a claim the run stands or falls on. */
+        val asserted: Boolean get() = !fact
+
+        /** A claim that failed – a FACT line never does. */
+        val failed: Boolean get() = asserted && !pass
+
+        fun line(): String = "${if (fact) "FACT" else if (pass) "PASS" else "FAIL"} $scene" + if (reasons.isEmpty()) "" else ": ${reasons.joinToString("; ")}"
     }
 
     /** Judge `sleeping` (a sleeping tab's scene) against `control` (the same gesture on the warm tab) under `bar`. */
     fun judge(scene: String, sleeping: Summary, control: Summary, bar: Bar): Verdict {
-        val reasons = ArrayList<String>()
-        if (sleeping.frames == 0) return Verdict(scene, false, listOf("no frame was recorded in the window"))
         when (bar) {
             is Bar.Absolute -> {
+                if (sleeping.frames == 0) return Verdict(scene, false, listOf("no frame was recorded in the window"))
+                val reasons = ArrayList<String>()
                 if (sleeping.p95 > FRAME_MS) reasons += String.format(Locale.ROOT, "p95 %.1f ms over %.1f", sleeping.p95, FRAME_MS)
                 if (sleeping.longest > HITCH_MS) reasons += String.format(Locale.ROOT, "%d frame(s) over %.0f ms (longest %.1f)", sleeping.over32, HITCH_MS, sleeping.longest)
+                return Verdict(scene, reasons.isEmpty(), reasons)
             }
-            is Bar.Relative -> {
-                if (control.frames == 0) return Verdict(scene, false, listOf("the warm control recorded no frame"))
-                val p95Cap = control.p95 * bar.p95Ratio
-                if (sleeping.p95 > p95Cap) reasons += String.format(Locale.ROOT, "p95 %.1f ms over %.1f (%.2fx the control's %.1f)", sleeping.p95, p95Cap, bar.p95Ratio, control.p95)
-                val longestCap = maxOf(control.longest * bar.longestRatio, HITCH_MS)
-                if (sleeping.longest > longestCap) reasons += String.format(Locale.ROOT, "longest %.1f ms over %.1f (the control's %.1f)", sleeping.longest, longestCap, control.longest)
-                if (shareReads(sleeping.frames, control.frames)) {
-                    val shareCap = control.over32Share + bar.over32Points
-                    if (sleeping.over32Share > shareCap + 1e-9) {
-                        reasons += String.format(
-                            Locale.ROOT, "%.0f%% of frames over 32 ms, cap %.0f%% (the control's %.0f%% + %.0f points)",
-                            sleeping.over32Share * 100, shareCap * 100, control.over32Share * 100, bar.over32Points * 100
-                        )
-                    }
-                }
+            is Bar.Fact -> {
+                if (sleeping.frames == 0) return Verdict(scene, true, listOf("no frame was recorded in the window"), fact = true)
+                val d = bar.denominator
+                val facts = listOf(
+                    String.format(Locale.ROOT, "p95 %.1f ms, %sx the denominator %.1f", sleeping.p95, ratio(sleeping.p95, d), d),
+                    String.format(Locale.ROOT, "longest %.1f ms, %sx", sleeping.longest, ratio(sleeping.longest, d)),
+                    String.format(
+                        Locale.ROOT, "%d of %d frames over 32 ms (the control %d of %d, p95 %.1f, longest %.1f)",
+                        sleeping.over32, sleeping.frames, control.over32, control.frames, control.p95, control.longest
+                    )
+                )
+                return Verdict(scene, true, facts, fact = true)
             }
         }
+    }
+
+    /** A duration read against the warm control's as a FACT line: `shown 2880 ms after the tap, 1.23x the warm control's 2336`; either side unseen is said so. */
+    fun factDuration(scene: String, what: String, subjectMs: Double, controlMs: Double): Verdict {
+        val subject = if (subjectMs >= 0) String.format(Locale.ROOT, "%s %.0f ms after the tap", what, subjectMs) else "$what not seen"
+        val control = when {
+            subjectMs < 0 || controlMs < 0 -> if (controlMs >= 0) String.format(Locale.ROOT, "the warm control's %.0f", controlMs) else "the warm control's not seen"
+            else -> String.format(Locale.ROOT, "%sx the warm control's %.0f", ratio(subjectMs, controlMs), controlMs)
+        }
+        return Verdict(scene, true, listOf("$subject, $control"), fact = true)
+    }
+
+    /** `a / b` to two places, or `-` with no denominator. */
+    fun ratio(a: Double, b: Double): String = if (b > 0) String.format(Locale.ROOT, "%.2f", a / b) else "-"
+
+    /**
+     * The spare's lifecycle claim, exercised off the record: a spare stood and was dropped under
+     * memory pressure, stood again and was dropped with its renderer. A step that could not be
+     * exercised (no spare stood to drop) fails the claim too.
+     */
+    fun judgeSpareDrop(scene: String, stoodForPressure: Boolean, droppedOnPressure: Boolean, stoodForRenderer: Boolean, droppedWithRenderer: Boolean): Verdict {
+        val reasons = ArrayList<String>()
+        if (!stoodForPressure) reasons += "no spare stood to drop under memory pressure"
+        else if (!droppedOnPressure) reasons += "the spare stood on after memory pressure"
+        if (!stoodForRenderer) reasons += "no spare stood to drop with its renderer"
+        else if (!droppedWithRenderer) reasons += "the spare stood on after its renderer went"
+        return Verdict(scene, reasons.isEmpty(), reasons)
+    }
+
+    /** The spare's memory claim: one built, and this process's PSS grew by no more than `capKb`. */
+    fun judgeSpareMemory(scene: String, built: Boolean, deltaKb: Long, capKb: Long): Verdict {
+        val reasons = ArrayList<String>()
+        if (!built) reasons += "no spare was built to measure"
+        else if (deltaKb > capKb) reasons += "PSS grew $deltaKb KB, cap $capKb"
         return Verdict(scene, reasons.isEmpty(), reasons)
     }
 
