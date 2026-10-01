@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ExternalProtocolRequest } from '@shared/types'
+import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
@@ -287,7 +288,7 @@ describe.each([
     expect(cls).not.toContain('truncate')
   })
 
-  it('shows the decoded address 13 at 69 % on one line under the block, the raw address its title', async () => {
+  it('shows the decoded address 13 at 69 % on one line under the block, the raw address its title – the size the small-text token, not a literal', async () => {
     await settle()
     const address = dialog()!.querySelector<HTMLElement>('[title="tel:%2B1%20555%200100"]')!
     expect(address).not.toBeNull()
@@ -296,11 +297,12 @@ describe.each([
     expect(cls).toEqual(
       expect.arrayContaining([
         'truncate',
-        'text-[13px]',
+        'text-[length:var(--v2-font-small)]',
         'leading-[var(--v2-line-small)]',
         'text-[var(--v2-text-deemphasized)]'
       ])
     )
+    expect(cls).not.toContain('text-[13px]')
     expect(cls).not.toContain('line-clamp-2')
   })
 
@@ -385,5 +387,26 @@ describe.each([
       always: false
     })
     expect(uiStore.get().externalProtocol).toBeNull()
+  })
+
+  // The dialog is the back registry's top surface while it stands (a modal is outside the
+  // popover registry, so without a surface of its own the system back would fall to the legacy
+  // chain and run `tab.back` on the page behind it): a back commit is "not now".
+  it('the system back refuses the request, remembering nothing – the dialog is the back registry’s top surface', async () => {
+    await settle()
+    expect(dialog()).not.toBeNull()
+    expect(topBackSurface()?.name).toBe('external-protocol')
+    invoke.mockClear()
+    act(() => {
+      expect(dispatchBackEvent('commit')).toBe(true)
+    })
+    expect(invoke).toHaveBeenCalledWith('externalProtocol.respond', {
+      requestId: 'r-long',
+      allow: false,
+      always: false
+    })
+    expect(uiStore.get().externalProtocol).toBeNull()
+    expect(dialog()).toBeNull()
+    expect(topBackSurface()).toBeNull()
   })
 })

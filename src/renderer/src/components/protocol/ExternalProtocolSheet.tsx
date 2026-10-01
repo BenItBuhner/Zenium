@@ -195,7 +195,7 @@ function Body({
         className={
           phone
             ? 'truncate px-4 pb-2 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]'
-            : 'truncate px-4 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]'
+            : 'truncate px-4 text-[length:var(--v2-font-small)] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]'
         }
         title={request.url}
       >
