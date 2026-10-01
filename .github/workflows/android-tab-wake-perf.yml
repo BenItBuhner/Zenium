@@ -12,11 +12,17 @@ name: Android tab wake perf
 # framestats` and the WebViews' Chromium trace per scene (`traceFrames`), and a Perfetto trace of
 # the device across the sequence (sched, gfx, view, input, webview, dalvik, the frame timeline)
 # cut per scene by android-perf-trace.py in the post-script, with the host's own `zen:TabHost.*`
-# marks placed against the scenes by android-tab-wake-spans.py. The claims – every sleeping wake
-# took the spare with `create` under 5 ms; the switch and the swipe-out within the bar on the UI
-# thread's own work, absolute where the warm control holds 60 fps and relative to it where the
-# software GPU cannot hold it for anything – are `PASS` / `FAIL` lines in tab-wake-findings.txt;
-# `assert` makes a failed claim fail the run. The measured scenes run before the recorder rolls;
+# marks placed against the scenes and the measured windows by android-tab-wake-spans.py. The
+# claims are `PASS` / `FAIL` lines in tab-wake-findings.txt – the deterministic ones: every
+# sleeping wake took the spare with `create` at or under 2 ms on the UI thread, the spare dropped
+# by a memory trim and with its renderer, one spare's PSS within its cap – and the trace's two
+# (tab-wake-spans.md): `create` under the same cap, no spare built inside a measured switch
+# window. Every frame-time comparison (the switch, the way out, the show, the first paint, the
+# load; sleeping and cold against warm) is a `FACT` line where the warm control cannot hold 60 fps
+# (this lane's software GPU): printed with its ratio against max(the control's longest frame, the
+# run's all-frames p95), never asserted, because a ratio rule over two single frames failed one
+# run in three on the host GL pipe and taught nothing. `assert` makes a failed claim fail the run;
+# a FACT line never does. The measured scenes run before the recorder rolls;
 # the recorded part is one sleeping wake. The app's startup sweeps are held for the run
 # (`holdBackgroundWork`). API 34, the phone lane. The build, the emulator and the Gradle cache
 # live in android-emulator-demo.yml.
@@ -58,16 +64,22 @@ jobs:
       post-script: |
         python3 -m pip install --quiet --disable-pip-version-check perfetto
         out=artifacts/android-tab-wake-perf
+        assert=${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
         trace=$(ls "$out"/zen-*.pftrace 2>/dev/null | head -n 1 || true)
         if [ -n "$trace" ] && [ -f "$out/scenes.txt" ]; then
           python3 .github/scripts/android-perf-trace.py "$trace" "$out/scenes.txt" --json "$out/perfetto.json" > "$out/perfetto-report.md" 2>&1 || echo "::warning::the Perfetto reader failed"
-          python3 .github/scripts/android-tab-wake-spans.py "$trace" "$out/scenes.txt" > "$out/tab-wake-spans.md" 2>&1 || echo "::warning::the span reader failed"
+          python3 .github/scripts/android-tab-wake-spans.py "$trace" "$out/scenes.txt" --windows "$out/windows.txt" --cap-ms 2 > "$out/tab-wake-spans.md" 2>&1 || echo "::warning::the span reader failed"
           { echo '## The system (Perfetto)'; echo; cat "$out/perfetto-report.md"; echo; cat "$out/tab-wake-spans.md"; } >> "$GITHUB_STEP_SUMMARY" || true
         else
           echo "::notice::no Perfetto trace or scenes.txt to read"
         fi
         if [ -f "$out/tab-wake-findings.txt" ]; then
           { echo '## The driver (tab-wake-findings.txt)'; echo; echo '```'; cat "$out/tab-wake-findings.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+        # The trace's two claims fail the run as the driver's do; a FACT line never does.
+        if [ "$assert" = "true" ] && [ -f "$out/tab-wake-spans.md" ] && grep -q '^FAIL ' "$out/tab-wake-spans.md"; then
+          grep '^FAIL ' "$out/tab-wake-spans.md" | sed 's/^/::error::the trace: /'
+          exit 1
         fi
       artifact-name: android-tab-wake-perf-light
       artifact-path: artifacts/android-tab-wake-perf/
@@ -95,16 +107,22 @@ jobs:
       post-script: |
         python3 -m pip install --quiet --disable-pip-version-check perfetto
         out=artifacts/android-tab-wake-perf
+        assert=${{ (github.event_name == 'workflow_dispatch' && inputs.assert == false) && 'false' || 'true' }}
         trace=$(ls "$out"/zen-*.pftrace 2>/dev/null | head -n 1 || true)
         if [ -n "$trace" ] && [ -f "$out/scenes.txt" ]; then
           python3 .github/scripts/android-perf-trace.py "$trace" "$out/scenes.txt" --json "$out/perfetto.json" > "$out/perfetto-report.md" 2>&1 || echo "::warning::the Perfetto reader failed"
-          python3 .github/scripts/android-tab-wake-spans.py "$trace" "$out/scenes.txt" > "$out/tab-wake-spans.md" 2>&1 || echo "::warning::the span reader failed"
+          python3 .github/scripts/android-tab-wake-spans.py "$trace" "$out/scenes.txt" --windows "$out/windows.txt" --cap-ms 2 > "$out/tab-wake-spans.md" 2>&1 || echo "::warning::the span reader failed"
           { echo '## The system (Perfetto)'; echo; cat "$out/perfetto-report.md"; echo; cat "$out/tab-wake-spans.md"; } >> "$GITHUB_STEP_SUMMARY" || true
         else
           echo "::notice::no Perfetto trace or scenes.txt to read"
         fi
         if [ -f "$out/tab-wake-findings.txt" ]; then
           { echo '## The driver (tab-wake-findings.txt)'; echo; echo '```'; cat "$out/tab-wake-findings.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+        # The trace's two claims fail the run as the driver's do; a FACT line never does.
+        if [ "$assert" = "true" ] && [ -f "$out/tab-wake-spans.md" ] && grep -q '^FAIL ' "$out/tab-wake-spans.md"; then
+          grep '^FAIL ' "$out/tab-wake-spans.md" | sed 's/^/::error::the trace: /'
+          exit 1
         fi
       artifact-name: android-tab-wake-perf-light-second-boot
       artifact-path: artifacts/android-tab-wake-perf/
