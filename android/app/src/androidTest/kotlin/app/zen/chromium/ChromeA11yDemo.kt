@@ -602,25 +602,36 @@ class ChromeA11yDemo : DemoHarness(
         val cards = (cardsAtTop + walk().filter(isCard)).distinctBy { it.label }
         expect("every card says its place over $count tabs: ${cards.map { it.label }}", cards.size == count && cards.all { it.label.contains(" of $count") })
         expect("the current tab's card says so", cards.any { it.label.startsWith("Example Domain, tab ") && it.label.endsWith(", current") })
-        // The header menu.
-        if (touchTapFresh { it == "More" }) {
+        // The overview's menu is the BAR's ⋯ while the overview stands (tab overview cleanup
+        // spec §4; the overview draws no ⋯ of its own): the bar's sheet, its handle "Resize
+        // menu", the rows in §4's order – the count rows only while any (Inactive Tabs,
+        // Recently Closed: hidden at zero, not disabled), Close All Tabs (N) in danger ink last
+        // before Switch Space (two spaces or more).
+        if (touchBarItem("menu") { it == MENU_LABEL }) {
             awaitNode(8_000) { it.startsWith("Close All Tabs") }
             SystemClock.sleep(1_200)
             audit(
                 "overview-menu",
                 listOf(
-                    Want("Resize sheet", "Button"),
-                    Want("Recently Closed (", "Button", listOf("disabled"), prefix = true),
+                    Want(MENU_HANDLE_LABEL, "Button"),
+                    Want("New Tab", "Button"),
+                    Want("New Private Tab", "Button", optional = true),
+                    Want("Select Tabs", "Button"),
+                    Want("Search Tabs", "Button"),
+                    Want("Inactive Tabs (", "Button", prefix = true, optional = true),
+                    Want("Recently Closed (", "Button", prefix = true, optional = true),
                     Want("Close All Tabs (", "Button", prefix = true)
                 )
             )
+            val rows = walk().filter { it.control }.map { it.label }
+            expect("[overview-menu] nothing of the old sheet's rows remains (no More, no segment, no Spaces row)", rows.none { it == "More" || it == "Spaces" || it == "Tabs" || it == "Private" })
             val dialog = walk().firstOrNull { !it.control && it.cls.endsWith("Dialog") }
-            expect("the header menu is a dialog named for the space: '${dialog?.label}'", dialog?.label == "Browse")
+            expect("the overview's menu is a dialog with a name: '${dialog?.label}'", !dialog?.label.isNullOrBlank())
             dismiss()
             awaitChrome(6_000) { findNode { it.startsWith("Close All Tabs") } == null }
             SystemClock.sleep(800)
         } else {
-            fail("no touch landed on the overview's More button")
+            fail("no touch landed on the bar's Menu button over the overview")
         }
         toastScene()
         dismiss()

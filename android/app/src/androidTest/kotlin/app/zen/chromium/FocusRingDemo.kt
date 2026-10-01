@@ -194,11 +194,15 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
     private fun closeAllCheckbox() {
         step("3. The Close-all prompt's checkbox under the Tab key, then ticked by Space (§4: the accent fill)") {
             openOverview()
-            val menu = touchTapLabelExpecting("More", "the overview's menu rows are up", timeoutMs = 6_000) {
+            // The overview's menu is the bar's ⋯ while the overview stands (tab overview cleanup
+            // spec §4; the overview draws no ⋯ of its own): the "Menu" button, its sheet's rows.
+            val menu = touchTapLabelExpecting(MENU_LABEL, "the overview's menu rows are up", timeoutMs = 6_000) {
                 chromeValue("String(!!document.querySelector('.zen-sheet-item'))") == "true"
             }
-            if (!menu) error("the overview's More menu never opened")
+            if (!menu) error("the overview's menu never opened from the bar's ⋯")
             SystemClock.sleep(1_200)
+            pullMenuUp()
+            SystemClock.sleep(800)
             val prompt = touchTapLabelExpecting("Close All Tabs", "the Close-all prompt is up", prefix = true, timeoutMs = 8_000) {
                 chromeValue("String(!!document.querySelector('$PROMPT_CHECKBOX'))") == "true"
             }
