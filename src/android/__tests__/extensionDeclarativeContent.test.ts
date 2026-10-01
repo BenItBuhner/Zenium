@@ -66,11 +66,14 @@ describe('chrome.declarativeContent on the phone (Android compat round 24)', () 
     ])
     // example.com matches no condition: the action stays disabled on the tab.
     expect(h.runtime.api.toolbarAction(ID)?.enabled).toBe(false)
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t1 }])).result).toBe(false)
-    // The tab goes to Instagram: the rule holds, the action shows on that tab alone.
+    expect((await call(h, 'bg1', 'action', 'isEnabled', [t1])).result).toBe(false)
+    // The tab goes to Instagram: the rule holds, the action shows on that tab alone – on the
+    // toolbar; `isEnabled` answers the extension's own `enable` / `disable` and leaves the rule
+    // out ("actions enabled using only declarativeContent always return false", Chrome's
+    // `GetIsVisibleIgnoringDeclarative`).
     navigate(h, 't1', 'https://www.instagram.com/stories/')
     expect(h.runtime.api.toolbarAction(ID)?.enabled).toBe(true)
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t1 }])).result).toBe(true)
+    expect((await call(h, 'bg1', 'action', 'isEnabled', [t1])).result).toBe(false)
     // The global value is untouched (Chrome's `GetIsVisible` for no tab).
     expect((await call(h, 'bg1', 'action', 'isEnabled', [])).result).toBe(false)
     // Another tab on Facebook shows too; a third elsewhere does not.
@@ -79,16 +82,18 @@ describe('chrome.declarativeContent on the phone (Android compat round 24)', () 
     h.notifyState()
     const t2 = h.runtime.api.tabs.chromeIdFor('t2')
     const t3 = h.runtime.api.tabs.chromeIdFor('t3')
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t2 }])).result).toBe(true)
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t3 }])).result).toBe(false)
+    expect(h.runtime.api.actionStateFor(ID, t2).enabled).toBe(true)
+    expect(h.runtime.api.actionStateFor(ID, t3).enabled).toBe(false)
     // The tab's own disable comes first, even where a rule holds; its own enable too.
     await call(h, 'bg1', 'action', 'disable', [t1])
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t1 }])).result).toBe(false)
+    expect(h.runtime.api.actionStateFor(ID, t1).enabled).toBe(false)
+    expect((await call(h, 'bg1', 'action', 'isEnabled', [t1])).result).toBe(false)
     await call(h, 'bg1', 'action', 'enable', [t3])
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t3 }])).result).toBe(true)
+    expect(h.runtime.api.actionStateFor(ID, t3).enabled).toBe(true)
+    expect((await call(h, 'bg1', 'action', 'isEnabled', [t3])).result).toBe(true)
     // Away from the site the rule lets go.
     navigate(h, 't2', 'https://news.example/')
-    expect((await call(h, 'bg1', 'action', 'isEnabled', [{ tabId: t2 }])).result).toBe(false)
+    expect(h.runtime.api.actionStateFor(ID, t2).enabled).toBe(false)
     // A private tab the extension may not see is no page of its rules.
     h.tabs.p1 = makeTab('p1', 'https://www.instagram.com/', 'private')
     h.notifyState()
@@ -261,11 +266,13 @@ describe('chrome.declarativeContent on the phone (Android compat round 24)', () 
     expect(css.error).toBeUndefined()
     await call(h3, 'bg1', 'action', 'disable', [])
     const t1 = h3.runtime.api.tabs.chromeIdFor('t1')
-    expect((await call(h3, 'bg1', 'action', 'isEnabled', [{ tabId: t1 }])).result).toBe(false)
+    expect(h3.runtime.api.actionStateFor(ID, t1).enabled).toBe(false)
     await call(h3, 'bg1', 'declarativeContent', 'addRules', [
       EVENT,
       [{ id: 'all', conditions: [{ instanceType: MATCHER }], actions: [{ instanceType: SHOW }] }]
     ])
-    expect((await call(h3, 'bg1', 'action', 'isEnabled', [{ tabId: t1 }])).result).toBe(true)
+    expect(h3.runtime.api.actionStateFor(ID, t1).enabled).toBe(true)
+    // What the toolbar shows by the rule is not what `isEnabled` answers (Chrome's docs).
+    expect((await call(h3, 'bg1', 'action', 'isEnabled', [t1])).result).toBe(false)
   })
 })

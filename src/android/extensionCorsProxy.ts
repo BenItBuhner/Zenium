@@ -1,5 +1,5 @@
 import { matchesAnyPatternOrigin } from '@core/extensions/api/matchPattern'
-import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
+import { isExtensionPageUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 
 /**
  * The page side of the CORS proxy (`CorsProxy.kt`). Chrome lets an extension page fetch any host
@@ -11,12 +11,29 @@ import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
  * fetch is credentialed (`credentials: "include"`, `withCredentials`), so cookies go along, and
  * whether the page could not hand the body over at all (`skip`), so Kotlin leaves that request
  * to the WebView. Requests to the extension's own origin and to hosts outside its permissions are
- * untouched: those are the WebView's, CORS and all, as they are Chrome's.
+ * untouched: those are the WebView's, CORS and all, as they are Chrome's – except that an
+ * extension-origin answer the host refused, where Chrome has no answer but a network error,
+ * rejects as Chrome's does (`NET_ERROR_HEADER`).
  */
 
 export const PROXY_HEADER = 'X-Zenium-Proxy'
 export const CREDENTIALS_HEADER = 'X-Zenium-Credentials'
 export const SKIP = 'skip'
+/**
+ * The header on an extension-origin answer Chrome would not answer at all (`NetErrorAnswer.kt`,
+ * set by `Extensions.intercept`): a request for a file of an extension that is not installed, for another
+ * extension's file that is not web-accessible, in a private tab the extension may not see
+ * (`ERR_BLOCKED_BY_CLIENT`), or for a file the extension has not (`ERR_FILE_NOT_FOUND`). Chrome
+ * fails these as network errors, so an extension's `fetch` of them rejects – `TypeError: Failed
+ * to fetch` – and an extension reads the rejection as the file's absence: Black Menu for Google
+ * tells Vivaldi by a `HEAD` of Vivaldi's reader extension (`chrome-extension://mpognobbk…/…`),
+ * `then(() => true, () => null)`, and turns its toolbar tap into the side panel on `true`. The
+ * WebView can only answer such a request with a response from the host (the served origin is
+ * the host's alone), so the host answers a 404 with this header, and `fetch` here rejects it as
+ * Chrome does. A response of the page's `no-cors` mode is opaque and keeps its headers; such a
+ * request still resolves.
+ */
+export const NET_ERROR_HEADER = 'X-Zenium-Net-Error'
 /** Bodies past this go unticketed (the request is left to the WebView): base64 over the bridge has a price. */
 export const MAX_BODY_BYTES = 16 * 1024 * 1024
 
@@ -68,7 +85,10 @@ function installFetch(win: Window & typeof globalThis, options: CorsProxyOptions
       input =
         typeof input === 'string' || input instanceof URL ? served : new win.Request(served, input)
     // Decide on the URL alone first: building a Request from a Request takes its body over.
-    if (!proxiesUrl(served, options)) return native.call(win, input, init)
+    if (!proxiesUrl(served, options)) {
+      const response = await native.call(win, input, init)
+      return isExtensionPageUrl(served) ? asChromeAnswers(win, response) : response
+    }
     const request = new win.Request(input, init)
     const headers = new win.Headers(request.headers)
     if (request.credentials === 'include') headers.set(CREDENTIALS_HEADER, 'include')
@@ -104,6 +124,22 @@ function installFetch(win: Window & typeof globalThis, options: CorsProxyOptions
     )
   }
   win.fetch = patched
+}
+
+/**
+ * An extension-origin answer as Chrome gives it: the host's refusal (`NET_ERROR_HEADER`) is the
+ * network error Chrome fails the request with, so the fetch rejects with Chrome's `TypeError`;
+ * any other answer stands.
+ */
+function asChromeAnswers(win: Window & typeof globalThis, response: Response): Response {
+  let refused: string | null = null
+  try {
+    refused = response.headers.get(NET_ERROR_HEADER)
+  } catch {
+    /* no headers to read (an opaque response): the answer stands */
+  }
+  if (refused) throw new win.TypeError('Failed to fetch')
+  return response
 }
 
 function urlOf(win: Window & typeof globalThis, input: RequestInfo | URL): string {

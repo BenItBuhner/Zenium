@@ -605,6 +605,12 @@ export interface RuntimeStoreLink {
    * reports over the bridge (a `console` post: messages dropped at the page under its flow bound).
    */
   consoleLine?(id: string, report: ExtensionErrorReport): void
+  /**
+   * A running extension's `permissions.request` that adds warning-bearing permissions: the
+   * chrome's sheet with the lines (`AndroidExtensions.confirmPermissionRequest`), the user's
+   * answer.
+   */
+  confirmPermissionRequest?(id: string, warnings: string[]): Promise<boolean>
 }
 
 /**
@@ -2028,6 +2034,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           error
         )
       })
+  }
+
+  /**
+   * The store half owns the chrome's permission sheet (`AndroidExtensions.confirmPermissionRequest`,
+   * the same sheet an update's new permissions take). A runtime without its store half (the
+   * tests') has no sheet to ask: granted, as every request was before the sheet.
+   */
+  confirmPermissions(id: string, warnings: string[]): Promise<boolean> {
+    const ask = this.store?.confirmPermissionRequest
+    return ask ? ask.call(this.store, id, warnings) : Promise.resolve(true)
   }
 
   showNotification(extensionId: string, notification: ShownNotification): void {

@@ -59,6 +59,7 @@ import {
 import { TAB_CAPTURE_PERMISSION, type CaptureInfo } from '@core/extensions/api/tabCapture'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
+import { grantWarnings, type PermissionWarningSource } from '@core/extensions/permissionMessages'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
   chromeExtensionOrigin,
@@ -216,6 +217,12 @@ export interface ApiHost {
    */
   setGrants(id: string, grants: PersistedGrants, granted: string[]): void
   /**
+   * A `permissions.request` that would add warning-bearing permissions (`warnings`: Chrome's
+   * prompt lines): the chrome's sheet with them, the user's answer. Chrome grants or refuses a
+   * request whole, so a refusal grants nothing.
+   */
+  confirmPermissions(id: string, warnings: string[]): Promise<boolean>
+  /**
    * `tabs.captureVisibleTab`: the tab's on-screen pixels as a `data:` URL, or null when the view
    * cannot be captured (hidden, not painted yet).
    */
@@ -312,6 +319,15 @@ const DEFAULT_BADGE_BACKGROUND = '#5f6368'
 const DEFAULT_BADGE_TEXT_COLOR = '#ffffff'
 
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+
+/** `topSites.MostVisitedURL`: what `chrome.topSites.get` lists. */
+export interface MostVisitedURL {
+  url: string
+  title: string
+}
+
+/** How many most visited sites `chrome.topSites.get` answers at most: Chrome's `TopSitesImpl::kTopSitesNumber`. */
+export const TOP_SITES_MAX = 20
 
 /** `tabs.detectLanguage`: the page's declared language, read in the extension's world. */
 const DECLARED_LANGUAGE_JS =
@@ -956,6 +972,8 @@ export class ExtensionApi {
         return this.host.identity.call(id, method, args)
       case 'history':
         return this.historyCall(method, args)
+      case 'topSites':
+        return this.topSitesCall(method)
       case 'bookmarks':
         return this.bookmarksCall(method, args)
       case 'permissions':
@@ -1649,8 +1667,17 @@ export class ExtensionApi {
       case 'hide':
         this.writeAction(id, tabIdOf(args[0]), 'enabled', false)
         return undefined
-      case 'isEnabled':
-        return state.enabled
+      case 'isEnabled': {
+        // Chrome takes the tab id itself here (`isEnabled(tabId?: integer)`), and answers the
+        // tab's own `enable` / `disable` over the global value, a `declarativeContent` rule's
+        // showing left out ("actions enabled using only declarativeContent always return
+        // false"): `GetIsVisibleIgnoringDeclarative`. Super Simple Highlighter disables its
+        // action on a page without highlights (round 25); the sweep reads that state here.
+        const asked = tabIdOf(args[0])
+        const record = this.actionRecord(id)
+        const own = asked === undefined ? undefined : record.perTab.get(asked)?.enabled
+        return own ?? record.global.enabled
+      }
       case 'openPopup':
         this.host.openPopup(id, true)
         return undefined
@@ -2079,6 +2106,24 @@ export class ExtensionApi {
     throw new Error(`chrome.history.${method} ${NOT_IMPLEMENTED}`)
   }
 
+  /**
+   * `chrome.topSites.get`: the browser's most visited sites as Chrome's `MostVisitedURL`s
+   * (`url`, `title`), at most [TOP_SITES_MAX] of them – the count Chrome's `TopSitesImpl`
+   * keeps. They come from the new tab page's own ranking (`history.topSites`: aggregates
+   * folded by host, the best page of each host standing for it, by summed frecency), so an
+   * extension's new tab lists what Zenium's would; Chrome ranks canonical URLs without the
+   * fold. A fresh profile answers the empty list, as Chrome does. Google Arts & Culture's new
+   * tab awaits this call before it draws anything and stayed at "Loading..." on the rejection
+   * (compat round 25, row 39).
+   */
+  private topSitesCall(method: string): unknown {
+    if (method === 'get')
+      return this.host.browser.history
+        .topSites(TOP_SITES_MAX)
+        .map(({ url, title }) => ({ url, title }) satisfies MostVisitedURL)
+    throw new Error(`chrome.topSites.${method} ${NOT_IMPLEMENTED}`)
+  }
+
   /** Over the core's Chrome-shaped bookmark tree (three roots with fixed ids, `dateAdded`, folders). */
   private bookmarksCall(method: string, args: unknown[]): unknown {
     const bookmarks = this.host.browser.bookmarks
@@ -2183,8 +2228,12 @@ export class ExtensionApi {
     const id = ext.record.id
     const wanted = normalizePermissionSet(args[0] ?? {})
     if (!wanted) throw new Error('Invalid value for argument 1. Property is not an object.')
+    // The sets live in the maps from the first call on: a request waiting on the chrome's sheet
+    // and another call meanwhile work on one set, so neither's grant is lost to the other's.
     const grantedHosts = this.grantedHosts.get(id) ?? new Set<string>()
     const grantedApis = this.grantedApis.get(id) ?? new Set<string>()
+    this.grantedHosts.set(id, grantedHosts)
+    this.grantedApis.set(id, grantedApis)
     // Host patterns hold by containment, as Chrome's `URLPatternSet` does: an optional
     // `<all_urls>` lets `http://example.com/*` be requested and, granted, answers `contains` for
     // it (the desktop's `permissions.ts` set arithmetic, shared here).
@@ -2230,13 +2279,31 @@ export class ExtensionApi {
       case 'request': {
         const requestable = requestablePermissions(sets, wanted)
         if (!requestable.ok) throw new Error(requestable.error)
-        const missing = missingPermissions(granted(), wanted)
+        const before = granted()
+        const missing = missingPermissions(before, wanted)
         if (missing.permissions.length === 0 && missing.origins.length === 0) return true
-        for (const p of missing.permissions) grantedApis.add(p)
-        for (const o of missing.origins) grantedHosts.add(o)
-        commit(missing.origins.length > 0)
-        this.host.emit(id, 'permissions', 'onAdded', [missing])
-        return true
+        const grant = (): true => {
+          for (const p of missing.permissions) grantedApis.add(p)
+          for (const o of missing.origins) grantedHosts.add(o)
+          commit(missing.origins.length > 0)
+          this.host.emit(id, 'permissions', 'onAdded', [missing])
+          return true
+        }
+        // What the request adds to the prompt Chrome showed at install: nothing new (`scripting`,
+        // `storage`, a host the manifest's patterns already warned for) is granted without a
+        // question, as Chrome grants it; a new line (`webNavigation`'s "Read your browsing
+        // history", a site's "Read and change your data on …") is the chrome's sheet, and the
+        // user's "no" is the request's `false` with nothing granted. Super Simple Highlighter's
+        // action click asks for `webNavigation`, `scripting` and the page's site (round 25).
+        const warnings = grantWarnings(
+          manifest.raw as PermissionWarningSource,
+          before,
+          addPermissionSets(before, missing)
+        )
+        if (warnings.length === 0) return grant()
+        return this.host
+          .confirmPermissions(id, warnings)
+          .then((accepted) => (accepted ? grant() : false))
       }
       case 'remove': {
         if (
