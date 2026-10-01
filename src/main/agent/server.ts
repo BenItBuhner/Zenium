@@ -25,6 +25,10 @@ export class ElectronAgentTransport implements AgentTransport {
     })
     server.keepAliveTimeout = 65_000
     server.headersTimeout = 70_000
+    // Above the core's per-call deadline: a request still open past it has a dead client.
+    server.requestTimeout = 120_000
+    // TCP keepalive finds a peer that vanished without a FIN (a slept laptop, a dropped LAN link).
+    server.on('connection', (socket) => socket.setKeepAlive(true, 30_000))
     const host = options.lan ? '0.0.0.0' : '127.0.0.1'
     await new Promise<void>((resolve, reject) => {
       // The message is what Settings → AI Agents shows; the code and the address tried ride
