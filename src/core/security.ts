@@ -199,18 +199,22 @@ export class SecurityPromptService {
     const key = httpAuthKey(challenge)
     // An agent's tab answers its own challenge: a user's tab behind the same realm never waits
     // on the agent, nor takes its answer.
-    const flight = this.agentTab(tabId, 'http-auth') ? `${key}|${tabId}` : key
+    // Its retry bookkeeping is the flight's too: an agent's answer never pre-fills the user's
+    // next dialog or marks the user's credentials refused, nor the other way round.
+    const agentTab = this.agentTab(tabId, 'http-auth')
+    const flight = agentTab ? `${key}|${tabId}` : key
     const waiting = this.inFlight.get(flight)
     if (waiting) return waiting
     const now = this.now()
-    const failedBefore = now - (this.answeredAt.get(key) ?? -Infinity) < AUTH_RETRY_WINDOW_MS
+    const failedBefore = now - (this.answeredAt.get(flight) ?? -Infinity) < AUTH_RETRY_WINDOW_MS
     const remembered = this.credentials.get(key)
     if (remembered && !failedBefore) {
-      this.sent(key, remembered)
+      this.sent(flight, remembered)
       return remembered
     }
-    if (remembered) this.credentials.delete(key)
-    const asking = this.askHttpAuth(key, challenge, tabId, failedBefore)
+    // Refused on an agent's tab, the user's saved sign-in stays theirs to keep or forget.
+    if (remembered && !agentTab) this.credentials.delete(key)
+    const asking = this.askHttpAuth(key, flight, challenge, tabId, failedBefore)
     this.inFlight.set(flight, asking)
     try {
       return await asking
@@ -221,6 +225,7 @@ export class SecurityPromptService {
 
   private async askHttpAuth(
     key: string,
+    flight: string,
     challenge: HttpAuthChallenge,
     tabId: string | null,
     failedBefore: boolean
@@ -236,7 +241,7 @@ export class SecurityPromptService {
       isProxy: challenge.isProxy,
       secure: challenge.secure,
       failedBefore,
-      username: failedBefore ? (this.lastUsername.get(key) ?? '') : ''
+      username: failedBefore ? (this.lastUsername.get(flight) ?? '') : ''
     }
     const agent = tabId
       ? this.browser.agents?.routePrompt(httpAuthSpec({ ...prompt, tabId }))
@@ -245,26 +250,27 @@ export class SecurityPromptService {
       // The agent's credentials go with this request alone: never remembered for the user.
       const credentials = await agent.result
       if (!credentials) {
-        this.answeredAt.delete(key)
+        this.answeredAt.delete(flight)
         return null
       }
-      this.sent(key, credentials)
+      this.sent(flight, credentials)
       return credentials
     }
     const answer = await this.show(prompt)
     if (!answer || answer.kind !== 'http-auth') {
-      this.answeredAt.delete(key)
+      this.answeredAt.delete(flight)
       return null
     }
     const credentials = { username: answer.username, password: answer.password }
     if (answer.remember) this.credentials.set(key, credentials)
-    this.sent(key, credentials)
+    this.sent(flight, credentials)
     return credentials
   }
 
-  private sent(key: string, credentials: HttpCredentials): void {
-    this.answeredAt.set(key, this.now())
-    this.lastUsername.set(key, credentials.username)
+  /** `flight` is the protection space's key, or an agent tab's own (`httpAuth`). */
+  private sent(flight: string, credentials: HttpCredentials): void {
+    this.answeredAt.set(flight, this.now())
+    this.lastUsername.set(flight, credentials.username)
   }
 
   /**
