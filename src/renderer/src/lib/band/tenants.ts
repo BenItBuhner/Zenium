@@ -37,24 +37,19 @@ export interface BandAction {
 export type BandTone = 'ok' | 'warn' | 'danger'
 
 /**
- * What a tenant adds to its banner for the band: the ×'s name where the × is a refusal with a
- * name of its own, a state's tone, and what it does when the band is put away UNANSWERED
- * (`onAway`).
+ * What a tenant adds to its banner for the band: a state's tone, and what it does when the band
+ * is put away UNANSWERED (`onAway`). The × has no name of a tenant's own: every band's × is the
+ * content component's "Dismiss" (the Design Lead's ruling – one word, no tenant an exception).
  */
 export interface BandExtras {
-  /**
-   * The ×'s accessible name ("Not now" on the default-browser band, §4 – the model's
-   * `closeLabel`, as the desktop's own band names it); the content component's default otherwise.
-   */
-  closeLabel?: string
   tone?: BandTone
   /**
    * The band was put away without an answer – the system Back (the band's Escape, spec §9 item
-   * 6) or a swipe up: no refusal is remembered, so the tenant's `onDismiss` is NOT called (its
-   * `swipe` and `close` are today's refusals: the install prompt's cooldown, the default-browser
-   * campaign's dismissal, the reader offer's mute). What the tenant does instead is bookkeeping
-   * only – the install prompt tells the core the band is gone with no refusal, the reader offer
-   * marks its standing offer spent – or nothing.
+   * 6), the Escape key, or a swipe up: no refusal is remembered, so the tenant's `onDismiss` is
+   * NOT called (its `swipe` and `close` are today's refusals: the install prompt's cooldown, the
+   * default-browser campaign's dismissal, the reader offer's mute). What the tenant does instead
+   * is bookkeeping only – the install prompt tells the core the band is gone with no refusal,
+   * the reader offer marks its standing offer spent – or nothing.
    */
   onAway?(): void
 }
@@ -63,20 +58,21 @@ export interface BandExtras {
  * Why a band left, in the tenants' vocabulary: the §9.33 host's reasons – `action` (the action
  * taken), `close` (the ×), `swipe` (swiped up off the page), `timeout` (the clock), `replaced`
  * (a newer band took its place), `program` (its tenant or a rule took it down: a navigation,
- * the tab leaving the front, a gate) – and the band's own two: `escape`, the system Back (the
- * band's Escape; the stack's cards never had one), and `displaced`, a pull-to-refresh begun on
- * the held page that took it over (§3.2: a pull while a band stands dismisses the band first).
+ * the tab leaving the front, a gate) – and the band's own three: `back`, the system Back (the
+ * band's Escape on Android; the stack's cards never had one), `escape`, the Escape key with
+ * focus in the band (a hardware keyboard), and `displaced`, a pull-to-refresh begun on the held
+ * page that took it over (§3.2: a pull while a band stands dismisses the band first).
  */
-export type BandEndReason = BannerDismissReason | 'displaced' | 'escape'
+export type BandEndReason = BannerDismissReason | 'displaced' | 'escape' | 'back'
 
 /**
- * The ends that put the band away UNANSWERED (spec §9 item 6: Escape – the system Back on
- * Android – and the swipe leave the band without starting a cooldown; a refusal that is
- * remembered is only ever an explicit button, here the ×). The clock running out and the
- * tenants' own take-downs keep today's readings.
+ * The ends that put the band away UNANSWERED (spec §9 item 6: the system Back, Escape and the
+ * swipe leave the band without starting a cooldown; a refusal that is remembered is only ever an
+ * explicit button, here the ×). The clock running out and the tenants' own take-downs keep
+ * today's readings.
  */
 export function unansweredEnd(reason: BandEndReason): boolean {
-  return reason === 'escape' || reason === 'swipe'
+  return reason === 'back' || reason === 'escape' || reason === 'swipe'
 }
 
 /** What a tenant asks of the band: the spec's content `[glyph] Title · detail [Action] [×]`. */
@@ -88,8 +84,6 @@ export interface BandRequest {
   glyph?: LucideIcon
   /** The band's action, if it has one (offers always do). */
   action?: BandAction
-  /** The ×'s name, where the refusal has one ("Not now" on the default-browser band, §4). */
-  closeLabel?: string
   /** A state's status ink for its glyph (§3.1); none draws it deemphasised. */
   tone?: BandTone
   /** Bands of one `key` do not pile up: a newer one replaces the standing one (§3.2). */
@@ -128,7 +122,6 @@ export function bandRequestFromBanner(
     const action = opts.action
     request.action = { label: action.label, pick: () => action.onPick() }
   }
-  if (extras.closeLabel !== undefined) request.closeLabel = extras.closeLabel
   if (extras.tone && shape === 'state') request.tone = extras.tone
   if (opts.key !== undefined) request.key = opts.key
   const { onDismiss } = opts
@@ -150,13 +143,20 @@ export function bandRequestFromBanner(
  * the offer: it reads as `program`, which no tenant counts as a refusal (the install prompt
  * reports nothing to the core, the reader offer's site stays unmuted); the offer may come back.
  * The unanswered ends ({@link unansweredEnd}) do not travel this way from
- * {@link bandRequestFromBanner}; asked anyway, `escape` reads as `program` too – no refusal.
+ * {@link bandRequestFromBanner}; asked anyway, `back` and `escape` read as `program` too – no
+ * refusal.
  */
 export function bannerReasonOf(reason: BandEndReason): BannerDismissReason {
-  return reason === 'displaced' || reason === 'escape' ? 'program' : reason
+  return reason === 'displaced' || reason === 'escape' || reason === 'back' ? 'program' : reason
 }
 
-/** Whether a band's end was the user's own doing (the action, the ×, the swipe, the Back) – not a rule's. */
+/** Whether a band's end was the user's own doing (the action, the ×, the swipe, the Back, Escape) – not a rule's. */
 export function userEnded(reason: BandEndReason): boolean {
-  return reason === 'action' || reason === 'close' || reason === 'swipe' || reason === 'escape'
+  return (
+    reason === 'action' ||
+    reason === 'close' ||
+    reason === 'swipe' ||
+    reason === 'escape' ||
+    reason === 'back'
+  )
 }

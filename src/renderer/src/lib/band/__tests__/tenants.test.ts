@@ -17,7 +17,8 @@ const REASONS: BandEndReason[] = [
   'replaced',
   'program',
   'displaced',
-  'escape'
+  'escape',
+  'back'
 ]
 
 describe('bandRequestFromBanner', () => {
@@ -41,10 +42,9 @@ describe('bandRequestFromBanner', () => {
     expect(request.action?.label).toBe('Add')
     request.action?.pick()
     expect(onPick).toHaveBeenCalledTimes(1)
-    expect(request.closeLabel).toBeUndefined()
   })
 
-  it("a state has no clock whatever the banner asked, and may name its × (§4's dismissing action)", () => {
+  it('a state has no clock whatever the banner asked, and carries its tone; no tenant names its × (the band’s own "Dismiss" on every band)', () => {
     const request = bandRequestFromBanner(
       {
         title: 'Open links in Zenium',
@@ -54,13 +54,13 @@ describe('bandRequestFromBanner', () => {
         duration: 4000
       },
       'state',
-      { closeLabel: 'Not now', tone: 'warn' }
+      { tone: 'warn' }
     )
     expect(request.form).toBe('state')
     expect(request.clock).toBeNull()
     expect(request.action?.label).toBe('Set as default')
-    expect(request.closeLabel).toBe('Not now')
     expect(request.tone).toBe('warn')
+    expect('closeLabel' in request).toBe(false)
   })
 
   it('a banner without an action cannot be an offer: it is shown as a state', () => {
@@ -71,14 +71,13 @@ describe('bandRequestFromBanner', () => {
     expect(request.form).toBe('state')
     expect(request.clock).toBeNull()
     expect(request.action).toBeUndefined()
-    // A tone rides a state only (an offer's glyph is the accent); the ×'s name rides either.
+    // A tone rides a state only (an offer's glyph is the accent).
     const offer = bandRequestFromBanner(
       { title: 'Show Reader View?', action: { label: 'Show', onPick: () => undefined } },
       'offer',
-      { closeLabel: 'No thanks', tone: 'warn' }
+      { tone: 'warn' }
     )
     expect(offer.form).toBe('offer')
-    expect(offer.closeLabel).toBe('No thanks')
     expect(offer.tone).toBeUndefined()
   })
 
@@ -95,7 +94,7 @@ describe('bandRequestFromBanner', () => {
     expect(request.clock).toBeNull()
   })
 
-  it("hands the band's answered ends to the tenant in the banner's vocabulary; the unanswered ones (Back, the swipe) go to onAway and never to onDismiss", () => {
+  it("hands the band's answered ends to the tenant in the banner's vocabulary; the unanswered ones (the Back, Escape, the swipe) go to onAway and never to onDismiss", () => {
     const heard: BannerDismissReason[] = []
     let away = 0
     const request = bandRequestFromBanner(
@@ -105,7 +104,7 @@ describe('bandRequestFromBanner', () => {
     )
     for (const reason of REASONS) request.onEnd?.(reason)
     expect(heard).toEqual(['action', 'close', 'timeout', 'replaced', 'program', 'program'])
-    expect(away).toBe(2)
+    expect(away).toBe(3)
   })
 
   it('a tenant with no onAway hears nothing of an unanswered end (no refusal, no cooldown); one with onAway alone still gets an onEnd', () => {
@@ -114,6 +113,7 @@ describe('bandRequestFromBanner', () => {
       { title: 'T', onDismiss: (reason) => heard.push(reason) },
       'state'
     )
+    request.onEnd?.('back')
     request.onEnd?.('escape')
     request.onEnd?.('swipe')
     expect(heard).toEqual([])
@@ -121,7 +121,7 @@ describe('bandRequestFromBanner', () => {
     let away = 0
     const quiet = bandRequestFromBanner({ title: 'T' }, 'state', { onAway: () => void away++ })
     expect(quiet.onEnd).toBeDefined()
-    quiet.onEnd?.('escape')
+    quiet.onEnd?.('back')
     quiet.onEnd?.('close')
     expect(away).toBe(1)
 
@@ -130,21 +130,21 @@ describe('bandRequestFromBanner', () => {
 })
 
 describe('the ends', () => {
-  it('every banner reason is its own; displaced and escape read as program (not a refusal)', () => {
+  it('every banner reason is its own; displaced, escape and back read as program (not a refusal)', () => {
     for (const reason of REASONS) {
       expect(bannerReasonOf(reason)).toBe(
-        reason === 'displaced' || reason === 'escape' ? 'program' : reason
+        reason === 'displaced' || reason === 'escape' || reason === 'back' ? 'program' : reason
       )
     }
   })
 
-  it('the unanswered ends are Back (escape) and the swipe – §9 item 6; the × is the explicit refusal', () => {
-    expect(REASONS.filter(unansweredEnd)).toEqual(['swipe', 'escape'])
+  it('the unanswered ends are the Back, Escape and the swipe – §9 item 6; the × is the explicit refusal', () => {
+    expect(REASONS.filter(unansweredEnd)).toEqual(['swipe', 'escape', 'back'])
     expect(unansweredEnd('close')).toBe(false)
     expect(unansweredEnd('timeout')).toBe(false)
   })
 
-  it("the user's own ends are the action, the ×, the swipe and the Back", () => {
-    expect(REASONS.filter(userEnded)).toEqual(['action', 'close', 'swipe', 'escape'])
+  it("the user's own ends are the action, the ×, the swipe, Escape and the Back", () => {
+    expect(REASONS.filter(userEnded)).toEqual(['action', 'close', 'swipe', 'escape', 'back'])
   })
 })

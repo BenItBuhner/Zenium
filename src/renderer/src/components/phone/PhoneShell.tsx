@@ -154,13 +154,14 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
 
   // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33) – on the
   // phone the page-edge band in its state form (motion spec §4; `lib/band/post.ts` is the door),
-  // its × named "Not now" (§4's dismissing action, as the desktop's own band names its ×) – up
-  // for as long as the core says a banner is due. "Not now" (the ×) is the campaign's one
-  // dismissal, a card's × and swipe too; the band's Back and swipe put it away UNANSWERED (spec §9 item 6: a remembered refusal is only ever an explicit button) and
-  // count for nothing. The action hands over to the system, which ends the campaign either way;
-  // when the core takes the prompt down itself – after the request, or once Zenium holds the
-  // role – the card leaves as `'program'`, which counts for nothing; a third banner pushing it
-  // off (`'replaced'`) is not the user's answer either.
+  // its × the band's own "Dismiss" (the Design Lead's ruling: one name for every band's ×) – up
+  // for as long as the core says a banner is due. At the band the × is the campaign's one
+  // dismissal (at the stack a card's × and swipe are, as today); the band's Back and swipe put
+  // it away UNANSWERED (spec §9 item 6: a remembered refusal is only ever an explicit button)
+  // and count for nothing. The action hands over to the system, which ends the campaign either
+  // way; when the core takes the prompt down itself – after the request, or once Zenium holds
+  // the role – the card leaves as `'program'`, which counts for nothing; a third banner pushing
+  // it off (`'replaced'`) is not the user's answer either.
   const bannerDue = state.defaultBrowser.prompt === 'banner' && !onboarding
   useEffect(() => {
     if (!bannerDue) return
@@ -180,8 +181,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           if (reason === 'swipe' || reason === 'close') notNow()
         }
       },
-      'state',
-      { closeLabel: 'Not now' }
+      'state'
     )
     return () => dismissPosted(id)
   }, [bannerDue])

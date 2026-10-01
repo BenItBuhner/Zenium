@@ -27,7 +27,8 @@ const offer = (over: Partial<BandRequest> = {}): BandRequest => ({
 })
 
 describe('tenantReasonOf', () => {
-  it("keeps Escape (the system Back) its own, unanswered end – not the ×'s – and reads a navigation as the chrome's", () => {
+  it("keeps the Back and Escape their own, unanswered ends – not the ×'s – and reads a navigation as the chrome's", () => {
+    expect(tenantReasonOf('back')).toBe('back')
     expect(tenantReasonOf('escape')).toBe('escape')
     expect(tenantReasonOf('navigation')).toBe('program')
   })
@@ -70,15 +71,14 @@ describe('bandOptionsOf', () => {
     )
   })
 
-  it("the ×'s name carries over where the tenant gives one, and is left to the content otherwise", () => {
-    const named = bandOptionsOf({
+  it("the ×'s name is the content component's own on every band – no request names it (the Design Lead's ruling: every band's × is \"Dismiss\", the default-browser state no exception)", () => {
+    const state = bandOptionsOf({
       form: 'state',
       title: 'Open links in Zenium',
       key: 'default-browser',
-      clock: null,
-      closeLabel: 'Not now'
+      clock: null
     })
-    expect(named.closeLabel).toBe('Not now')
+    expect('closeLabel' in state).toBe(false)
     expect('closeLabel' in bandOptionsOf(offer())).toBe(false)
   })
 

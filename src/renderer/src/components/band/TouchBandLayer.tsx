@@ -19,7 +19,7 @@ import { PageEdgeBand } from './PageEdgeBand'
  * The band's tenants are unasked offers and notices: the band takes no focus on open (nothing
  * here or in the content moves it; TalkBack hears the title through `role="status"` alone), and
  * the system Back gesture is its Escape (spec §9 item 6) – a standing band is a back surface
- * and Back puts it away UNANSWERED (`escape`: no cooldown, no campaign dismissal;
+ * and Back puts it away UNANSWERED (the model's `back`: no cooldown, no campaign dismissal;
  * `lib/band/tenants.ts`). The band stands over the page and under the rest of the chrome: a
  * surface registered after it (a sheet, the overview) is above it on the registry's stack, and
  * on its own commit the band yields to the chrome that registers no surface – a §9.20 popover,
@@ -35,7 +35,7 @@ export function TouchBandLayer(): JSX.Element | null {
           name: 'band',
           onCommit: () => {
             if (closeChromeForBack()) return
-            dismissBand(entry.id, 'escape')
+            dismissBand(entry.id, 'back')
           }
         }
       : null

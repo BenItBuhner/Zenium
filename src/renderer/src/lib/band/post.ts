@@ -64,8 +64,8 @@ export function bandIsTheDoor(): boolean {
 
 /**
  * Post a tenant's message; `form` is the band's form for it (§3.1), `extras` what the band
- * takes beyond the banner – a second, dismissing action a state may carry, a state's tone.
- * Returns the id {@link dismissPosted} and {@link postedUp} take.
+ * takes beyond the banner – a state's tone, what the tenant does when the band is put away
+ * unanswered. Returns the id {@link dismissPosted} and {@link postedUp} take.
  */
 export function postBanner(opts: BannerOptions, form: BandForm, extras?: BandExtras): number {
   const id = nextId++

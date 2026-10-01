@@ -19,10 +19,11 @@ import type { BandEndReason, BandRequest } from './tenants'
  */
 
 /**
- * The model's end in the tenants' vocabulary: `escape` – the Escape key with focus in the band,
- * the system Back on Android (`TouchBandLayer`) – stays its own word, an UNANSWERED end the
- * tenants hear apart from the ×'s refusal (spec §9 item 6; `tenants.ts` `unansweredEnd`); a
- * navigation's take-down is the chrome's doing (`program`), which no tenant counts as an answer.
+ * The model's end in the tenants' vocabulary: `back` – the system Back on Android
+ * (`TouchBandLayer`), the band's Escape – and `escape` – the Escape key with focus in the band –
+ * stay their own words, UNANSWERED ends the tenants hear apart from the ×'s refusal (spec §9
+ * item 6; `tenants.ts` `unansweredEnd`); a navigation's take-down is the chrome's doing
+ * (`program`), which no tenant counts as an answer.
  */
 export function tenantReasonOf(reason: BandDismissReason): BandEndReason {
   return reason === 'navigation' ? 'program' : reason
@@ -33,8 +34,7 @@ let anonymous = 0
 
 /**
  * The model's `showBand` options for a tenant's request: the words, glyph, tone, clock and the
- * one action carry over; the ×'s name (`closeLabel`, the default-browser band's "Not now", §4)
- * where the tenant gives one, the content component's default otherwise.
+ * one action carry over; the × keeps the content component's name ("Dismiss") on every band.
  */
 export function bandOptionsOf(request: BandRequest): BandOptions {
   const options: BandOptions = {
@@ -48,7 +48,6 @@ export function bandOptionsOf(request: BandRequest): BandOptions {
   }
   if (request.detail !== undefined) options.detail = request.detail
   if (request.tone !== undefined) options.tone = request.tone
-  if (request.closeLabel !== undefined) options.closeLabel = request.closeLabel
   if (request.action) {
     const action = request.action
     options.action = { label: action.label, onPick: () => action.pick() }

@@ -34,14 +34,14 @@ import kotlin.math.roundToInt
  * its end when any did, or when a touch did not take):
  *
  *  1. THE DEFAULT-BROWSER STATE (a two-line band, 76): the title, its detail, "Set as default"
- *     and the × (§4's second action "Not now" reported, not gated: the shared model carries one
- *     action per band), `role="status"`, at the frame's top; the page translated by the
+ *     and the × named "Dismiss" (the Design Lead's ruling on #735: every band's × is "Dismiss";
+ *     §4's second, dismissing action is that ×, the shared model carrying one action per band),
+ *     `role="status"`, at the frame's top; the page translated by the
  *     band's height (the host's own word: the page WebView's `translationY`); a short swipe up
  *     released before half the height springs the band back (`band-swipe-back`); the SYSTEM
  *     BACK is the band's Escape (spec §9 item 6; `band-back-escape`): the host hears the band
  *     as a surface, the Back takes it and the page home UNANSWERED – the page not navigated, the
- *     campaign's prompt as it was (no "Not now" given; a remembered refusal is only ever an
- *     explicit button).
+ *     campaign's prompt as it was (no refusal given; a remembered refusal is only ever the ×).
  *  2. THE INSTALL OFFER (76; the first tenant, §7): "Add Sketch to Home screen" (the manifest's
  *     `short_name`, as the core names an app for the Home screen) with the app's origin, one
  *     "Add", the ×; a swipe past half dismisses it (`band-swipe-dismiss`), the
@@ -196,11 +196,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             finding("  no band: the default-browser act cannot be recorded (prompt=${defaultBrowserPrompt()})")
             return
         }
-        // §4's table gives this band a dismissing action, "Not now": it is the band's × under that
-        // name (the model's `closeLabel`; the shared model carries one action per band), gated
-        // above as the ×. The campaign's only remembered refusal is that button (spec §9 item 6).
-        bandGeometry("the default-browser band", TWO_LINE, "state", DEFAULT_TITLE, DEFAULT_DETAIL, listOf(DEFAULT_ACTION), close = DEFAULT_SECONDARY)
-        finding("  the §4 dismissing action '$DEFAULT_SECONDARY' is the ×'s name (the model's closeLabel); × named '$DISMISS_LABEL' on this band: ${findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == DISMISS_LABEL } != null} (reported)")
+        // §4's table gives this band a dismissing action: it is the band's ×, named "Dismiss" like
+        // every band's (the Design Lead's ruling on #735 – no tenant names its own; the shared
+        // model carries one action per band). The campaign's only remembered refusal is that
+        // button (spec §9 item 6).
+        bandGeometry("the default-browser band", TWO_LINE, "state", DEFAULT_TITLE, DEFAULT_DETAIL, listOf(DEFAULT_ACTION))
+        finding("  a button of the tenant's own name on this band (none expected: the × is '$DISMISS_LABEL'): ${findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == "Not now" } != null} (reported)")
         snap("design-default-browser-light")
         beat()
 
@@ -225,7 +226,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         // §9 item 6: the system Back is the band's Escape – it puts the band away UNANSWERED. The
         // host hears the band as a surface a back would dismiss (`back.update`), the Back takes the
         // band and the page home, the page is not navigated, and the campaign stands as it was: no
-        // "Not now" was given (a remembered refusal is only ever an explicit button – here the ×).
+        // refusal was given (a remembered refusal is only ever an explicit button – the ×).
         val surface = chromeSurfaceUp()
         finding("  the host's word with the band standing: chrome surface up=$surface")
         check("the host hears the standing band as a surface a back would dismiss (the band is the chrome's topmost back surface)", surface)
@@ -240,7 +241,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         SystemClock.sleep(1_500)
         val promptAfter = defaultBrowserPrompt()
         finding("  the campaign after the Back: prompt=$promptAfter (before: $promptBefore)")
-        check("the Back is no \"Not now\": the campaign's prompt stands as it was (no dismissal recorded, no cooldown started)", promptAfter == "banner")
+        check("the Back is no refusal: the campaign's prompt stands as it was (no dismissal recorded, no cooldown started)", promptAfter == "banner")
         check("the Back did not navigate the page (the band took it; a second Back would)", (tab()?.optString("url") ?: "") == urlBefore)
         check("the band gone, the chrome has no surface left for a back", awaitSurface(up = false, timeoutMs = 4_000))
         snap("default-browser-after-back")
@@ -608,12 +609,13 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
 
     /**
      * The band's shape and words: the page translated by its height (the host's `translationY`,
-     * CSS px), the title and the actions in the tree, the × under its name ([close]: the content
-     * component's "Dismiss", or the tenant's own – "Not now" on the default-browser band, the
-     * model's `closeLabel`); from the document the form, one root, `role="status"`, the glyph and
-     * its place at the frame's top.
+     * CSS px), the title and the actions in the tree, the × under its one name (the content
+     * component's "Dismiss" on every band – the Design Lead's ruling on #735; no tenant names its
+     * own); from the document the form, one root, `role="status"`, the glyph and its place at the
+     * frame's top.
      */
-    private fun bandGeometry(where: String, bandHeight: Float, form: String, title: String, detail: String?, actions: List<String>, close: String = DISMISS_LABEL) {
+    private fun bandGeometry(where: String, bandHeight: Float, form: String, title: String, detail: String?, actions: List<String>) {
+        val close = DISMISS_LABEL
         val offset = offsetCss()
         val probe = bandProbe()
         finding("  $where: page offset $offset; $probe")
@@ -1029,7 +1031,6 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         private const val DEFAULT_TITLE = "Open links in Zenium"
         private const val DEFAULT_DETAIL = "Make it your default browser"
         private const val DEFAULT_ACTION = "Set as default"
-        private const val DEFAULT_SECONDARY = "Not now"
         /** The app's manifest `short_name`: on the Home-screen surface the core names the app by it (`launcherName`). */
         private const val INSTALL_TITLE = "Add Sketch to Home screen"
         private const val INSTALL_ACTION = "Add"
