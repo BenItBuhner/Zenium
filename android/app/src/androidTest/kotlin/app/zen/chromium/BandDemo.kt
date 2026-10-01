@@ -63,6 +63,10 @@ import kotlin.math.roundToInt
  *     the page over where it sits – the band leaves, the page never jumps home first
  *     (`band-pull-takeover`, the host's offset sampled through the drag), the pull comes home
  *     on the release; the state returns after.
+ *  7b. THE BAR UNDER A STANDING BAND: with the state's band holding the page, one finger on
+ *     Menu opens the app menu and one on the pill opens the URL field – the page's clipped strip
+ *     over the bottom-docked bar is the chrome's (`StripTouchRule`; the readers' run on #735
+ *     found the Menu dead under the reader offer), and the band stands through both covers.
  *  8. THE STATE ENDS: the radios back – the band leaves (`band-leave-online`), "Back online" as
  *     a toast.
  *  9. DARK: the install offer, the reader offer and the offline state on the dark ground
@@ -176,6 +180,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             sheetWaits()
             replacementAndNewTab()
             pullTakeover()
+            barUnderBand()
             stateEnds()
             dark()
             finding("\nend: ${describeTab()}${if (failures == 0) "" else "; $failures FAIL"}")
@@ -523,6 +528,64 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         snap("pull-takeover-after")
         beat()
     }
+
+    // --- 7b. the bar under a standing band ---------------------------------------------------------------------------------------
+
+    /**
+     * The chrome's bar keeps its touches while a band holds the page. The readers' run on #735
+     * found the Menu dead under the reader offer: the page translated down by the band's height
+     * hangs over the bottom-docked bar – the parent hit-tests it by its translated rect – and its
+     * clipped strip there took the bar's touches; `StripTouchRule` hands them to the chrome, where
+     * the bar is. One finger each, no retry (the harness's [tapMenuButton] taps again on nothing;
+     * the fault must show), with the offline state's band standing: Menu opens the app menu (read
+     * off the chrome's document – to the host the standing band is a surface already), the pill
+     * opens the URL field (`urlbar.open`); a Back after each, and the band stands through both (a
+     * sheet and the field are covers the band keeps under), the page held where it was.
+     */
+    private fun barUnderBand() {
+        finding("\nthe bar under a standing band: the page's clipped strip over the bar is the chrome's (StripTouchRule)")
+        if (!awaitBand(OFFLINE_TITLE, 4_000)) {
+            check("the offline band stands for the bar's taps", false)
+            return
+        }
+        val held = offsetCss()
+        val menu = findByLabelPrefix(MENU_LABEL)?.let { touchPoint(it) }
+        finding("  the Menu button under the band: $menu; page offset $held")
+        if (menu == null) {
+            check("a finger can reach the Menu button with the band standing", false)
+        } else {
+            Finger().tap(menu)
+            val opened = poll(MENU_OPEN_MS, 150) { menuSheetUp() }
+            finding("  one tap on Menu: the app menu in the chrome's document=$opened; band=${bandTitle()}; page offset ${offsetCss()}")
+            if (!opened) touchFault("a touch on the Menu button under a standing band opened no app menu")
+            check("one tap on Menu opens the app menu while the band holds the page", opened)
+            if (opened) {
+                SystemClock.sleep(600)
+                snap("menu-under-band")
+                back()
+                poll(8_000, 150) { !menuSheetUp() }
+                SystemClock.sleep(600)
+            }
+        }
+        val pill = pillPoint()
+        Finger().tap(pill)
+        val field = poll(6_000, 150) { urlbarOpen() }
+        finding("  one tap on the pill at $pill: URL field open=$field; band=${bandTitle()}; page offset ${offsetCss()}")
+        if (!field) touchFault("a touch on the address pill under a standing band opened no URL field")
+        check("one tap on the pill opens the URL field while the band holds the page", field)
+        if (field) {
+            val close = closeUrlField()
+            finding("  the field closed: ${close.describe()}")
+        }
+        val standing = awaitBand(OFFLINE_TITLE, 6_000)
+        finding("  after the taps: band=${bandTitle()}; page offset ${offsetCss()} (held at $held)")
+        check("the band stands through the menu and the field (covers it keeps under), the page held", standing && abs(offsetCss() - held) <= TOLERANCE)
+        beat()
+    }
+
+    /** The app menu's sheet is in the chrome's document (its handle); the band's own surface aside. */
+    private fun menuSheetUp(): Boolean =
+        chromeJs("!!document.querySelector('.zen-sheet [aria-label=\"$MENU_HANDLE_LABEL\"]')") == "true"
 
     // --- 8. the state ends ----------------------------------------------------------------------------------------------------
 
