@@ -105,9 +105,10 @@ export interface BandRequest {
 
 /**
  * A tenant's §9.33 banner, as the band: the words, glyph and action carry over unchanged; the
- * form decides the clock – an offer keeps the banner's clock (its tenant's `duration`, today
- * the install prompt's `BANNER_TIMEOUT_MS` and the reader's `READER_ENTRY_CLOCK_MS`, both
- * 10 s = `BAND_CLOCK_MS`), a state has none whatever the banner asked. A banner with no action
+ * form decides the clock – an offer keeps its tenant's own clock (the banner's `duration`: the
+ * reader's `READER_ENTRY_CLOCK_MS`, 10 s = `BAND_CLOCK_MS`; the install prompt's is the core's
+ * `BANNER_TIMEOUT_MS`, 12 s, which the band does not clamp to §3.2's 10 s – the design gate's
+ * question on #735), a state has none whatever the banner asked. A banner with no action
  * cannot be an offer (an offer proposes something): it is shown as a state.
  */
 export function bandRequestFromBanner(

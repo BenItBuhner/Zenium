@@ -114,7 +114,11 @@ export function postedUp(id: number): boolean {
   return uiStore.get().banners.some((b) => b.id === entry.innerId && b.leaving !== true)
 }
 
-/** Whether a message of `key` stands, at either door. */
+/**
+ * Whether a message of `key` stands, at either door. At the band, a posted entry the model holds
+ * back under a cover (a sheet, the keyboard) counts as up too – it is posted and will show – so
+ * a tenant asking "already posted?" is answered the same under a cover as in the open.
+ */
 export function postedKeyUp(key: string): boolean {
   if (bandDoor?.upByKey(key)) return true
   return uiStore.get().banners.some((b) => b.key === key && b.leaving !== true)

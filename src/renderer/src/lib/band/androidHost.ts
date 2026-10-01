@@ -60,7 +60,9 @@ export function createAndroidBandHost(): AndroidBandHost {
       // §3.4 Android: a pull while a band stands dismisses the band first – an offer goes (not
       // the user's answer: `program`); a state holds and waits for the pull to end. The pull
       // has already told the model the frame is not the band's, so the band that stood is read
-      // as if it were.
+      // as if it were. Only the band that STOOD is judged: an offer waiting behind a standing
+      // state (the state > offer priority, §3.2) is not dismissed and shows after the pull ends,
+      // when its turn comes – it was never up to be taken down.
       const stood = chooseBand({ ...bandStore.get(), ok: true })
       if (stood?.form === 'offer') dismissBand(stood.id, 'program')
     }
