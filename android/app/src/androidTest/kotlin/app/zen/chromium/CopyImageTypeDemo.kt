@@ -41,12 +41,27 @@ import java.util.concurrent.TimeUnit
  * prolog), a page's HTML copied as an image (the copy fails, the clipboard untouched); and the
  * cache, pruned to its last `ImageBytes.CACHE_KEPT` files. Every touch a step injects has an
  * assertion on what it did (the rule in [DemoHarness]).
+ *
+ * The paste checks presume a WebView that lets a page read the host app's own `content://`
+ * URI: from 151 (Chromium `1164d3993b`, `kClipboardConfusedDeputyDefenseImages` / `Files`, on
+ * by default) `ClipboardImpl.getPng()` and `getFilenames()` refuse a URI whose provider runs
+ * under the embedding app's uid – Zenium's – and a page's paste gets no file, PNG or not, with
+ * or without this fix. So on a WebView ≥ [PASTE_DEFENSE_MAJOR] the paste goes in through Ctrl+V
+ * (a key, no toolbar touch whose claim the engine may deny), what the page reports is still a
+ * FACT, and a paste check that misses is SKIPPED with that reason rather than FAILED; the clip's
+ * types, the file's name, the resolver's type and the bytes stay hard on every WebView. The
+ * `api33` shard pins 145.
  */
 @RunWith(AndroidJUnit4::class)
 class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
     override val tag = "CopyImageTypeDemo"
     private var failures = 0
     private var pastes = 0
+    private var webViewVersion = "unknown"
+    private var webViewMajor = 0
+
+    /** Whether the WebView on the device refuses the host's own `content://` URI on paste (≥ [PASTE_DEFENSE_MAJOR]); an unknown version is taken as one that does not. */
+    private val pasteRefused get() = webViewMajor >= PASTE_DEFENSE_MAJOR
 
     private val jpegBytes by lazy { photo(Bitmap.CompressFormat.JPEG, Color.rgb(0xd9, 0x53, 0x2f)) }
 
@@ -93,8 +108,13 @@ class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
         notes = File(out, "$PREFIX-notes.txt")
         notes.writeText("Zenium Android Copy Image type demo ($PREFIX)\n\n")
         note("demo server: ${server.selfCheck()}")
-        val webView = runCatching { WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName}" } }.getOrNull()
-        note("webview: ${webView ?: "unknown"}; sdk ${Build.VERSION.SDK_INT}; provider authority ${app.packageName}.files")
+        val webView = runCatching { WebView.getCurrentWebViewPackage() }.getOrNull()
+        webViewVersion = webView?.let { "${it.packageName} ${it.versionName}" } ?: "unknown"
+        webViewMajor = webView?.versionName?.substringBefore('.')?.toIntOrNull() ?: 0
+        note(
+            "webview: $webViewVersion; sdk ${Build.VERSION.SDK_INT}; provider authority ${app.packageName}.files" +
+                if (pasteRefused) "; the paste checks are gated: a WebView >= $PASTE_DEFENSE_MAJOR refuses the host's own content:// URI on paste" else ""
+        )
         note("clipboard cache before: ${cacheFiles()}")
         shell("cmd uimode night no")
         waitTitle(TAB, 20_000) { it.startsWith("CP|") }
@@ -158,24 +178,24 @@ class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
             note("  TOUCH FAULT: the contenteditable did not take the focus (page: ${title()})")
         }
         SystemClock.sleep(600)
-        val pasted = pasteInto(pastes + 1)
+        val pasted = pasteInto(pastes + 1, toolbar = !pasteRefused)
         if (pasted) pastes++
-        val fields = pageFields()
-        check("1: the paste of the $what reaches the page's paste event", pasted)
-        if (!pasted) return
-        poll(5_000) { pageFields()["magic"].let { it != null && it != "reading" && it != "-" } }
-        poll(3_000) { pageFields()["ce"] != "none" }
-        val got = pageFields()
-        val files = got["files"]?.toIntOrNull() ?: 0
-        val type = got["type"]?.replace('~', '/') ?: "-"
-        val bytes = got["magic"] ?: "-"
-        note("  FACT  PUI-38 ($what): clipboardData.types=${got["types"]} items=${got["items"]} files=$files name=${got["name"]} type=$type size=${got["size"]} bytes=$bytes editor=${got["ce"]} image-uri=${got["uri"]}")
-        check("1: the $what arrives in clipboardData.files as one image File", files == 1 && type.startsWith("image/"))
-        check("1: the type the page is told for the $what and the bytes it gets agree ($type, $bytes bytes)", bytes != "-" && type == "image/$bytes")
-        note(
-            "  FACT  the engine ${if (bytes == magic) "handed the $what's own bytes over" else "re-encoded the $what to ${bytes.uppercase()} (ClipboardImpl.getPng: a non-PNG type is decoded and compressed to PNG)"}" +
-                "; before the fix a $what arrived typed image/png with $magic bytes"
-        )
+        pasteCheck("1: the paste of the $what reaches the page's paste event", pasted)
+        if (pasted) {
+            poll(5_000) { pageFields()["magic"].let { it != null && it != "reading" && it != "-" } }
+            poll(3_000) { pageFields()["ce"] != "none" }
+            val got = pageFields()
+            val files = got["files"]?.toIntOrNull() ?: 0
+            val type = got["type"]?.replace('~', '/') ?: "-"
+            val bytes = got["magic"] ?: "-"
+            note("  FACT  PUI-38 ($what): clipboardData.types=${got["types"]} items=${got["items"]} files=$files name=${got["name"]} type=$type size=${got["size"]} bytes=$bytes editor=${got["ce"]} image-uri=${got["uri"]}")
+            pasteCheck("1: the $what arrives in clipboardData.files as one image File", files == 1 && type.startsWith("image/"))
+            pasteCheck("1: the type the page is told for the $what and the bytes it gets agree ($type, $bytes bytes)", bytes != "-" && type == "image/$bytes")
+            note(
+                "  FACT  the engine ${if (bytes == magic) "handed the $what's own bytes over" else "re-encoded the $what to ${bytes.uppercase()} (ClipboardImpl.getPng: a non-PNG type is decoded and compressed to PNG)"}" +
+                    "; before the fix a $what arrived typed image/png with $magic bytes"
+            )
+        }
         // The still shows the pasted picture and the page's readout together: the editor loses
         // the focus so the keyboard leaves the lower half of the screen first.
         pageJs("document.getElementById('ce').blur()")
@@ -263,12 +283,15 @@ class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
 
     /**
      * The paste: the selection toolbar's Paste after a long press on the focused editor (a real
-     * finger), Ctrl+V through the input pipeline when the toolbar offered none. True once the
-     * page's paste count reaches `expectPastes`.
+     * finger), Ctrl+V through the input pipeline when the toolbar offered none – or straight
+     * away when `toolbar` is false (a WebView ≥ [PASTE_DEFENSE_MAJOR], where a touch on Paste
+     * would claim a paste the engine may refuse). True once the page's paste count reaches
+     * `expectPastes`.
      */
-    private fun pasteInto(expectPastes: Int): Boolean {
+    private fun pasteInto(expectPastes: Int, toolbar: Boolean = true): Boolean {
         val took = { (pageFields()["pastes"]?.toIntOrNull() ?: 0) >= expectPastes }
-        val point = pageElementRect("ce")?.let { touchPoint(it) }
+        if (!toolbar) note("  WebView $webViewVersion >= $PASTE_DEFENSE_MAJOR: Ctrl+V through the input pipeline, no toolbar touch to assert on a paste the engine may refuse")
+        val point = if (toolbar) pageElementRect("ce")?.let { touchPoint(it) } else null
         if (point != null) {
             val finger = Finger()
             finger.press(point.x, point.y)
@@ -311,6 +334,17 @@ class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
     private fun check(what: String, ok: Boolean) {
         if (!ok) failures++
         note("  ${if (ok) "PASS" else "FAIL"}  $what")
+    }
+
+    /**
+     * A check on what the page's paste received: hard on a WebView that lets a page read the
+     * host's own `content://` URI (< [PASTE_DEFENSE_MAJOR]); on a newer one a miss is SKIPPED
+     * with its reason and counts as no failure – the clip and the file are this fix's object,
+     * the paste is the engine's. A hold is a PASS on every WebView.
+     */
+    private fun pasteCheck(what: String, ok: Boolean) {
+        if (ok || !pasteRefused) check(what, ok)
+        else note("  SKIP  $what – WebView $webViewVersion >= $PASTE_DEFENSE_MAJOR refuses the host app's own-uid content:// URI on paste (ClipboardConfusedDeputyDefense, Chromium 1164d3993b); not this fix's to prove")
     }
 
     // --- the fixtures -----------------------------------------------------------------------------
@@ -375,6 +409,13 @@ class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
 
     companion object {
         private const val PREFIX = "w6-s26f-copy-image-type"
+
+        /**
+         * The first WebView (Chromium) major that refuses the host app's own-uid `content://`
+         * URI on a page's paste: `kClipboardConfusedDeputyDefenseImages` / `Files`, on by default
+         * since Chromium `1164d3993b` (first in 151.0.7896.0). Below it the paste checks are hard.
+         */
+        private const val PASTE_DEFENSE_MAJOR = 151
         private const val COPY = "http://127.0.0.1:$PORT/copy"
         private const val PHOTO_JPG = "http://127.0.0.1:$PORT/photo.jpg"
         private const val PHOTO_WEBP = "http://127.0.0.1:$PORT/photo.webp"

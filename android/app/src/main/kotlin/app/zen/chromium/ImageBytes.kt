@@ -19,9 +19,10 @@ import java.util.Base64
  *
  * The declared type (a `data:` URL's media type, a response's `Content-Type`) is the FALLBACK
  * for bytes the sniff does not place ([decide]): an SVG with a long prolog, a truncated header.
- * Bytes that are no image the sniff knows and carry no known declared image type are refused –
- * the copy fails and the chrome says "Could not copy image" – where before a hot-link
- * protected server's HTML page went on the clipboard as `image.png`.
+ * Bytes that are no image the sniff knows and carry no known declared image type are refused,
+ * and so is an empty body whatever type it declares – the copy fails and the chrome says
+ * "Could not copy image" – where before a hot-link protected server's HTML page went on the
+ * clipboard as `image.png`.
  *
  * Pure (no Android class): the unit tests run the sniff over the fixtures of every type.
  */
@@ -110,20 +111,25 @@ object ImageBytes {
      * The type the copied file is named and the clip typed by: what the bytes say ([sniff])
      * first – a server's `Content-Type` and a `data:` URL's media type are often wrong, the
      * bytes never – and the declared type ([fromMime]) only when the sniff places nothing; null
-     * when neither names an image, for the copy to fail.
+     * when neither names an image, for the copy to fail. No bytes at all are no image whatever
+     * they declare – a `data:image/jpeg;base64,` with nothing after the comma, a 200 with an
+     * image `Content-Type` and no body – since an empty file on the clipboard typed as a
+     * picture is the same lie this guards against (`Share.cacheImage` refuses the same).
      */
-    fun decide(sniffed: ImageType?, declared: String?): ImageType? = sniffed ?: fromMime(declared)
+    fun decide(bytes: ByteArray, declared: String?): ImageType? =
+        if (bytes.isEmpty()) null else sniff(bytes) ?: fromMime(declared)
 
     /** A `data:` URL's bytes with its declared media type (null for a URL that declares none). */
     class DataUrlBytes(val bytes: ByteArray, val mediaType: String?)
 
     /**
      * The bytes of a `data:` URL – `data:[<mediatype>][;base64],<data>` – decoded the way the
-     * fetch standard reads one: the body percent-decoded, then forgiving-base64 decoded when
-     * `;base64` is in the header (ASCII whitespace dropped, missing padding added), else taken
-     * as the percent-decoded text's UTF-8 (an `<img src="data:image/svg+xml,%3Csvg...">`); the
-     * media type is the header's first part, parameters dropped. Null for a URL that is no
-     * `data:` URL, has no comma, or whose base64 does not decode.
+     * fetch standard reads one: the body percent-decoded to bytes (an escape is the byte it
+     * spells, every other character its UTF-8), then forgiving-base64 decoded when `;base64` is
+     * in the header (ASCII whitespace dropped, missing padding added), else those bytes as they
+     * are (an `<img src="data:image/svg+xml,%3Csvg...">`); the media type is the header's first
+     * part, parameters dropped. Null for a URL that is no `data:` URL, has no comma, or whose
+     * base64 does not decode. An empty body decodes to no bytes; [decide] refuses those.
      */
     fun decodeDataUrl(url: String): DataUrlBytes? {
         if (!url.startsWith("data:", ignoreCase = true)) return null
@@ -134,7 +140,7 @@ object ImageBytes {
         val mediaType = params.firstOrNull()?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
         val base64 = params.drop(1).any { it.trim().equals("base64", ignoreCase = true) }
         val body = percentDecode(url.substring(comma + 1))
-        val bytes = if (base64) forgivingBase64(body) ?: return null else body.toByteArray(Charsets.UTF_8)
+        val bytes = if (base64) forgivingBase64(String(body, Charsets.ISO_8859_1)) ?: return null else body
         return DataUrlBytes(bytes, mediaType)
     }
 
@@ -209,26 +215,32 @@ object ImageBytes {
         }
     }
 
-    /** `%XX` sequences decoded to their bytes, the rest as UTF-8; a `+` stays a `+` (a URL body, not a form). */
-    private fun percentDecode(text: String): String {
-        if (text.indexOf('%') < 0) return text
-        val out = java.io.ByteArrayOutputStream(text.length)
+    /**
+     * The percent-decoding of the URL standard, over the text's UTF-8: a `%XX` is the byte it
+     * spells (any byte, `%FF` included), every other character its own UTF-8 bytes – the two
+     * UTF-16 halves of a character past the BMP go through together, as the four bytes they
+     * spell, not one half at a time; a `%` that opens no escape and a `+` stay as they are (a
+     * URL body, not a form).
+     */
+    private fun percentDecode(text: String): ByteArray {
+        val src = text.toByteArray(Charsets.UTF_8)
+        if (text.indexOf('%') < 0) return src
+        val out = java.io.ByteArrayOutputStream(src.size)
         var i = 0
-        while (i < text.length) {
-            val c = text[i]
-            if (c == '%' && i + 2 < text.length && hex(text[i + 1]) >= 0 && hex(text[i + 2]) >= 0) {
-                out.write(hex(text[i + 1]) * 16 + hex(text[i + 2]))
+        while (i < src.size) {
+            val b = src[i].toInt() and 0xFF
+            if (b == '%'.code && i + 2 < src.size && hex(src[i + 1]) >= 0 && hex(src[i + 2]) >= 0) {
+                out.write(hex(src[i + 1]) * 16 + hex(src[i + 2]))
                 i += 3
             } else {
-                val encoded = c.toString().toByteArray(Charsets.UTF_8)
-                out.write(encoded, 0, encoded.size)
+                out.write(b)
                 i++
             }
         }
-        return out.toString("UTF-8")
+        return out.toByteArray()
     }
 
-    private fun hex(c: Char): Int = when (c) {
+    private fun hex(b: Byte): Int = when (val c = (b.toInt() and 0xFF).toChar()) {
         in '0'..'9' -> c - '0'
         in 'a'..'f' -> c - 'a' + 10
         in 'A'..'F' -> c - 'A' + 10

@@ -103,19 +103,40 @@ class ImageBytesTest {
     @Test
     fun theSniffWinsOverTheDeclaredTypeAndTheDeclaredTypeIsTheFallback() {
         // A server that says JPEG for a PNG, a data URL that says PNG for a JPEG: the bytes decide.
-        assertEquals(ImageBytes.PNG, ImageBytes.decide(ImageBytes.sniff(png), "image/jpeg"))
-        assertEquals(ImageBytes.JPEG, ImageBytes.decide(ImageBytes.sniff(jpeg), "image/png"))
-        assertEquals(ImageBytes.WEBP, ImageBytes.decide(ImageBytes.sniff(webp), "text/html; charset=utf-8"))
+        assertEquals(ImageBytes.PNG, ImageBytes.decide(png, "image/jpeg"))
+        assertEquals(ImageBytes.JPEG, ImageBytes.decide(jpeg, "image/png"))
+        assertEquals(ImageBytes.WEBP, ImageBytes.decide(webp, "text/html; charset=utf-8"))
         // Bytes the sniff does not place keep the declared image type.
         val svgLongProlog = ("<!--" + "x".repeat(2000) + "--><svg/>").toByteArray()
         assertNull(ImageBytes.sniff(svgLongProlog))
-        assertEquals(ImageBytes.SVG, ImageBytes.decide(ImageBytes.sniff(svgLongProlog), "image/svg+xml"))
-        assertEquals(ImageBytes.JPEG, ImageBytes.decide(null, "image/jpeg; charset=binary"))
+        assertEquals(ImageBytes.SVG, ImageBytes.decide(svgLongProlog, "image/svg+xml"))
+        val truncated = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
+        assertNull(ImageBytes.sniff(truncated))
+        assertEquals(ImageBytes.JPEG, ImageBytes.decide(truncated, "image/jpeg; charset=binary"))
         // Neither names an image: nothing, for the copy to fail.
-        assertNull(ImageBytes.decide(ImageBytes.sniff(html), "text/html"))
-        assertNull(ImageBytes.decide(null, null))
-        assertNull(ImageBytes.decide(null, "application/octet-stream"))
-        assertNull(ImageBytes.decide(null, "image/tiff"))
+        assertNull(ImageBytes.decide(html, "text/html"))
+        assertNull(ImageBytes.decide(html, null))
+        assertNull(ImageBytes.decide(truncated, "application/octet-stream"))
+        assertNull(ImageBytes.decide(truncated, "image/tiff"))
+    }
+
+    @Test
+    fun anEmptyBodyIsNoImageWhateverItDeclares() {
+        // A `data:image/jpeg;base64,` with nothing after the comma, a 200 with an image Content-Type
+        // and no body: before, a 0-byte file went on the clipboard typed image/jpeg and the copy said true.
+        assertNull(ImageBytes.decide(ByteArray(0), "image/jpeg"))
+        assertNull(ImageBytes.decide(ByteArray(0), "image/png"))
+        assertNull(ImageBytes.decide(ByteArray(0), "image/svg+xml"))
+        assertNull(ImageBytes.decide(ByteArray(0), null))
+        val emptyBase64 = ImageBytes.decodeDataUrl("data:image/jpeg;base64,")!!
+        assertEquals(0, emptyBase64.bytes.size)
+        assertEquals("image/jpeg", emptyBase64.mediaType)
+        assertNull(ImageBytes.decide(emptyBase64.bytes, emptyBase64.mediaType))
+        val emptyText = ImageBytes.decodeDataUrl("data:image/svg+xml,")!!
+        assertEquals(0, emptyText.bytes.size)
+        assertNull(ImageBytes.decide(emptyText.bytes, emptyText.mediaType))
+        // Padding alone is an empty body too.
+        assertNull(ImageBytes.decide(ImageBytes.decodeDataUrl("data:image/png;base64,====")!!.bytes, "image/png"))
     }
 
     @Test
@@ -144,10 +165,10 @@ class ImageBytesTest {
         val decoded = ImageBytes.decodeDataUrl("data:image/jpeg;base64,$encoded")!!
         assertArrayEquals(jpeg, decoded.bytes)
         assertEquals("image/jpeg", decoded.mediaType)
-        assertEquals(ImageBytes.JPEG, ImageBytes.decide(ImageBytes.sniff(decoded.bytes), decoded.mediaType))
+        assertEquals(ImageBytes.JPEG, ImageBytes.decide(decoded.bytes, decoded.mediaType))
         // The media type is a declaration: a PNG that calls itself a JPEG is still a PNG.
         val lying = ImageBytes.decodeDataUrl("data:image/jpeg;base64," + Base64.getEncoder().encodeToString(png))!!
-        assertEquals(ImageBytes.PNG, ImageBytes.decide(ImageBytes.sniff(lying.bytes), lying.mediaType))
+        assertEquals(ImageBytes.PNG, ImageBytes.decide(lying.bytes, lying.mediaType))
     }
 
     @Test
@@ -169,9 +190,23 @@ class ImageBytesTest {
         val decoded = ImageBytes.decodeDataUrl("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E")!!
         assertEquals("<svg xmlns=\"http://www.w3.org/2000/svg\"/>", String(decoded.bytes, Charsets.UTF_8))
         assertEquals("image/svg+xml", decoded.mediaType)
-        assertEquals(ImageBytes.SVG, ImageBytes.decide(ImageBytes.sniff(decoded.bytes), decoded.mediaType))
+        assertEquals(ImageBytes.SVG, ImageBytes.decide(decoded.bytes, decoded.mediaType))
         // Literal text with a `+` and a stray `%` that is no escape stays as it is; non-ASCII is UTF-8.
         assertEquals("a+b %zz é", String(ImageBytes.decodeDataUrl("data:text/plain,a+b %zz é")!!.bytes, Charsets.UTF_8))
+    }
+
+    @Test
+    fun aPercentEncodedBodyKeepsACharacterPastTheBmpAndDecodesEscapesToBytes() {
+        // U+1F600 is two UTF-16 surrogates; beside an escape it used to come out as `3F 3F` (each half encoded alone).
+        val smile = "\uD83D\uDE00"
+        assertArrayEquals(
+            byteArrayOf(0x20, 0xF0.toByte(), 0x9F.toByte(), 0x98.toByte(), 0x80.toByte()),
+            ImageBytes.decodeDataUrl("data:text/plain,%20$smile")!!.bytes
+        )
+        assertEquals("<svg>$smile é</svg>", String(ImageBytes.decodeDataUrl("data:image/svg+xml,%3Csvg%3E$smile%20é%3C/svg%3E")!!.bytes, Charsets.UTF_8))
+        // An escape is the byte it spells, any byte – not a character re-encoded; a `%` short of two hex digits is literal.
+        assertArrayEquals(byteArrayOf(0xFF.toByte(), 0x00, 0x41, 0x25, 0x34), ImageBytes.decodeDataUrl("data:application/octet-stream,%FF%00A%4")!!.bytes)
+        assertArrayEquals(byteArrayOf(0x25, 0x7A, 0x7A, 0x25), ImageBytes.decodeDataUrl("data:text/plain,%zz%")!!.bytes)
     }
 
     @Test

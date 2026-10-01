@@ -2490,9 +2490,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * every other reader of the clipboard gets the bytes as they are with an honest type. The
      * clip's description carries the sniffed type itself rather than the provider's, which an
      * older release's `MimeTypeMap` may not know (`avif` before API 31). Bytes that are no
-     * image – a hot-link protected server's HTML page – fail the copy (false: the chrome's
-     * "Could not copy image") instead of going on the clipboard as a picture. The cache dir
-     * keeps the newest `ImageBytes.CACHE_KEPT` copies.
+     * image – a hot-link protected server's HTML page, an empty body behind an image type –
+     * fail the copy (false: the chrome's "Could not copy image") before anything is written,
+     * instead of going on the clipboard as a picture. The cache dir keeps the newest
+     * `ImageBytes.CACHE_KEPT` copies.
      */
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {
@@ -2504,7 +2505,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     val connection = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 8000 }
                     connection.inputStream.use { it.readBytes() } to connection.contentType
                 }
-                val type = ImageBytes.decide(ImageBytes.sniff(bytes), declared) ?: return@runCatching false
+                val type = ImageBytes.decide(bytes, declared) ?: return@runCatching false
                 val dir = File(activity.cacheDir, "clipboard").apply { mkdirs() }
                 val file = File(dir, "image-${System.currentTimeMillis()}.${type.extension}")
                 file.writeBytes(bytes)
