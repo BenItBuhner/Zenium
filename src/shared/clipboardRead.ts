@@ -16,10 +16,20 @@
  * `blink/common/permissions/permission_utils.cc`). A secure context is the engine's own gate
  * already: the `Clipboard` interface is `[SecureContext]`, so there is nothing to shim elsewhere.
  *
+ * `read()` answers as Chrome does for the clip's representations: ONE `ClipboardItem` carrying
+ * every type the clipboard holds (`clipboard_promise.cc` `ResolveRead` builds a single item from
+ * all the types read), `text/plain` first and `image/png` after it – the order
+ * `ui/base/clipboard/clipboard_android.cc` `ReadAvailableTypes` lists them – and an empty list
+ * for a clipboard holding neither. The image is the host's (`ClipboardImage`: PNG, base64,
+ * bounded there); the shim decodes it to a `Blob` and hands the text alone when the bytes do not
+ * decode. `readText()` is the text, as before.
+ *
  * Lazy by design: installing defines the two functions on `Clipboard.prototype` and nothing
  * more – no listener, no map, no read – so a page that never calls them pays nothing at load
  * (the script is on the phone's boot path).
  */
+
+import type { ClipboardImage } from './types'
 
 /** `text`: `readText()`, the string. `items`: `read()`, a `ClipboardItem` list made of it. */
 export type ClipboardReadKind = 'text' | 'items'
@@ -30,11 +40,28 @@ export interface ClipboardReadCall {
   kind: ClipboardReadKind
 }
 
-/** The browser's answer to one call: the clipboard's text, or the refusal. */
+/**
+ * The browser's answer to one call: the clipboard's text (and, for `read()`, the clip's image
+ * where the host read one), or the refusal.
+ */
 export interface ClipboardReadResult {
   id: string
   text?: string
+  image?: ClipboardImage
   error?: 'denied'
+}
+
+/** What the browser allowed: the text ('' for none) and the image where there is one. */
+interface ClipboardReadAnswer {
+  text: string
+  image?: ClipboardImage
+}
+
+/** The host's image field as the page may receive it: the PNG's base64, or nothing usable. */
+function imageOf(value: unknown): ClipboardImage | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const png = (value as { png?: unknown }).png
+  return typeof png === 'string' && png !== '' ? { png } : undefined
 }
 
 export interface ClipboardReadTransport {
@@ -71,7 +98,7 @@ export function installClipboardReadShim(
   const ClipboardItemCtor = (win as unknown as { ClipboardItem?: typeof ClipboardItem })
     .ClipboardItem
 
-  type Waiter = { resolve: (text: string) => void; reject: (error: Error) => void }
+  type Waiter = { resolve: (answer: ClipboardReadAnswer) => void; reject: (error: Error) => void }
   let pending: Map<string, Waiter> | null = null
   let counter = 0
 
@@ -85,10 +112,30 @@ export function installClipboardReadShim(
       const waiter = map.get(result.id)
       if (!waiter) return
       map.delete(result.id)
-      if (typeof result.text === 'string') waiter.resolve(result.text)
-      else waiter.reject(new win.DOMException(CLIPBOARD_READ_DENIED, 'NotAllowedError'))
+      if (typeof result.text === 'string') {
+        waiter.resolve({ text: result.text, image: imageOf(result.image) })
+      } else {
+        waiter.reject(new win.DOMException(CLIPBOARD_READ_DENIED, 'NotAllowedError'))
+      }
     })
     return map
+  }
+
+  /**
+   * The host's PNG (base64) as a `Blob` for the item; null for bytes that do not decode (the
+   * text still goes to the page). The host bounds the size (`ClipboardImage`); the page side
+   * takes what it is handed – one `atob`, one typed array, no cap of its own.
+   */
+  const pngBlob = (image: ClipboardImage | undefined): Blob | null => {
+    if (!image) return null
+    try {
+      const binary = win.atob(image.png)
+      const bytes = new win.Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      return new win.Blob([bytes], { type: 'image/png' })
+    } catch {
+      return null
+    }
   }
 
   const refusal = (name: string): Error | null => {
@@ -103,12 +150,12 @@ export function installClipboardReadShim(
     return null
   }
 
-  const ask = (name: string, kind: ClipboardReadKind): Promise<string> => {
+  const ask = (name: string, kind: ClipboardReadKind): Promise<ClipboardReadAnswer> => {
     const refused = refusal(name)
     if (refused) return Promise.reject(refused)
     const waiters = listen()
     const id = `clip-${++counter}`
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<ClipboardReadAnswer>((resolve, reject) => {
       waiters.set(id, { resolve, reject })
       try {
         transport.send({ id, kind })
@@ -133,17 +180,25 @@ export function installClipboardReadShim(
   }
 
   define('readText', function readText(this: Clipboard): Promise<string> {
-    return ask('readText', 'text')
+    return ask('readText', 'text').then((answer) => answer.text)
   })
   if (typeof ClipboardItemCtor === 'function') {
     define('read', function read(this: Clipboard): Promise<ClipboardItem[]> {
-      // The host hands text alone: one `text/plain` item for a clipboard that has some, an
-      // empty list for one that does not (an image, or nothing) – `readText` says '' there.
-      return ask('read', 'items').then((text) =>
-        text === ''
-          ? []
-          : [new ClipboardItemCtor({ 'text/plain': new win.Blob([text], { type: 'text/plain' }) })]
-      )
+      // One item with every representation the clip has, as Chrome hands one `ClipboardItem`
+      // for the system clipboard (`clipboard_promise.cc` `ResolveRead`): `text/plain` for a
+      // clipboard that has text, `image/png` for one that has an image the host could read,
+      // both for a clip that carries both – in that order (`clipboard_android.cc`
+      // `ReadAvailableTypes`); an empty list for a clipboard holding neither (`readText` says
+      // '' there).
+      return ask('read', 'items').then((answer) => {
+        const types: Record<string, Blob> = {}
+        if (answer.text !== '') {
+          types['text/plain'] = new win.Blob([answer.text], { type: 'text/plain' })
+        }
+        const png = pngBlob(answer.image)
+        if (png) types['image/png'] = png
+        return Object.keys(types).length === 0 ? [] : [new ClipboardItemCtor(types)]
+      })
     })
   }
 }
