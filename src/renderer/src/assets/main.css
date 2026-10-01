@@ -4345,10 +4345,112 @@
   .zen-group[data-clip] {
     overflow: hidden;
   }
-  /* Collapsed at rest, the card is its header (the spring writes the height inline on the way
-     there and clears it once it has landed), so a text-size change while it stands reaches it. */
+  /*
+   * Folded (the cleanup spec §2), the group is ONE CARD in its place: a cell at the grid's card
+   * aspect among the tab cards, at the card's own radius (the +6 is the open card's, whose
+   * corners wrap the members' – a cut at the fold, as radii are, §11.4). At rest the stylesheet
+   * holds the height through the aspect (the spring writes it inline on the way and clears it
+   * once landed), so a width or text-size change while it stands reaches it; `min-height: 0`
+   * with the clip keeps the member cards drawn under the mosaic from stretching the cell.
+   */
   .zen-group[data-collapsed] {
-    height: var(--zen-overview-group-header);
+    min-height: 0;
+    aspect-ratio: var(--zen-overview-card-aspect, 3 / 4);
+    border-radius: var(--zen-card-radius);
+  }
+  .zen-group[data-collapsed] > .zen-group-header {
+    border-radius: var(--zen-card-radius);
+  }
+  /*
+   * The folded face and the open body cross-fade (120 ms, opacity alone – kept under reduced
+   * motion as the header's and tint's fades are, below) while the height runs on its spring:
+   * the mosaic sits under the header over the members' place, the members under it go
+   * weightless – no taps, nothing for the tree (`aria-hidden`) – and the whole folded card is
+   * one tap (`.zen-group-tap`).
+   */
+  .zen-group-mosaic {
+    position: absolute;
+    top: var(--zen-overview-group-header);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 0 6px 6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-group[data-collapsed] > .zen-group-mosaic {
+    opacity: 1;
+  }
+  .zen-group-members {
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-group[data-collapsed] > .zen-group-members {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .zen-group[data-chrome='off'] > .zen-group-mosaic {
+    opacity: 0;
+  }
+  /* A tile: a capture's frame in the surface tone, round at 8 inside the card's 14 (§9.20). */
+  .zen-group-tile {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--zen-bg-solid);
+  }
+  .zen-group-tile-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--zen-muted);
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: rgb(var(--zen-fg-rgb) / 0.06);
+  }
+  .zen-group-tile-empty {
+    background: rgb(var(--zen-fg-rgb) / 0.04);
+  }
+  /* A saved group's tile (`SavedGroupCard`): the kept page's favicon over its title, two lines at most. */
+  .zen-group-tile-page {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 6px 6px;
+  }
+  .zen-group-tile-favicon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 4px;
+  }
+  .zen-group-tile-favicon-none {
+    background: rgb(var(--zen-fg-rgb) / 0.12);
+  }
+  .zen-group-tile-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    color: var(--zen-muted);
+    font-size: 11px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .zen-group-options {
+    z-index: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-group-mosaic,
+    .zen-group-members {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
   }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);

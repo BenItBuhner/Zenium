@@ -19,7 +19,7 @@ const invoke = vi.fn(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { GroupCard } = await import('../GroupCard')
+const { GroupCard, GROUP_OPTIONS_LABEL } = await import('../GroupCard')
 const { groupActions, groupCardControls } = await import('../groupActions')
 const { DEFAULT_FOLDER_ICON } = await import('@renderer/lib/groups')
 const { applyAccessibilityState, resetAccessibilityState } =
@@ -131,20 +131,36 @@ afterEach(() => {
 })
 
 describe('the group card under touch exploration (A11Y-10)', () => {
-  it('without touch exploration the header is the card’s one control – nothing a keyboard could Tab to unseen', () => {
+  it('without touch exploration the open card’s controls are the header and its visible ⋯ – nothing a keyboard could Tab to unseen; folded, the header alone', () => {
     const el = card()
     expect(controls(el)).toBeNull()
-    expect(el.querySelectorAll('button').length).toBe(0)
+    // The open group's ⋯ (the cleanup spec §2) is a real, visible button beside the header,
+    // named for the sheet it opens; it is the card's only button.
+    const buttons = [...el.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([GROUP_OPTIONS_LABEL])
+    expect(buttons[0].dataset.testid).toBe('group-card-options')
+    expect(buttons[0].classList.contains('sr-only')).toBe(false)
     expect(header(el).getAttribute('role')).toBe('button')
     expect(header(el).getAttribute('aria-expanded')).toBe('true')
+    act(() => root?.unmount())
+    root = null
+    // Folded, the card draws no ⋯: the header is the one control, the whole card its tap.
+    const folded = card({ collapsed: true })
+    expect(folded.querySelectorAll('button').length).toBe(0)
+    expect(header(folded).getAttribute('aria-expanded')).toBe('false')
+    const tap = folded.querySelector<HTMLElement>('[data-testid="group-card-tap"]')!
+    expect(tap.getAttribute('aria-hidden')).toBe('true')
+    expect(tap.hasAttribute('role')).toBe(false)
   })
 
-  it('under touch exploration the sheet’s rows stand as real buttons next after the header, by the same names, out of sight but in the tree', () => {
+  it('under touch exploration the sheet’s rows stand as real buttons next after the header and its ⋯, by the same names, out of sight but in the tree', () => {
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
     const el = card()
     expect(controls(el)).not.toBeNull()
-    // Reading order: the header, then its actions, then the member cards.
-    expect(header(el).nextElementSibling).toBe(controls(el))
+    // Reading order: the header, its ⋯, then its actions, then the member cards.
+    const options = header(el).nextElementSibling as HTMLElement
+    expect(options.dataset.testid).toBe('group-card-options')
+    expect(options.nextElementSibling).toBe(controls(el))
     expect(names(el)).toEqual(['Rename', 'Ungroup', 'Close Group (3 Tabs)', 'Delete Group'])
     // The same names as the hold sheet's rows, from the one builder: every row but the fold,
     // which the header is itself (its tap, and Collapse / Expand in TalkBack's menu off

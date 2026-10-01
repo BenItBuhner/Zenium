@@ -1,7 +1,8 @@
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, JSX, RefObject } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { Ellipsis } from 'lucide-react'
 import type { Folder, Tab } from '@shared/types'
+import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { accessibilityStore } from '@renderer/lib/accessibilityState'
 import { run } from '@renderer/lib/api'
 import { groupColorVars } from '@renderer/lib/groups'
@@ -11,15 +12,35 @@ import { groupCardLabel } from '@renderer/lib/overviewLabels'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
-import { Favicon } from '../sidebar/Favicon'
 import { departStore } from './departureStore'
 import { groupCardControls } from './groupActions'
 import { groupHeaderHeight } from './groupCardHeader'
+import { foldedCardHeight, mosaicOf, MOSAIC_TILES } from './groupMosaic'
+import { TabPreview } from './TabPreview'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
 export const GROUP_PAD = 6
+
+/** The accessible name of the open group's ⋯ (its options sheet: Rename, Colour, Ungroup, Close, Delete). */
+export const GROUP_OPTIONS_LABEL = 'Group options'
+
+/**
+ * How far past the grid's edges the folded card's mosaic counts as on screen (`useOnScreen`,
+ * from the grid it scrolls in): the tab card's lookahead (`OverviewCard`), a row of cards.
+ */
+const MOSAIC_LOOKAHEAD = '35% 0px'
+
+/**
+ * The folded card's height: a cell at the grid's card aspect (`--zen-overview-card-aspect`, the
+ * tablet's frame ratio, or the phone's 3 / 4 where none is set – `CARD_ASPECT` in
+ * `OverviewCard`), read off the shell itself; a shell with no width yet answers its header.
+ */
+function foldedHeightOf(shell: HTMLElement, header: number): number {
+  const aspect = getComputedStyle(shell).getPropertyValue('--zen-overview-card-aspect')
+  return foldedCardHeight(shell.offsetWidth, aspect.trim() || '3 / 4', header)
+}
 
 interface Props {
   folder: Folder
@@ -53,13 +74,17 @@ interface Props {
 }
 
 /**
- * A tab group in the overview: a tinted card with the group's name and colour in a header row
- * and its tabs in a grid below. The header toggles it; collapsed, the card is clipped to the
- * header and shows the members' icons instead. The height runs on a spring – on a fold, and
- * whenever what the card holds changes height (a card entering or leaving, a row coming or
- * going with the count or the columns) – that a change mid-flight retargets; the cells below
- * wait for it through the FLIP tracker (`layoutAnimations`, v2 §11.4). The card is the grid's
- * cell `group:<id>` for the glide and the morph.
+ * A tab group in the overview (`docs/tab-overview-cleanup-spec.md` §2): FOLDED it is ONE CARD
+ * in the group's place – a cell at the card aspect among the tab cards, the group's name and
+ * colour in its header row, its count the aside, and a 2×2 mosaic of its members' captures
+ * under them (`GroupMosaic`); a tap anywhere on it opens the group in place. OPEN it is the
+ * tinted card spanning the row with the same header – the ⋯ beside it opening the group's
+ * options – and its tabs as cards in a grid below; the header folds it. The height runs on a
+ * spring – on a fold, and whenever what the card holds changes height (a card entering or
+ * leaving, a row coming or going with the count or the columns) – that a change mid-flight
+ * retargets; the cells below wait for it through the FLIP tracker (`layoutAnimations`, v2
+ * §11.4), and the mosaic and the member cards cross-fade (120 ms, the stylesheet's) as the
+ * height runs. The card is the grid's cell `group:<id>` for the glide and the morph.
  */
 export function GroupCard({
   folder,
@@ -168,7 +193,8 @@ export function GroupCard({
   // renders (lift, pick, settle) re-render every card, and a layout per group card per commit
   // was 34 ms of the baseline pick's script on six tabs, 52 on thirty (PERF-5, #315), 11 / 31
   // with fewer renders. Which cards the group holds, the card renderer's identity and the menu
-  // callback change nothing the effect reads.
+  // callback change nothing the effect reads. A fold reads no body: the folded card's height is
+  // its cell's at the card aspect, from the shell's own width (`foldedHeightOf`).
   const members = tabs.length
   useLayoutEffect(() => {
     const shell = shellRef.current
@@ -176,7 +202,11 @@ export function GroupCard({
     const anim = spring.current
     if (!shell || !body || !anim) return
     const header = groupHeaderHeight()
-    const to = dissolving ? 0 : collapsed ? header : header + body.offsetHeight
+    const to = dissolving
+      ? 0
+      : collapsed
+        ? foldedHeightOf(shell, header)
+        : header + body.offsetHeight
     const run = (from: number, velocity: number): void => {
       layoutAnimations.start(key, from, to, !dissolving)
       shell.style.display = ''
@@ -245,15 +275,18 @@ export function GroupCard({
     ...groupColorVars(folder.color),
     opacity: departing ? 0 : undefined
   } as CSSProperties
-  // A group of one takes a single column, like the card it holds; two or more span the row,
-  // however many columns the window gives it, and lay their cards out in the same columns. A
-  // group shrinking to nothing keeps the span and the count it had.
+  // Folded, the group is one cell among the cards (§2). Open, a group of one takes a single
+  // column, like the card it holds; two or more span the row, however many columns the window
+  // gives it, and lay their cards out in the same columns. A group shrinking to nothing keeps
+  // the span and the count it had.
   const count = dissolving ? (held ?? 0) : tabs.length
   const single = count <= 1
+  const oneCell = collapsed || single
+  const name = folder.name.trim()
   return (
     <div
       ref={shellRef}
-      className={cn('zen-group flex flex-col', single ? 'col-span-1' : 'col-span-full')}
+      className={cn('zen-group flex flex-col', oneCell ? 'col-span-1' : 'col-span-full')}
       style={style}
       data-group-rgb=""
       data-cell={key}
@@ -278,30 +311,41 @@ export function GroupCard({
         {renaming ? (
           <GroupRename folder={folder} />
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{folder.name}</span>
+          // A nameless group is its dot and its count (§2): the name's slot stands empty.
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{name}</span>
         )}
-        <span
-          className={cn(
-            'flex items-center gap-1 transition-opacity duration-150',
-            collapsed ? 'opacity-100' : 'opacity-0'
-          )}
-          aria-hidden
-        >
-          {tabs.slice(0, single ? 1 : 4).map((tab) => (
-            <Favicon key={tab.id} tab={tab} size={14} />
-          ))}
-        </span>
         {/* The count is the aside in both states (§9.36; #360's verdict): the tablet row's 13
             tabular at 69%, never a badge – a pill on the tinted header would be two fills
             stacked, and a header carrying the group's dot never carries a badge too (§9.19). */}
         <span className="zen-group-row-count" data-testid="group-card-count">
           {count}
         </span>
-        <ChevronDown
-          className="h-4 w-4 shrink-0 opacity-60 transition-transform duration-200 motion-reduce:transition-none"
-          style={{ transform: collapsed ? 'rotate(-90deg)' : 'none' }}
-        />
+        {/* Open, the header's trailing 44 is the ⋯'s (laid beside the header below, as the tab
+            card lays its close); folded, the count ends the row and the card is the affordance. */}
+        {!collapsed && <span className="h-11 w-11 shrink-0" aria-hidden />}
       </div>
+      {/*
+        The ⋯ of the open group (§2: Rename, Colour, New Tab in Group, Ungroup, Close Group,
+        Delete Group – the group's sheet, which the header's hold opens too). Beside the header,
+        not inside it: this WebView reads a focusable, named node as one leaf and drops a
+        button nested in it from the tree (A11Y-01), so a nested ⋯ was never a TalkBack stop.
+        Over the header's trailing end, the 44 the row keeps clear for it.
+      */}
+      {!collapsed && !dissolving && (
+        <button
+          type="button"
+          className="zen-toolbar-button zen-group-options absolute right-1 top-0 h-11 w-11 rounded-[10px]"
+          aria-label={GROUP_OPTIONS_LABEL}
+          aria-haspopup="dialog"
+          data-testid="group-card-options"
+          onClick={(e) => {
+            e.stopPropagation()
+            onMenu(folder)
+          }}
+        >
+          <Ellipsis className="h-5 w-5" />
+        </button>
+      )}
       {touchExploring && !dissolving && (
         <GroupCardControls
           folder={folder}
@@ -312,7 +356,7 @@ export function GroupCard({
       )}
       <div
         ref={bodyRef}
-        className="grid gap-3"
+        className="zen-group-members grid gap-3"
         style={{
           padding: GROUP_PAD,
           paddingTop: 0,
@@ -322,6 +366,57 @@ export function GroupCard({
       >
         {tabs.map(card)}
       </div>
+      {/* The folded face: the mosaic under the header, and the whole card as the tap – a plain
+          overlay with no name of its own (the header is the control the tree reads) that
+          takes the tap and the hold the header takes. */}
+      {!dissolving && <GroupMosaic tabs={tabs} shellRef={shellRef} />}
+      {collapsed && !dissolving && (
+        <div
+          className="zen-group-tap absolute inset-0"
+          aria-hidden
+          data-testid="group-card-tap"
+          onClick={toggle}
+          {...press.handlers}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The folded card's 2×2 mosaic (§2): the members' captures as tiles – all of them up to four,
+ * else three and a "+N" tile naming the rest (`mosaicOf`) – with the tiles a smaller group leaves
+ * empty drawn as quiet slots, so the face is a two-by-two whatever the count. Laid under the
+ * header over the member cards' place and faded by the stylesheet with the fold
+ * (`.zen-group-mosaic`); it reads nothing to assistive technology – the header's sentence names
+ * the group and its count – and holds its pictures only while the card is on screen or a row
+ * from it, as the tab cards do (`useOnScreen`).
+ */
+function GroupMosaic({
+  tabs,
+  shellRef
+}: {
+  tabs: readonly Tab[]
+  shellRef: RefObject<HTMLDivElement | null>
+}): JSX.Element {
+  const visible = useOnScreen(shellRef, MOSAIC_LOOKAHEAD)
+  const { tiles, more } = mosaicOf(tabs)
+  const empty = Math.max(0, MOSAIC_TILES - tiles.length - (more > 0 ? 1 : 0))
+  return (
+    <div className="zen-group-mosaic" aria-hidden data-testid="group-card-mosaic">
+      {tiles.map((tab) => (
+        <div key={tab.id} className="zen-group-tile" data-tile={tab.id}>
+          <TabPreview tab={tab} scale={0.45} visible={visible} />
+        </div>
+      ))}
+      {more > 0 && (
+        <div className="zen-group-tile zen-group-tile-more" data-tile="more">
+          +{more}
+        </div>
+      )}
+      {Array.from({ length: empty }, (_, i) => (
+        <div key={`empty-${i}`} className="zen-group-tile zen-group-tile-empty" data-tile="empty" />
+      ))}
     </div>
   )
 }
