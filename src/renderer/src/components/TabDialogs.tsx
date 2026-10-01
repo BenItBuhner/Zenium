@@ -28,7 +28,7 @@ import { Input } from './ui/input'
 import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
 import { CaptureLayer } from './capture/CaptureOverlay'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
-import { InstallDialogLayer } from './install/InstallDialog'
+import { InstallPopoverLayer } from './install/InstallPopover'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
@@ -147,7 +147,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <InstallLayer state={state} />
       {phone && <MediaLayer state={state} />}
       <LongScreenshotLayer />
-      <InstallDialogLayer state={state} />
+      <InstallPopoverLayer state={state} />
       <ScreenPickerLayer state={state} />
       <DeviceChooserLayer state={state} />
       <CaptureLayer />

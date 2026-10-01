@@ -1856,7 +1856,7 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     ])
     const chip = el.querySelector<HTMLElement>('[data-install-chip]')!
     expectChip(chip, 'Install Example App')
-    // Its popup is the install dialog, not up yet; Chrome's tooltip is the name itself.
+    // Its popup is the "Install <app>?" popover, not up yet; Chrome's tooltip is the name itself.
     expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
     expect(chip.getAttribute('aria-expanded')).toBe('false')
     expect(chip.getAttribute('data-tooltip')).toBe('Install Example App')
@@ -1943,12 +1943,12 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     }
   })
 
-  it('opens the install dialog from the chip, which keeps its pressed fill while the dialog is up and goes once the app is installed', () => {
+  it('opens the install popover from the chip, which keeps its pressed fill while the popover is up and goes once the app is installed', () => {
     const el = render(<NavRow state={desktop(installable)} tab={installable} compact={false} />)
     const chip = el.querySelector<HTMLElement>('[data-install-chip]')!
     act(() => chip.click())
     expect(invoke).toHaveBeenCalledWith('webapp.openInstall', { tabId: 't1' })
-    // The core's prompt comes back as the dialog's state: the chip is its anchor.
+    // The core's prompt comes back as the popover's state: the chip is its anchor.
     act(() =>
       uiStore.set({
         install: {
@@ -2145,14 +2145,15 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     }
     // The chips whose popup is a popover or bubble placed on them (§9.20) say so once, with
     // the mark, whatever their state: site information from the slot and from the shield, the
-    // blocked pop-ups list, the save prompt, the zoom bubble, the star's bubble, the share
-    // popover.
+    // blocked pop-ups list, the save prompt, the zoom bubble, the Install chip's "Install
+    // <app>?" popover (W8-M3), the star's bubble, the share popover.
     const anchored = [
       '[data-site-chip]',
       '.zen-v2-blocked-chip',
       '[data-blocked-popups-chip]',
       '[data-af-chip]',
       '[data-zoom-chip]',
+      '[data-install-chip]',
       '[data-bm-star]',
       '[data-share-chip]'
     ]
@@ -2162,9 +2163,9 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       expect(c.getAttribute('aria-expanded'), selector).toBe('false')
       expect(c.hasAttribute('data-zen-anchored'), selector).toBe(true)
     }
-    // A frame dialog's opener carries `aria-haspopup` for the tree and no mark: the Install
-    // chip's install dialog and Boost's dialog stand over the window, hung from nothing.
-    for (const selector of ['[data-install-chip]', '[aria-label="Boost this site"]']) {
+    // A frame dialog's opener carries `aria-haspopup` for the tree and no mark: Boost's dialog
+    // stands over the window, hung from nothing.
+    for (const selector of ['[aria-label="Boost this site"]']) {
       const c = chip(selector)
       expect(c.getAttribute('aria-haspopup'), selector).toBe('dialog')
       expect(c.hasAttribute('data-zen-anchored'), selector).toBe(false)
@@ -2174,9 +2175,9 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     expect(chip('[aria-label="Copy URL"]').hasAttribute('data-zen-anchored')).toBe(false)
     // The three hover-only utilities keep the run for an anchored chip's open popup alone: the
     // stylesheet's `:has([data-zen-anchored][aria-expanded=true])` on the chips' scope, never
-    // the bare `aria-expanded` that held them drawn under the install dialog's scrim. (The
-    // retired class is assembled here so the stylesheet's scanner, which reads this file too,
-    // never emits its rule again.)
+    // the bare `aria-expanded` that held them drawn under a frame dialog's scrim. (The retired
+    // class is assembled here so the stylesheet's scanner, which reads this file too, never
+    // emits its rule again.)
     const bareKeepRule = ['group-has-[[aria-expanded=true]]', 'chips:flex'].join('/')
     for (const selector of [
       '[aria-label="Copy URL"]',
@@ -2194,11 +2195,12 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     }
     // The chips' scope is the one the rule reads.
     const scope = el.querySelector<HTMLElement>('.group\\/chips')!
-    for (const selector of [...anchored, '[data-install-chip]']) {
+    for (const selector of anchored) {
       expect(scope.contains(chip(selector)), selector).toBe(true)
     }
-    // The Install chip's dialog up: its `aria-expanded` is true, and no anchored chip's is –
-    // the selector the keep-rule is written on finds nothing to hold the run for.
+    // The Install chip's popover up: its `aria-expanded` is true on the marked chip, so the
+    // selector the keep-rule is written on finds it and holds the run while the popover hangs
+    // from the pill (W8-M3's ruling: Chrome's form, the popover, where the frame dialog stood).
     act(() =>
       uiStore.set({
         install: {
@@ -2214,8 +2216,10 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       })
     )
     expect(chip('[data-install-chip]').getAttribute('aria-expanded')).toBe('true')
-    expect(scope.querySelector('[data-zen-anchored][aria-expanded="true"]')).toBeNull()
-    expect(scope.querySelector('[aria-expanded="true"]')).toBe(chip('[data-install-chip]'))
+    expect(scope.querySelector('[data-zen-anchored][aria-expanded="true"]')).toBe(
+      chip('[data-install-chip]')
+    )
+    expect(scope.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1)
   })
 
   it('adds the Share chip after Copy URL as a hover-only utility whose popup is the share popover, hung from the chip while its own request is up', () => {

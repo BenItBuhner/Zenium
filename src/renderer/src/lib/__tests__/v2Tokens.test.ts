@@ -188,9 +188,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // header with the title block and search field, the text column, the group headings, the
   // two-line rows' slots and reveal, the empty state.
   ['.zen-page {', '/*\n * Find in page, zoom and fullscreen'],
-  // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
-  // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
-  // field and screenshot strip above it, whose span would enclose it, so it is cut out first.
+  // The desktop's "Create shortcut" dialog (components/install/ShortcutDialog.tsx, MW-22): its
+  // scrolling body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name,
+  // origin and field above it, whose span would enclose it, so it is cut out first.
   ['.zen-install-dialog-body {', "/*\n   * The desktop's share popover"],
   // The desktop's share popover (components/share/SharePopover.tsx, MW-21): the preview, the QR
   // card, the targets' hairline, and its unlayered two-line modifier on the shared row (§9.34).
@@ -642,8 +642,8 @@ describe('token families (§9.29)', () => {
 
 /**
  * The desktop platform's surfaces (MW-16 media hub, MW-19 screen picker, MW-21 share popover,
- * MW-22 install dialog, MW-23 app title bar): their blocks in main.css, by the start marker of
- * their `V2_SURFACES` entry, and the renderer files they are drawn from.
+ * MW-22 install popover and shortcut dialog, MW-23 app title bar): their blocks in main.css, by
+ * the start marker of their `V2_SURFACES` entry, and the renderer files they are drawn from.
  */
 const DESKTOP_PLATFORM_BLOCKS = [
   '.zen-install-dialog-body {',
@@ -653,7 +653,9 @@ const DESKTOP_PLATFORM_BLOCKS = [
   '.zen-app-titlebar {'
 ]
 const DESKTOP_PLATFORM_FILES = [
-  'components/install/InstallDialog.tsx',
+  'components/install/InstallPopover.tsx',
+  'components/install/ShortcutDialog.tsx',
+  'lib/installOffer.ts',
   'components/share/SharePopover.tsx',
   'components/screenCapture/ScreenPicker.tsx',
   'components/media/MediaHubButton.tsx',

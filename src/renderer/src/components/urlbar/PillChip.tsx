@@ -24,8 +24,8 @@ type ChipSemantics =
       expanded?: boolean
       /**
        * The popup hangs from the chip – a popover or bubble placed on it (§9.20: the zoom
-       * bubble, the share popover, site information, the star's bubble) – rather than standing
-       * as a frame dialog over the window (the Install chip's install dialog, the Boosts
+       * bubble, the share popover, site information, the star's bubble, the Install chip's
+       * popover) – rather than standing as a frame dialog over the window (the Boosts
        * dialog). The house mark `data-zen-anchored`: the desktop pill keeps its hover-only run
        * drawn while such a chip's popup is up, so the chips do not shift under a surface placed
        * on one of them, and never for a frame dialog's opener, whose surface is nowhere near

@@ -1661,9 +1661,10 @@ export function closeBookmarkChrome(
 }
 
 /**
- * The install prompt – the phone's "Add to Home screen" sheet, the desktop's "Install app" /
- * "Create shortcut" dialog (`InstallLayer`, `InstallDialogLayer`; the host's chrome mounts the
- * one that is its surface) – dims the page behind it like a menu: the snapshot comes first.
+ * The install prompt – the phone's "Add to Home screen" sheet, the desktop's "Install <app>?"
+ * popover under the pill's Install chip or its "Create shortcut" dialog (`InstallLayer`,
+ * `InstallPopoverLayer`; the host's chrome mounts the one that is its surface) – stands over
+ * the page's picture like a menu: the snapshot comes first.
  */
 export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
   await captureActiveTab(prompt.tabId)
@@ -1671,11 +1672,15 @@ export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<voi
   uiStore.set({ install: prompt, drawerOpen: false })
 }
 
-export function closeInstallSheet(tabId: string): void {
+/**
+ * The prompt's surface has left. Focus goes back to the page unless the caller keeps it in the
+ * chrome (`keepFocus`: Escape on the desktop popover hands it to the chip it hung from, §9.22).
+ */
+export function closeInstallSheet(tabId: string, opts: { keepFocus?: boolean } = {}): void {
   if (uiStore.get().install?.tabId !== tabId) return
   uiStore.set({ install: null })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 /**
