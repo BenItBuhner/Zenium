@@ -1,9 +1,10 @@
-import { v } from 'convex/values'
-import { internalMutation } from './_generated/server'
+import { v, type Infer } from 'convex/values'
+import type { Doc } from './_generated/dataModel'
+import { internalMutation, type MutationCtx } from './_generated/server'
 import { userMutation, userQuery } from './lib/customFunctions'
 import { fail } from './lib/errors'
 import { normaliseUserCode } from './lib/crypto'
-import { LINK_TTL_MS, MAX_DEVICE_NAME } from './lib/limits'
+import { LINK_TTL_MS, MAX_DEVICE_NAME, RETRY_GRACE_MS } from './lib/limits'
 import { rateLimiter } from './lib/rateLimits'
 import { deviceKind, linkStatus } from './schema'
 
@@ -54,6 +55,8 @@ const exchangeResult = v.union(
  * The device polls with its secret (HTTP `POST /auth/device/token`). Once the link is approved
  * the first exchange creates the device session and consumes the link; the secret proves it is
  * the device that asked, and the refresh token's hash arrives from the action that minted it.
+ * A device that never received that answer polls again: within `RETRY_GRACE_MS`, and while the
+ * session has not refreshed (so no token from it is in use), the same session takes the new hash.
  */
 export const exchange = internalMutation({
   args: { linkId: v.string(), secretHash: v.string(), refreshHash: v.string() },
@@ -65,7 +68,8 @@ export const exchange = internalMutation({
     const limit = await rateLimiter.limit(ctx, 'linkPoll', { key: link._id })
     if (!limit.ok) fail('rate-limited', 'Polling too fast')
     const now = Date.now()
-    if (link.status === 'consumed' || link.expiresAt < now) return { status: 'expired' as const }
+    if (link.status === 'consumed') return await recollect(ctx, link, args.refreshHash, now)
+    if (link.expiresAt < now) return { status: 'expired' as const }
     if (link.status === 'pending' || !link.userId) return { status: 'pending' as const }
     const user = await ctx.db.get('users', link.userId)
     if (!user || user.deletedAt !== undefined) return { status: 'expired' as const }
@@ -77,7 +81,7 @@ export const exchange = internalMutation({
       createdAt: now,
       lastSeenAt: now
     })
-    await ctx.db.patch('deviceLinks', link._id, { status: 'consumed' })
+    await ctx.db.patch('deviceLinks', link._id, { status: 'consumed', sessionId, consumedAt: now })
     return {
       status: 'approved' as const,
       sessionId,
@@ -86,6 +90,28 @@ export const exchange = internalMutation({
     }
   }
 })
+
+async function recollect(
+  ctx: MutationCtx,
+  link: Doc<'deviceLinks'>,
+  refreshHash: string,
+  now: number
+): Promise<Infer<typeof exchangeResult>> {
+  if (!link.sessionId || link.consumedAt === undefined || now - link.consumedAt > RETRY_GRACE_MS)
+    return { status: 'expired' }
+  const session = await ctx.db.get('deviceSessions', link.sessionId)
+  if (!session || session.revokedAt !== undefined || session.prevRefreshHash !== undefined)
+    return { status: 'expired' }
+  const user = await ctx.db.get('users', session.userId)
+  if (!user || user.deletedAt !== undefined) return { status: 'expired' }
+  await ctx.db.patch('deviceSessions', session._id, { refreshHash })
+  return {
+    status: 'approved',
+    sessionId: session._id,
+    clerkUserId: user.clerkUserId,
+    email: user.email
+  }
+}
 
 /** What the website shows before the user approves a code: which device is asking. */
 export const describe = userQuery({

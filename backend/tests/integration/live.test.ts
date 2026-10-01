@@ -157,11 +157,18 @@ describe.skipIf(!live)('live deployment', () => {
     expect(rotated.status).toBe(200)
     const fresh = String(rotated.body['accessToken'])
     expect(value(await convex('query', 'sync:list', {}, fresh))).toHaveLength(2)
-    expect(await post('/auth/refresh', { refreshToken: a.refreshToken })).toEqual({
+    // A retry with the previous token, as after a lost response, replaces the lost token.
+    const retried = await post('/auth/refresh', { refreshToken: a.refreshToken })
+    expect(retried.status).toBe(200)
+    expect(await post('/auth/refresh', { refreshToken: rotated.body['refreshToken'] })).toEqual({
       status: 401,
-      body: { error: 'reused' }
+      body: { error: 'invalid' }
     })
+    value(await convex('mutation', 'devices:revoke', { sessionId: a.sessionId }, webToken))
     expect(code(await convex('query', 'sync:list', {}, fresh))).toBe('revoked')
+    expect(
+      (await post('/auth/refresh', { refreshToken: retried.body['refreshToken'] })).status
+    ).toBe(401)
 
     value(await convex('mutation', 'devices:revoke', { sessionId: b.sessionId }, webToken))
     expect(code(await convex('query', 'sync:list', {}, b.accessToken))).toBe('revoked')

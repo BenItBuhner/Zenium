@@ -36,6 +36,9 @@ export default defineSchema({
     kind: deviceKind,
     status: linkStatus,
     userId: v.optional(v.id('users')),
+    /** The session the approved link became, and when: a poll whose answer was lost can collect it again. */
+    sessionId: v.optional(v.id('deviceSessions')),
+    consumedAt: v.optional(v.number()),
     createdAt: v.number(),
     expiresAt: v.number()
   })
@@ -48,6 +51,8 @@ export default defineSchema({
     userId: v.id('users'),
     refreshHash: v.string(),
     prevRefreshHash: v.optional(v.string()),
+    /** When `prevRefreshHash` stopped being current: the start of its retry grace. */
+    rotatedAt: v.optional(v.number()),
     deviceName: v.string(),
     kind: deviceKind,
     createdAt: v.number(),

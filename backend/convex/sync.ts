@@ -11,7 +11,9 @@ import {
   DOCUMENT_NAME,
   MAX_BYTES,
   MAX_DOCUMENT_CHARS,
-  MAX_DOCUMENTS
+  MAX_DOCUMENTS,
+  READ_MANY_MAX_CHARS,
+  READ_MANY_MAX_NAMES
 } from './lib/limits'
 
 async function findDocument(
@@ -73,16 +75,25 @@ export const read = deviceQuery({
   }
 })
 
-/** Several documents at once (a device reading every other device's file in one round trip). */
+/**
+ * Several documents at once (a device reading every other device's file in one round trip), in
+ * the order asked. The answer may be shorter than `names`: it stops before passing
+ * `READ_MANY_MAX_CHARS`, and the caller asks again for the names it did not get. It always holds
+ * at least the first one.
+ */
 export const readMany = deviceQuery({
   args: { names: v.array(v.string()) },
   returns: v.array(v.union(v.string(), v.null())),
   handler: async (ctx, { names }) => {
-    if (names.length > 64) fail('too-large', 'Read at most 64 documents at once')
+    if (names.length > READ_MANY_MAX_NAMES)
+      fail('too-large', `Read at most ${READ_MANY_MAX_NAMES} documents at once`)
     const out: (string | null)[] = []
+    let chars = 0
     for (const name of names) {
       const doc = await findDocument(ctx, ctx.user._id, name)
+      if (out.length > 0 && doc && chars + doc.size > READ_MANY_MAX_CHARS) break
       out.push(doc ? await readText(ctx, doc) : null)
+      chars += doc?.size ?? 0
     }
     return out
   }

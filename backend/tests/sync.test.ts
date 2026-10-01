@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../convex/_generated/api'
-import { CHUNK_CHARS, DELETE_BATCH, MAX_BYTES, MAX_DOCUMENTS } from '../convex/lib/limits'
+import {
+  CHUNK_CHARS,
+  DELETE_BATCH,
+  MAX_BYTES,
+  MAX_DOCUMENTS,
+  READ_MANY_MAX_CHARS
+} from '../convex/lib/limits'
 import { asDevice, linkDevice, makeT, refusal } from './harness'
 import type { T } from './harness'
 
@@ -55,6 +61,21 @@ describe('documents', () => {
     expect(await d.query(api.sync.read, { name: 'big.json' })).toBe('small')
     const chunks = await t.run(async (ctx) => (await ctx.db.query('syncChunks').collect()).length)
     expect(chunks).toBe(1)
+  })
+
+  it('answers readMany with an in-order prefix that fits the read budget', async () => {
+    const t = makeT()
+    const d = await device(t)
+    const size = Math.floor(READ_MANY_MAX_CHARS * 0.45)
+    for (const letter of ['a', 'b', 'c']) {
+      await d.mutation(api.sync.write, { name: `${letter}.json`, text: letter.repeat(size) })
+    }
+    const first = await d.query(api.sync.readMany, {
+      names: ['missing.json', 'a.json', 'b.json', 'c.json']
+    })
+    expect(first.map((text) => text?.length ?? null)).toEqual([null, size, size])
+    const rest = await d.query(api.sync.readMany, { names: ['c.json'] })
+    expect(rest).toEqual(['c'.repeat(size)])
   })
 
   it('keeps accounts apart', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { api } from '../convex/_generated/api'
+import { RETRY_GRACE_MS } from '../convex/lib/limits'
 import {
   ACCOUNTS_SITE,
   asClerkUser,
@@ -69,7 +70,42 @@ describe('device linking', () => {
       sid: token.body['sessionId']
     })
 
-    // The link is consumed: a second exchange cannot mint another session.
+    // A device that lost the answer polls again and collects the same session; the first
+    // refresh token is replaced, not added to.
+    const again = await postJson(t, '/auth/device/token', poll)
+    expect(again.body).toMatchObject({ status: 'approved', sessionId: token.body['sessionId'] })
+    expect(
+      await postJson(t, '/auth/refresh', { refreshToken: token.body['refreshToken'] })
+    ).toEqual({ status: 401, body: { error: 'invalid' } })
+    expect(
+      (await postJson(t, '/auth/refresh', { refreshToken: again.body['refreshToken'] })).status
+    ).toBe(200)
+    expect((await web.query(api.devices.list, {})).length).toBe(1)
+
+    // Once the session has refreshed, the link cannot be collected again.
+    expect((await postJson(t, '/auth/device/token', poll)).body).toEqual({ status: 'expired' })
+  })
+
+  it('stops re-issuing a consumed link after the grace window', async () => {
+    const t = makeT()
+    const secret = randomSecret()
+    const start = await postJson(t, '/auth/device/start', {
+      secretHash: await sha256Hex(secret),
+      deviceName: 'Phone',
+      kind: 'phone'
+    })
+    await asClerkUser(t, 'user_a').mutation(api.links.approve, {
+      userCode: String(start.body['userCode'])
+    })
+    const poll = { linkId: start.body['linkId'], deviceSecret: secret }
+    expect((await postJson(t, '/auth/device/token', poll)).body['status']).toBe('approved')
+    await t.run(async (ctx) => {
+      for (const link of await ctx.db.query('deviceLinks').collect()) {
+        await ctx.db.patch('deviceLinks', link._id, {
+          consumedAt: Date.now() - RETRY_GRACE_MS - 1
+        })
+      }
+    })
     expect((await postJson(t, '/auth/device/token', poll)).body).toEqual({ status: 'expired' })
   })
 
@@ -155,10 +191,30 @@ describe('refresh tokens', () => {
     expect(second.status).toBe(200)
   })
 
-  it('revokes the session when a superseded token is presented again', async () => {
+  it('re-issues a token to a device that retries within the grace window', async () => {
+    const t = makeT()
+    const linked = await linkDevice(t, 'user_a')
+    const lost = await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })
+    const retry = await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })
+    expect(retry.status).toBe(200)
+    expect(retry.body['sessionId']).toBe(linked.sessionId)
+    expect(await postJson(t, '/auth/refresh', { refreshToken: lost.body['refreshToken'] })).toEqual(
+      { status: 401, body: { error: 'invalid' } }
+    )
+    expect(
+      (await postJson(t, '/auth/refresh', { refreshToken: retry.body['refreshToken'] })).status
+    ).toBe(200)
+  })
+
+  it('revokes the session when a superseded token is presented after the grace window', async () => {
     const t = makeT()
     const linked = await linkDevice(t, 'user_a')
     const rotated = await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })
+    await t.run(async (ctx) => {
+      await ctx.db.patch('deviceSessions', linked.sessionId, {
+        rotatedAt: Date.now() - RETRY_GRACE_MS - 1
+      })
+    })
     const replay = await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })
     expect(replay).toEqual({ status: 401, body: { error: 'reused' } })
     // Both copies are now dead, including the legitimate latest one.
