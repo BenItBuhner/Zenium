@@ -22,11 +22,13 @@ export function shouldShowDefaultBrowserPrompt(
 }
 
 /**
- * Whether the strip belongs on this window: the OS said another browser has the role (the core's
- * `DefaultBrowserService` asked the host), the user has not answered for this release, and the
- * window is a regular one (private windows never ask). Not on Android, whatever the form factor:
- * there the core's campaign asks – the promo sheet and the top banner
- * (`components/defaultbrowser`, `PhoneShell`) – and two campaigns on one window would nag twice.
+ * Whether the prompt belongs on this window – the page-edge band's default-browser tenant
+ * (`content/useDefaultBrowserBand.ts`; the strip across the frame's top it replaced kept the
+ * same rule): the OS said another browser has the role (the core's `DefaultBrowserService`
+ * asked the host), the user has not answered for this release, and the window is a regular one
+ * (private windows never ask). Not on Android, whatever the form factor: there the core's
+ * campaign asks – the promo sheet and the top banner (`components/defaultbrowser`,
+ * `PhoneShell`) – and two campaigns on one window would nag twice.
  */
 export function wantsDefaultBrowserBanner(state: UIState): boolean {
   const dismissed = state.settings.defaultBrowserPromptDismissed
@@ -40,8 +42,8 @@ export function wantsDefaultBrowserBanner(state: UIState): boolean {
   )
 }
 
-/** Either answer on the strip takes it down until the next feature release. */
-export function dismissDefaultBrowserBanner(state: UIState): void {
+/** Either answer on the band takes it down until the next feature release. */
+export function dismissDefaultBrowserBanner(state: Pick<UIState, 'version'>): void {
   run('settings.update', { defaultBrowserPromptDismissed: state.version })
 }
 
@@ -66,8 +68,8 @@ export function describeDefaultBrowserRequest(platform: Platform): string {
 }
 
 /**
- * "Set as default" on the strip: the prompt goes up first and says what the OS will do; its own
- * "Set as default" runs the request (`requestDefaultBrowser`) and takes the strip down.
+ * "Set as default" on the band: the prompt goes up first and says what the OS will do; its own
+ * "Set as default" runs the request (`requestDefaultBrowser`) and takes the band down.
  */
 export function askDefaultBrowser(source: DefaultBrowserRequestSource): void {
   uiStore.set({ defaultBrowserAsk: source })

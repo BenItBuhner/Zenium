@@ -3666,6 +3666,7 @@ export class Browser {
       'share.chooserPick': ({ requestId, appId }) => this.pickShareChooser(requestId, appId),
       'share.chooserCancel': ({ requestId }) => this.cancelShareChooser(requestId),
       'layout.report': (report, win) => win.applyLayout(report),
+      'layout.pageOffset': ({ offset }, win) => win.setPageOffset(offset),
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,

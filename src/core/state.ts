@@ -1426,6 +1426,8 @@ export class BrowserState {
           hung: undefined,
           // A form in progress died with the page's document (OS-37).
           formEdited: undefined,
+          // The document generation counts this session's documents: the key is not written.
+          documentGeneration: undefined,
           // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).
           memorySaver: undefined,
           errorCode: null,
