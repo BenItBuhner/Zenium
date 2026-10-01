@@ -59,10 +59,12 @@ export type PreviewStep =
  * page, as the third session raises it), the Send to your devices picker (`send-tab`, the
  * menu's row on a phone with several devices; `sync=tabs` gives it the devices to list),
  * "Bookmark all tabs" (`bookmark-all-tabs`: the app menu's Bookmarks item, through the core as
- * the item goes; `then=tap:<the folder's name>` opens its folder picker over it) and the
+ * the item goes; `then=tap:<the folder's name>` opens its folder picker over it), the
  * external-protocol confirm (`external-protocol`: the active page asking to open a phone number
  * in another app, as `externalProtocol.request` raises it – the sheet on the phone, the centred
- * dialog on a tablet and under a mouse).
+ * dialog on a tablet and under a mouse) and an extension's install prompt (`extension-prompt`:
+ * the core's `extensionInstallRequest` for an extension with permission warnings – the sheet on
+ * the phone, the dialog on a tablet and under a mouse).
  */
 export const PREVIEW_SHEETS = [
   'extensions',
@@ -70,7 +72,8 @@ export const PREVIEW_SHEETS = [
   'promo',
   'send-tab',
   'bookmark-all-tabs',
-  'external-protocol'
+  'external-protocol',
+  'extension-prompt'
 ] as const
 export type PreviewSheet = (typeof PREVIEW_SHEETS)[number]
 

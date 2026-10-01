@@ -372,6 +372,11 @@ describe('parsePreviewSpec', () => {
       kind: 'sheet',
       sheet: 'external-protocol'
     })
+    // An extension's install prompt (the sheet on the phone, the dialog on a tablet).
+    expect(parsePreviewSpec('sheet=extension-prompt')).toEqual({
+      kind: 'sheet',
+      sheet: 'extension-prompt'
+    })
     expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
       kind: 'sheet',

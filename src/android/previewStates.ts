@@ -101,6 +101,7 @@ import {
   type FilterListStatus,
   type TrackingLevel
 } from '@shared/blocking'
+import { enqueueExtensionPrompt } from '@renderer/lib/extensions/popup'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { forgetHintBubble, hintBubbleStore, resetIphSession } from '@renderer/lib/iph'
@@ -364,8 +365,10 @@ function apply(browser: Browser, spec: string): void {
       barEditorOpen: false,
       bookmarkAllTabs: null,
       // The external-protocol confirm a `sheet=external-protocol` state raised (no answer: the
-      // preview's core keeps no remembered choice to spoil).
+      // preview's core keeps no remembered choice to spoil), and the install prompt a
+      // `sheet=extension-prompt` state raised (no answer: nothing is being installed).
       externalProtocol: null,
+      extensionPrompts: [],
       // A share panel a `share=` state put up goes with it (its stand-in host holds nothing), and
       // a hand-off to the code sheet still under way (`qrcode=panel`) with the panel.
       sharePanel: null,
@@ -1346,6 +1349,34 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         appName: 'Phone',
         site: 'example.com',
         canRemember: true
+      },
+      tab.id
+    )
+  } else if (target.kind === 'sheet' && target.sheet === 'extension-prompt' && tab) {
+    // An extension's install prompt as the core's `extensionInstallRequest` reaches the chrome:
+    // the page is captured and the prompt queued – the sheet on the phone, the dialog on a
+    // tablet and under a mouse; the state is reached once the prompt is in the store and the
+    // surface has had its frames. The warnings are Chromium's wording for a content blocker's.
+    seed()
+    const then = target.then ?? []
+    const unsubscribe = uiStore.subscribe(() => {
+      if (uiStore.get().extensionPrompts.length === 0) return
+      unsubscribe()
+      if (then.length === 0) afterFrames(2, finish)
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
+    void enqueueExtensionPrompt(
+      {
+        requestId: 'preview-extension-prompt',
+        kind: 'install',
+        name: 'Tab Tidy',
+        icon: null,
+        warnings: [
+          'Read and change all your data on all websites',
+          'Read your browsing history',
+          'Block content on any page'
+        ],
+        source: 'chrome-web-store'
       },
       tab.id
     )
