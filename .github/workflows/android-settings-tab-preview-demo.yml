@@ -12,9 +12,6 @@ name: Android Settings tab preview demo
 # driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-settings-tab-preview-9271
 
 permissions:
   contents: read
