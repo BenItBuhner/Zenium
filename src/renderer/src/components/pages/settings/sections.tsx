@@ -202,6 +202,7 @@ import {
   type SectionModel,
   type SettingsRow
 } from './model'
+import { accountGroups } from './account'
 import { syncGroups } from './sync'
 import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from './privacyHub'
 import {
@@ -347,6 +348,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   agents: agentsSection,
   passwords: passwordsSection,
   security: securitySection,
+  account: accountSection,
   sync: syncSection,
   import: importGroups,
   shortcuts: shortcutsSection,
@@ -4862,8 +4864,12 @@ function appSite(startUrl: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sync
+// Account and Sync
 // ---------------------------------------------------------------------------
+
+function accountSection(ctx: SectionContext): RowGroup[] {
+  return accountGroups(ctx)
+}
 
 function syncSection(ctx: SectionContext): RowGroup[] {
   return syncGroups(ctx)

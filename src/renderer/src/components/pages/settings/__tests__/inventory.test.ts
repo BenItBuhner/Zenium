@@ -293,7 +293,12 @@ function desktopState(): UIState {
       transport: 'folder',
       webdav: null,
       webdavAvailable: false,
-      authRefused: false
+      authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false
     },
     agents: [],
     awayAgents: [],
@@ -827,6 +832,8 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'AI Agents',
       'Passwords',
       'Security',
+      // The Zenium account on its own page, before the Sync it is the first transport of.
+      'Account',
       'Sync',
       'Import',
       'Accessibility',

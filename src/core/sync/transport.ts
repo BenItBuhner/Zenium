@@ -53,6 +53,11 @@ export interface SyncTransport {
   list(): Promise<string[]>
   /** A document's text, or null when it does not exist. */
   read(name: string): Promise<string | null>
+  /**
+   * Several documents' texts in the order asked, where the transport can fetch them together
+   * (the account's `sync:readMany`: one request instead of one per device file).
+   */
+  readMany?(names: string[]): Promise<(string | null)[]>
   /** Create or replace a document atomically: a reader never sees a half-written file. */
   write(name: string, text: string): Promise<void>
   /** Delete a document; a missing one is not an error. */
@@ -122,12 +127,18 @@ export function serializeDeviceFile(file: DeviceFile): string {
   return JSON.stringify(file)
 }
 
-/** Every readable device file in the folder. */
+/** Every readable device file in the folder (fetched together where the transport can). */
 export async function readDeviceFiles(transport: SyncTransport): Promise<DeviceFile[]> {
+  const names = (await transport.list()).filter(isDeviceFileName)
+  let texts: (string | null)[]
+  if (transport.readMany) {
+    texts = await transport.readMany(names)
+  } else {
+    texts = []
+    for (const name of names) texts.push(await transport.read(name))
+  }
   const files: DeviceFile[] = []
-  for (const name of await transport.list()) {
-    if (!isDeviceFileName(name)) continue
-    const text = await transport.read(name)
+  for (const text of texts) {
     if (text === null) continue
     const file = parseDeviceFile(text)
     if (file) files.push(file)
