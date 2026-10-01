@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
@@ -175,6 +176,11 @@ class CopyImageTypeDemo : MediaDemoBase(PREFIX) {
             "  FACT  the engine ${if (bytes == magic) "handed the $what's own bytes over" else "re-encoded the $what to ${bytes.uppercase()} (ClipboardImpl.getPng: a non-PNG type is decoded and compressed to PNG)"}" +
                 "; before the fix a $what arrived typed image/png with $magic bytes"
         )
+        // The still shows the pasted picture and the page's readout together: the editor loses
+        // the focus so the keyboard leaves the lower half of the screen first.
+        pageJs("document.getElementById('ce').blur()")
+        val keyboardGone = poll(4_000) { ui.windows.none { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }
+        if (!keyboardGone) note("  the keyboard is still up for the still")
         SystemClock.sleep(800)
         shot(still)
         SystemClock.sleep(400)
