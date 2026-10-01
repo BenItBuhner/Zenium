@@ -1,5 +1,6 @@
 import type {
   AgentDialogAnswer,
+  AgentDialogRuleScope,
   PageDialog,
   PageDialogAnswered,
   PageDialogKind,
@@ -61,9 +62,9 @@ export function describeDialog(d: PageDialog): string {
 export function describeAnswer(answer: AgentDialogAnswer): string {
   if (typeof answer === 'object') return `with ${JSON.stringify(answer.text)}`
   switch (answer) {
-    case 'ok':
+    case 'accept':
       return 'OK'
-    case 'cancel':
+    case 'dismiss':
       return 'Cancel'
     case 'leave':
       return 'left'
@@ -80,17 +81,18 @@ export type AnsweredDialog = Pick<
 
 /**
  * The `Notice:` line an agent reads when a dialog on one of its tabs was answered without it –
- * by its dialog policy (`browser_dialog_policy`) or by the default answer when no rule covered
- * the kind. Every host's report goes through this one builder (the core's own answers; what a
- * host that answers dialogs itself sends through `TabViewEvents.onPageDialogAnswered`), so an
- * agent reads the same words everywhere.
+ * by a rule of its dialog policy (`browser_dialog_policy`; `rule` names which) or by the
+ * default answer (`default`). Every host's report goes through this one builder (the core's
+ * own answers; what a host that answers dialogs itself sends through
+ * `TabViewEvents.onPageDialogAnswered`), so an agent reads the same words everywhere.
  */
 export function describeAnsweredDialog(
   d: AnsweredDialog,
   answer: AgentDialogAnswer,
-  byPolicy: boolean
+  rule: AgentDialogRuleScope
 ): string {
-  const by = byPolicy ? 'by your dialog policy' : '(no policy; browser_dialog_policy sets one)'
+  const by =
+    rule === 'default' ? '(no policy; browser_dialog_policy sets one)' : 'by your dialog policy'
   return `Notice: the page in tab ${d.tabId} (${describeFrom(d.site, d.embedded)}) opened ${describeKind(d.kind, d.defaultValue)}: ${JSON.stringify(d.message.slice(0, 500))} – answered ${describeAnswer(answer)} ${by}.`
 }
 
@@ -102,7 +104,7 @@ export function answeredDialogOf(tabId: string, report: PageDialogAnswered): Ans
     site: dialogSite(report.url),
     embedded: false,
     message: report.message,
-    defaultValue: report.kind === 'prompt' ? report.defaultValue : ''
+    defaultValue: report.kind === 'prompt' ? (report.defaultValue ?? '') : ''
   }
 }
 

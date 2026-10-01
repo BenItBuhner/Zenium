@@ -1,5 +1,5 @@
 import type {
-  AgentDialogPolicy,
+  AgentDialogRules,
   AgentMode,
   AgentPromptKind,
   Folder,
@@ -1774,8 +1774,8 @@ function policyWord(args: Record<string, unknown>, key: string): unknown {
 }
 
 /** The rules a `browser_dialog_policy set` names; an error names what is wrong. */
-function parseDialogPolicy(args: Record<string, unknown>): AgentDialogPolicy {
-  const policy: AgentDialogPolicy = {}
+function parseDialogPolicy(args: Record<string, unknown>): AgentDialogRules {
+  const policy: AgentDialogRules = {}
   const confirm = policyWord(args, 'confirm')
   if (confirm !== undefined) {
     if (confirm === 'accept' || confirm === 'ok' || confirm === 'yes' || confirm === true)
@@ -1816,7 +1816,7 @@ function parseDialogPolicy(args: Record<string, unknown>): AgentDialogPolicy {
 }
 
 /** The words of a prompt rule in a policy's result. */
-function promptRuleWords(rule: NonNullable<AgentDialogPolicy['prompt']>): string {
+function promptRuleWords(rule: NonNullable<AgentDialogRules['prompt']>): string {
   if (typeof rule === 'object') return `OK with ${JSON.stringify(rule.text)}`
   return rule === 'accept' ? "OK with the page's default" : 'Cancel'
 }
@@ -1826,7 +1826,7 @@ function promptRuleWords(rule: NonNullable<AgentDialogPolicy['prompt']>): string
  * nothing about marked `(default)` – and, for a tab, the kinds its session-wide rule supplies
  * marked `(for every tab)`.
  */
-function describeDialogPolicy(own: AgentDialogPolicy, inherited: AgentDialogPolicy | null): string {
+function describeDialogPolicy(own: AgentDialogRules, inherited: AgentDialogRules | null): string {
   const marks = new Set<string>()
   const line = (words: string, mark: 'default' | 'for every tab' | null): string => {
     if (mark) marks.add(mark)

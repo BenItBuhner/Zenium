@@ -861,10 +861,11 @@ export interface TabViewEvents {
    */
   onPagePrompt?(prompt: PagePromptRequest): 'agent' | 'user'
   /**
-   * The host answered a page dialog on an agent's tab itself – from the policy it was handed
-   * through `TabView.setDialogPolicy`, or with the default answer when no rule covered the
-   * kind (`report.byPolicy`). The core reports it to the tab's agent in its next result, in
-   * the same words every host gets. Hosts whose dialogs reach the core (`onDialog`,
+   * The host answered a page dialog on an agent's tab itself – from the kind's entry in the
+   * policy it was handed through `TabView.setDialogPolicy` (`report.rule` names the entry's
+   * rule), or with the default answer for a kind left out (`rule: 'default'`). The core
+   * reports it to the tab's agent in its next result, in the same words every host gets, and
+   * spends the `once` rule the report names. Hosts whose dialogs reach the core (`onDialog`,
    * `onLeaveSite`; `HostCapabilities.agentDialogs`) never call it: the core answers and
    * reports those itself.
    */
@@ -1244,13 +1245,17 @@ export interface TabView {
    */
   setAgentDriven?(driven: boolean): void
   /**
-   * The effective dialog policy of this page's agent (`HostCapabilities.agentDialogPolicy`):
-   * set beside `setAgentDriven` at each prepare and whenever the policy changes, `null` when
-   * no rule covers the tab (any more) or the session lets it go. A host that answers page
+   * The effective dialog policy of this page's agent for this tab
+   * (`HostCapabilities.agentDialogPolicy`): each kind's answer with the rule that supplies it
+   * (`tab` or `session`). Set beside `setAgentDriven` at each prepare and whenever the policy
+   * changes for the tab – a set or clear, a `once` rule spent, a `ttl` run out – and `null`
+   * when no rule covers the tab (any more) or the session lets it go. A host that answers page
    * dialogs itself (Android's WebChromeClient) answers from it at once and reports every
-   * answer through `TabViewEvents.onPageDialogAnswered` – the default answers too, marked
-   * as such. Hosts whose dialogs reach the core leave it out: the core answers from the
-   * policy before holding a dialog for `browser_handle_dialog`.
+   * answer through `TabViewEvents.onPageDialogAnswered` with the kind's `rule` – the default
+   * answers too, as `default`; it never spends a `once` rule itself: the core does on the
+   * report, and calls this again with what is left. Hosts whose dialogs reach the core leave
+   * it out: the core answers from the policy before holding a dialog for
+   * `browser_handle_dialog`.
    */
   setDialogPolicy?(policy: AgentDialogPolicy | null): void
   /**

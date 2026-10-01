@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AgentSettings } from '../../../shared/types'
+import type { AgentDialogAnswer, AgentDialogRuleScope, AgentSettings } from '../../../shared/types'
 import { PageDialogService } from '../../pageDialogs'
 import type { ZenWindow } from '../../window'
 import { AgentService, type AgentSession } from '../service'
@@ -845,39 +845,41 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     const { s: a } = await named(fake, 'Invoice reconciliation')
     const tab = await openTab(fake, a, 'https://billing.test')
     await policy(fake, a, { tabId: tab, confirm: 'accept' })
-    // The host got the policy for the tab's view when the agent last acted on it.
-    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({ confirm: 'accept' })
+    // The host got the policy for the tab's view when the agent last acted on it – each kind's
+    // answer with the rule that supplies it, the host's word for its reports.
+    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({
+      confirm: { answer: 'accept', rule: 'tab' }
+    })
+    // The wire: kind, the document's url, the message, a prompt's default, the answer and the
+    // rule – `default` for a kind the handed policy left out.
     fake.service.onPageDialogAnswered(tab, {
       kind: 'confirm',
       url: 'https://billing.test/pay',
       message: 'Pay now?',
-      defaultValue: '',
-      answer: 'ok',
-      byPolicy: true
+      answer: 'accept',
+      rule: 'tab'
     })
     fake.service.onPageDialogAnswered(tab, {
       kind: 'prompt',
       url: 'https://billing.test/pay',
       message: 'Amount?',
       defaultValue: '10',
-      answer: 'cancel',
-      byPolicy: false
+      answer: 'dismiss',
+      rule: 'default'
     })
     fake.service.onPageDialogAnswered(tab, {
       kind: 'beforeunload',
       url: 'https://billing.test/pay',
       message: 'Changes you made may not be saved.',
-      defaultValue: '',
       answer: 'leave',
-      byPolicy: false
+      rule: 'default'
     })
     fake.service.onPageDialogAnswered(tab, {
       kind: 'alert',
       url: 'data:text/html,hi',
       message: 'x'.repeat(600),
-      defaultValue: '',
-      answer: 'ok',
-      byPolicy: true
+      answer: 'accept',
+      rule: 'tab'
     })
     const result = await next(fake, a)
     expect(result).toContain(
@@ -894,6 +896,79 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
       `Notice: the page in tab ${tab} (the page) opened an alert: "${'x'.repeat(500)}" – answered OK by your dialog policy.`
     )
     expect(result).not.toContain('x'.repeat(501))
+  })
+
+  it("a host's report spends the once rule it names – the tab's, the session's, neither – never one the core would look up itself", async () => {
+    const fake = browser({ agentDialogs: false, agentDialogPolicy: true })
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    const standing = (): Record<string, unknown> => ({
+      own: fake.service.dialogPolicyOf(a).tabs.get(tab)?.policy ?? null,
+      all: fake.service.dialogPolicyOf(a).all?.policy ?? null,
+      view: fake.dialogPolicies.get(tab)?.at(-1)
+    })
+    const report = (rule: AgentDialogRuleScope, answer: AgentDialogAnswer = 'accept'): void =>
+      fake.service.onPageDialogAnswered(tab, {
+        kind: 'confirm',
+        url: 'https://billing.test/pay',
+        message: 'Pay now?',
+        answer,
+        rule
+      })
+    await policy(fake, a, { confirm: 'dismiss', once: true })
+    await policy(fake, a, { tabId: tab, confirm: 'accept', once: true })
+    expect(standing().view).toEqual({ confirm: { answer: 'accept', rule: 'tab' } })
+
+    // `default`: the host answered by default – nothing is spent, whatever stands.
+    report('default')
+    expect(standing()).toMatchObject({ own: { confirm: 'accept' }, all: { confirm: 'dismiss' } })
+
+    // `tab`: the tab's once rule goes and the session's stands – the core's own lookup would
+    // have found the tab's too, but it is the host's word that spends – and the view hears
+    // the policy that is left.
+    report('tab')
+    expect(standing()).toEqual({
+      own: null,
+      all: { confirm: 'dismiss' },
+      view: { confirm: { answer: 'dismiss', rule: 'session' } }
+    })
+
+    // A report of a rule the policy no longer carries spends nothing.
+    report('tab')
+    expect(standing().all).toEqual({ confirm: 'dismiss' })
+
+    // `session`: the session's once rule goes; nothing stands, and the view hears null.
+    report('session', 'dismiss')
+    expect(fake.service.dialogPolicyOf(a)).toEqual({ all: null, tabs: new Map() })
+    expect(standing().view).toBeNull()
+
+    // Every report came back as the Notice, tagged by the rule the host named.
+    const result = await next(fake, a)
+    expect(result).toContain(
+      `opened a confirm dialog: "Pay now?" – answered OK (no policy; browser_dialog_policy sets one).`
+    )
+    expect(result).toContain(
+      `opened a confirm dialog: "Pay now?" – answered OK by your dialog policy.`
+    )
+    expect(result).toContain(
+      `opened a confirm dialog: "Pay now?" – answered Cancel by your dialog policy.`
+    )
+
+    // The reverse: `session` leaves the tab's own rule alone, spends the session's kind only,
+    // and a report of a kind the session's rule no longer carries spends nothing.
+    await policy(fake, a, { confirm: 'dismiss', prompt: 'accept', once: true })
+    await policy(fake, a, { tabId: tab, confirm: 'accept', once: true })
+    report('session', 'dismiss')
+    expect(standing()).toEqual({
+      own: { confirm: 'accept' },
+      all: { prompt: 'accept' },
+      view: {
+        confirm: { answer: 'accept', rule: 'tab' },
+        prompt: { answer: 'accept', rule: 'session' }
+      }
+    })
+    report('session', 'dismiss')
+    expect(standing().all).toEqual({ prompt: 'accept' })
   })
 
   it("once spends the per-kind rule of the policy that answered; a tab's once never consumes the session's rule", async () => {
@@ -1103,8 +1178,13 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     await policy(fake, a, { confirm: 'dismiss' })
     await policy(fake, a, { tabId: tab, confirm: 'accept' })
     await policy(fake, a, { tabId: other, prompt: 'accept' })
-    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({ confirm: 'accept' })
-    expect(fake.dialogPolicies.get(other)?.at(-1)).toEqual({ confirm: 'dismiss', prompt: 'accept' })
+    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({
+      confirm: { answer: 'accept', rule: 'tab' }
+    })
+    expect(fake.dialogPolicies.get(other)?.at(-1)).toEqual({
+      confirm: { answer: 'dismiss', rule: 'session' },
+      prompt: { answer: 'accept', rule: 'tab' }
+    })
     // The user closes a tab: its own rule goes, the session-wide one stands for the rest.
     fake.user.closeTab(tab)
     expect(fake.service.dialogPolicyOf(a).tabs.has(tab)).toBe(false)

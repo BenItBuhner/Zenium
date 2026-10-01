@@ -1,6 +1,8 @@
 import type {
   AgentDialogAnswer,
   AgentDialogPolicy,
+  AgentDialogRules,
+  AgentDialogRuleScope,
   AgentInfo,
   AgentPromptKind,
   AwayAgentInfo,
@@ -33,7 +35,8 @@ import {
   describeAnsweredDialog,
   describeDialog,
   dialogSite,
-  LEAVE_SITE_MESSAGE
+  LEAVE_SITE_MESSAGE,
+  type AnsweredDialog
 } from '../pageDialogs'
 import type {
   AgentSkillsHost,
@@ -317,7 +320,7 @@ interface AgentDialog {
 
 /** One rule set of an agent's dialog policy (`browser_dialog_policy`): the session's, or one tab's. */
 export interface DialogRule {
-  policy: AgentDialogPolicy
+  policy: AgentDialogRules
   /** `clock()` time the rule expires (`ttl`), null for a standing one. */
   expiresAt: number | null
   /** Each kind's rule is spent by the first dialog it answers (`once`). */
@@ -334,7 +337,7 @@ interface DialogPolicyState {
 }
 
 /** The kinds of a dialog policy that carry a rule. */
-type DialogRuleKind = keyof AgentDialogPolicy
+type DialogRuleKind = keyof AgentDialogRules
 
 const DIALOG_RULE_KINDS: readonly DialogRuleKind[] = ['confirm', 'prompt', 'beforeunload']
 
@@ -2842,7 +2845,7 @@ export class AgentService implements SessionStore, McpHandlers {
   setDialogPolicy(
     s: AgentSession,
     tabId: string | null,
-    policy: AgentDialogPolicy,
+    policy: AgentDialogRules,
     opts: { ttlMs?: number; once?: boolean } = {}
   ): DialogRule {
     let state = this.dialogPolicies.get(s.id)
@@ -2905,32 +2908,52 @@ export class AgentService implements SessionStore, McpHandlers {
     s: AgentSession,
     tabId: string,
     kind: DialogRuleKind
-  ): { rule: DialogRule; scope: 'tab' | 'all' } | null {
+  ): { rule: DialogRule; scope: 'tab' | 'session' } | null {
     const state = this.liveDialogPolicy(s)
     if (!state) return null
     const own = state.tabs.get(tabId)
     if (own && own.policy[kind] !== undefined) return { rule: own, scope: 'tab' }
-    if (state.all && state.all.policy[kind] !== undefined) return { rule: state.all, scope: 'all' }
+    if (state.all && state.all.policy[kind] !== undefined)
+      return { rule: state.all, scope: 'session' }
     return null
   }
 
   /**
-   * The policy in force on the tab, kind by kind – its own rules over the session-wide ones –
-   * or null when no rule covers it. What a host that answers dialogs itself is handed.
+   * The policy in force on the tab, kind by kind – its own rules over the session-wide ones,
+   * each kind's answer with the scope that supplies it – or null when no rule covers it. What
+   * a host that answers dialogs itself is handed (`TabView.setDialogPolicy`).
    */
   effectiveDialogPolicy(s: AgentSession, tabId: string): AgentDialogPolicy | null {
-    const state = this.liveDialogPolicy(s)
-    if (!state) return null
-    const own = state.tabs.get(tabId)?.policy
-    const all = state.all?.policy
     const out: AgentDialogPolicy = {}
-    const confirm = own?.confirm ?? all?.confirm
+    const confirm = this.resolvedDialogRule(s, tabId, 'confirm')
     if (confirm) out.confirm = confirm
-    const prompt = own?.prompt ?? all?.prompt
+    const prompt = this.resolvedDialogRule(s, tabId, 'prompt')
     if (prompt) out.prompt = prompt
-    const beforeunload = own?.beforeunload ?? all?.beforeunload
+    const beforeunload = this.resolvedDialogRule(s, tabId, 'beforeunload')
     if (beforeunload) out.beforeunload = beforeunload
     return confirm || prompt || beforeunload ? out : null
+  }
+
+  /** One kind of the tab's effective policy: its answer and the scope that supplies it, if any. */
+  private resolvedDialogRule<K extends DialogRuleKind>(
+    s: AgentSession,
+    tabId: string,
+    kind: K
+  ): { answer: NonNullable<AgentDialogRules[K]>; rule: 'tab' | 'session' } | undefined {
+    const hit = this.dialogRuleFor(s, tabId, kind)
+    const answer = hit?.rule.policy[kind]
+    return hit && answer !== undefined ? { answer, rule: hit.scope } : undefined
+  }
+
+  /**
+   * For an alert – no rule of its own – which scope's rules stand on the tab, as its report's
+   * `rule`: the tab's own when it has any, else the session's, else none (`default`).
+   */
+  private dialogPolicyScope(s: AgentSession, tabId: string): AgentDialogRuleScope {
+    const state = this.liveDialogPolicy(s)
+    if (!state) return 'default'
+    if (state.tabs.has(tabId)) return 'tab'
+    return state.all ? 'session' : 'default'
   }
 
   /** The session's policy state with the rules whose `ttl` ran out dropped; null when nothing stands. */
@@ -3008,7 +3031,7 @@ export class AgentService implements SessionStore, McpHandlers {
   private spendDialogRule(
     s: AgentSession,
     tabId: string,
-    hit: { rule: DialogRule; scope: 'tab' | 'all' },
+    hit: { rule: DialogRule; scope: 'tab' | 'session' },
     kind: DialogRuleKind
   ): void {
     if (!hit.rule.once) return
@@ -3021,6 +3044,26 @@ export class AgentService implements SessionStore, McpHandlers {
       if (!state.all && !state.tabs.size) this.dialogPolicies.delete(s.id)
     }
     this.syncDialogPolicy(s, hit.scope === 'tab' ? tabId : null)
+  }
+
+  /**
+   * A dialog on the tab was answered by the rule `rule` names – the report's word, a host's or
+   * the core's own, never a fresh lookup (a report of a rule since replaced must not spend its
+   * successor): `tab` spends the tab's own `once` rule for the kind, `session` the
+   * session-wide one, `default` nothing; nor does a report of a kind the named rule no longer
+   * carries, or an alert, which has no rule.
+   */
+  private spendReportedRule(
+    s: AgentSession,
+    tabId: string,
+    kind: PageDialogKind,
+    rule: AgentDialogRuleScope
+  ): void {
+    if (rule === 'default' || kind === 'alert') return
+    const state = this.liveDialogPolicy(s)
+    const hit = rule === 'tab' ? state?.tabs.get(tabId) : state?.all
+    if (!hit || hit.policy[kind] === undefined) return
+    this.spendDialogRule(s, tabId, { rule: hit, scope: rule }, kind)
   }
 
   /**
@@ -3087,9 +3130,8 @@ export class AgentService implements SessionStore, McpHandlers {
     const hit = owner ? this.dialogRuleFor(owner, tabId, 'beforeunload') : null
     const stay = hit?.rule.policy.beforeunload === 'stay'
     if (stay) this.stayed.set(tabId, 'policy')
-    if (owner) {
-      if (hit) this.spendDialogRule(owner, tabId, hit, 'beforeunload')
-      this.reportAnswered(
+    if (owner)
+      this.absorbAnswered(
         owner,
         {
           tabId,
@@ -3100,9 +3142,8 @@ export class AgentService implements SessionStore, McpHandlers {
           defaultValue: ''
         },
         stay ? 'stay' : 'leave',
-        hit !== null
+        hit?.scope ?? 'default'
       )
-    }
     this.log(
       `tab ${tabId}: "${reload ? 'Reload' : 'Leave'} site?" answered ${stay ? 'stay' : 'leave'} ${hit ? 'by the policy' : 'by default'}`
     )
@@ -3111,17 +3152,13 @@ export class AgentService implements SessionStore, McpHandlers {
 
   /**
    * A host that answers page dialogs itself answered one on an agent's tab
-   * (`TabViewEvents.onPageDialogAnswered`): the agent reads it in its next result, and the
-   * `once` rule that answered is spent.
+   * (`TabViewEvents.onPageDialogAnswered`): the same path as the core's own answers – the
+   * agent reads it in its next result, and the `once` rule the report names is spent.
    */
   onPageDialogAnswered(tabId: string, report: PageDialogAnswered): void {
     const owner = this.driver(tabId)
     if (!owner) return
-    if (report.byPolicy && report.kind !== 'alert') {
-      const hit = this.dialogRuleFor(owner, tabId, report.kind)
-      if (hit) this.spendDialogRule(owner, tabId, hit, report.kind)
-    }
-    this.reportAnswered(owner, answeredDialogOf(tabId, report), report.answer, report.byPolicy)
+    this.absorbAnswered(owner, answeredDialogOf(tabId, report), report.answer, report.rule)
   }
 
   /**
@@ -3136,12 +3173,7 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!owner) return null
     const kind: PageDialogKind = dialog.kind
     if (kind === 'alert') {
-      this.reportAnswered(
-        owner,
-        dialog,
-        'ok',
-        this.effectiveDialogPolicy(owner, dialog.tabId) !== null
-      )
+      this.absorbAnswered(owner, dialog, 'accept', this.dialogPolicyScope(owner, dialog.tabId))
       return { accepted: true, value: null }
     }
     if (kind === 'beforeunload') return null
@@ -3152,32 +3184,38 @@ export class AgentService implements SessionStore, McpHandlers {
     if (kind === 'confirm') {
       const accepted = hit.rule.policy.confirm === 'accept'
       response = { accepted, value: null }
-      answer = accepted ? 'ok' : 'cancel'
+      answer = accepted ? 'accept' : 'dismiss'
     } else {
       const rule = hit.rule.policy.prompt
       if (rule === 'dismiss' || rule === undefined) {
         response = CANCELLED
-        answer = 'cancel'
+        answer = 'dismiss'
       } else {
         const text = rule === 'accept' ? dialog.defaultValue : rule.text
         response = { accepted: true, value: text }
         answer = { text }
       }
     }
-    this.spendDialogRule(owner, dialog.tabId, hit, kind)
-    this.reportAnswered(owner, dialog, answer, true)
+    this.absorbAnswered(owner, dialog, answer, hit.scope)
     return response
   }
 
-  private reportAnswered(
+  /**
+   * A dialog on one of the agent's tabs was answered without it – by the core from the policy
+   * or by default, or by a host that answers dialogs itself and reported so: the one path for
+   * both. The `once` rule the report names is spent (`spendReportedRule`), and the agent reads
+   * the answer in its next result through the one Notice builder (`describeAnsweredDialog`).
+   */
+  private absorbAnswered(
     owner: AgentSession,
-    d: Parameters<typeof describeAnsweredDialog>[0],
+    d: AnsweredDialog,
     answer: AgentDialogAnswer,
-    byPolicy: boolean
+    rule: AgentDialogRuleScope
   ): void {
-    owner.notices.push(describeAnsweredDialog(d, answer, byPolicy))
+    this.spendReportedRule(owner, d.tabId, d.kind, rule)
+    owner.notices.push(describeAnsweredDialog(d, answer, rule))
     this.log(
-      `dialog on tab ${d.tabId} (${d.kind}) answered ${typeof answer === 'object' ? 'with text' : answer} ${byPolicy ? 'by the policy' : 'by default'}`
+      `dialog on tab ${d.tabId} (${d.kind}) answered ${typeof answer === 'object' ? 'with text' : answer} ${rule === 'default' ? 'by default' : `by the ${rule}'s rule`}`
     )
   }
 
