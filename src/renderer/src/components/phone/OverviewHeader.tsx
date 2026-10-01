@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { VenetianMask } from 'lucide-react'
+import { ChevronDown, VenetianMask } from 'lucide-react'
 import type { Space } from '@shared/types'
 import type { OverviewView } from '@shared/overviewMenu'
 import { overviewTitleLabel, PRIVATE_TITLE, tabsWord } from '@renderer/lib/overviewHeader'
@@ -27,12 +27,15 @@ interface Props {
 
 /**
  * The tab overview's one header row's title (tab overview cleanup spec §1): the space's dot
- * and name with the count – "Default · 3 tabs" – start-aligned at the grid's gutter, 17/600,
- * and nothing trailing it. THE TITLE IS THE SPACE SWITCHER: a tap opens the Spaces sheet
- * (`SpacesSheet`); a horizontal drag across the grid still moves between spaces (GN-19), the
- * title following – its words cross-fade over 120 ms at the switch (§6, `TitleWords`). In the
- * private view (§3) the row reads the mask and "Private · N tabs" and is no control: the private
- * session is one across the spaces.
+ * and name with the count – "Default · 3 tabs" – start-aligned at the grid's gutter, 17/600.
+ * THE TITLE IS THE SPACE SWITCHER: a tap opens the Spaces sheet (`SpacesSheet`); a horizontal
+ * drag across the grid still moves between spaces (GN-19), the title following – its words
+ * cross-fade over 120 ms at the switch (§6, `TitleWords`). Its one mark that it is a control
+ * is a 16 chevron-down after its text, 4 past the count at the window's 69 % ink (the count's),
+ * out of the accessibility tree, turning over the state change's 120 ms while the sheet stands
+ * (`.zen-overview-title-chevron` in main.css, keyed to `aria-expanded`); nothing else trails
+ * the title. In the private view (§3) the row reads the mask and "Private · N tabs" and is no
+ * control, so it carries no chevron: the private session is one across the spaces.
  *
  * Under TalkBack the control is one stop named "Default, 3 tabs" (`overviewTitleLabel`: the
  * typographic dot is not read), a dialog popping up; the words inside are its face.
@@ -48,7 +51,7 @@ export function OverviewTitle({
   if (view === 'private') {
     return (
       <div
-        className="flex h-11 min-w-0 items-center gap-2.5"
+        className="flex h-11 min-w-0 items-center"
         role="heading"
         aria-level={2}
         aria-label={overviewTitleLabel(PRIVATE_TITLE, count)}
@@ -64,7 +67,7 @@ export function OverviewTitle({
     <button
       type="button"
       // The glyph stays at the gutter: the press tint reaches 8 px past it (`-ml-2 pl-2`).
-      className="zen-overview-title -ml-2 flex h-11 min-w-0 items-center gap-2.5 rounded-[10px] pl-2 pr-2.5"
+      className="zen-overview-title -ml-2 flex h-11 min-w-0 items-center rounded-[10px] pl-2 pr-2.5"
       aria-label={overviewTitleLabel(space.name, count)}
       aria-haspopup="dialog"
       aria-expanded={spacesOpen}
@@ -74,6 +77,12 @@ export function OverviewTitle({
     >
       <SpaceGlyph icon={space.icon} size={20} dotColor={dotColor} />
       <TitleWords title={space.name} count={count} switchKey={space.id} />
+      <ChevronDown
+        className="zen-overview-title-chevron ml-1 h-4 w-4 shrink-0"
+        strokeWidth={1.75}
+        aria-hidden
+        data-testid="overview-title-chevron"
+      />
     </button>
   )
 }
@@ -120,7 +129,8 @@ function TitleWords({
     return () => clearTimeout(timer)
   }, [still])
   return (
-    <span className="relative flex min-w-0">
+    // The 10 from the glyph is the words' own: the chevron after them keeps its 4 (§1).
+    <span className="relative ml-2.5 flex min-w-0">
       <Words title={title} count={count} />
       {still && (
         <span

@@ -10487,12 +10487,25 @@
  * fading out over 120 ms (§6: the title cross-fades, opacity alone), the new words beneath from
  * the first frame; the still takes no touch. Reduced motion keeps the fade (§11.3: a change in
  * place on a window strip, §11.4).
+ *
+ * The title's one mark that it is a control (§1): a 16 chevron-down after the count, in the
+ * window's 69 % ink as the count is, turned over while the Spaces sheet stands – the button's
+ * `aria-expanded` – on the state change's 120 ms. The turn is a move, not a fade: under reduced
+ * motion the global remover at the foot of this sheet takes the transition and the chevron cuts
+ * (§11.3). The private view's heading, no control, draws none.
  */
 .zen-overview-title {
   transition: background 120ms var(--zen-ease);
 }
 .zen-overview-title:active {
   background: var(--v2-control-fill);
+}
+.zen-overview-title-chevron {
+  color: var(--zen-muted);
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-overview-title[aria-expanded='true'] > .zen-overview-title-chevron {
+  transform: rotate(180deg);
 }
 .zen-overview-title-still {
   animation: zen-fade-out 120ms var(--zen-ease) forwards;

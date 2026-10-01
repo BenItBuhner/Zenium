@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -24,10 +26,11 @@ import { PANE_FADE_MS } from '../PaneSlot'
 
 /*
  * The tab overview's one header row (tab overview cleanup spec §1, §3): the space's dot and
- * name with the count – "Default · 3 tabs" – and nothing trailing it; THE TITLE IS THE SPACE
- * SWITCHER (a button, a dialog popping up, named without the typographic dot for TalkBack);
- * in the private view the mask and "Private · N tabs", no control. And the count's words: the
- * cards the regular grid shows – Essentials, pinned, regular; never a private one (TAB-02).
+ * name with the count – "Default · 3 tabs" – and after them the control's one mark, a 16
+ * chevron; THE TITLE IS THE SPACE SWITCHER (a button, a dialog popping up, named without the
+ * typographic dot for TalkBack); in the private view the mask and "Private · N tabs", no
+ * control and no chevron. And the count's words: the cards the regular grid shows –
+ * Essentials, pinned, regular; never a private one (TAB-02).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -95,6 +98,9 @@ afterEach(() => {
 
 const q = <T extends HTMLElement>(selector: string): T | null => document.querySelector<T>(selector)
 
+/** The title's one mark that it is a control (§1): the chevron after the count. */
+const CHEVRON = '[data-testid="overview-title-chevron"]'
+
 describe('the header’s words (§1, §3)', () => {
   it('counts the regular grid’s cards – Essentials, pinned, regular – and never a private tab', () => {
     const regular = [tab('a', 'work'), tab('b', 'work', { pinned: true })]
@@ -161,6 +167,55 @@ describe('the title control (§1)', () => {
     expect(title.getAttribute('aria-expanded')).toBe('true')
   })
 
+  it('carries one mark that it is a control: a 16 chevron after the count, 4 past it, out of the tree, turned while the sheet stands (§1)', () => {
+    const work = space('work', 'Default', [])
+    render(
+      <OverviewTitle
+        view="tabs"
+        space={work}
+        count={3}
+        spacesOpen={false}
+        onOpenSpaces={() => undefined}
+      />
+    )
+    const title = q<HTMLButtonElement>(`[data-testid="${OVERVIEW_TITLE_TESTID}"]`)!
+    const chevron = title.querySelector<SVGElement>(CHEVRON)!
+    expect(chevron).not.toBeNull()
+    // The last thing in the button, after the words; TalkBack reads the label alone.
+    expect(title.lastElementChild).toBe(chevron)
+    expect(chevron.getAttribute('aria-hidden')).toBe('true')
+    expect(chevron.classList.contains('zen-overview-title-chevron')).toBe(true)
+    // 16 px, with its 4 of its own: the words carry the glyph's 10, the button no gap.
+    expect(chevron.classList.contains('h-4')).toBe(true)
+    expect(chevron.classList.contains('w-4')).toBe(true)
+    expect(chevron.classList.contains('ml-1')).toBe(true)
+    expect(title.className.split(/\s+/)).not.toContain('gap-2.5')
+    expect(chevron.previousElementSibling!.classList.contains('ml-2.5')).toBe(true)
+    // The turn is the stylesheet's, keyed to the button's `aria-expanded`: 180° over the state
+    // change's 120 ms in the window's 69 % ink, and no rule shortens it under reduced motion
+    // (the global remover cuts it, `reducedMotion.test.ts`).
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const rest = css.match(/\.zen-overview-title-chevron \{([^}]*)\}/)![1]!
+    expect(rest).toMatch(/color: var\(--zen-muted\);/)
+    expect(rest).toMatch(/transition: transform 120ms var\(--zen-ease\);/)
+    const turned = css.match(
+      /\.zen-overview-title\[aria-expanded='true'\] > \.zen-overview-title-chevron \{([^}]*)\}/
+    )![1]!
+    expect(turned).toMatch(/transform: rotate\(180deg\);/)
+    expect(css).not.toMatch(/prefers-reduced-motion[^}]*\.zen-overview-title-chevron/)
+    render(
+      <OverviewTitle
+        view="tabs"
+        space={work}
+        count={3}
+        spacesOpen
+        onOpenSpaces={() => undefined}
+      />
+    )
+    expect(title.getAttribute('aria-expanded')).toBe('true')
+    expect(title.querySelector(CHEVRON)).toBe(chevron)
+  })
+
   it('in the private view reads the mask and "Private · N tabs" and is no control (§3)', () => {
     const work = space('work', 'Default', [])
     render(
@@ -180,6 +235,9 @@ describe('the title control (§1)', () => {
     expect(title.textContent?.replace(/\s+/g, ' ').trim()).toBe('Private · 1 tab')
     expect(title.querySelector('svg')).not.toBeNull()
     expect(document.querySelectorAll('button')).toHaveLength(0)
+    // No control, so none of the control's mark: the mask is the heading's one glyph.
+    expect(title.querySelector(CHEVRON)).toBeNull()
+    expect(title.querySelectorAll('svg')).toHaveLength(1)
   })
 })
 
