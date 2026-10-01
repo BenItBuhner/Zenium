@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useLayoutEffect, useMemo } from 'react'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import { isBandPageUrl, setBandFrame } from '@renderer/lib/band'
 import { bandSeat, movePage, seatBand } from '@renderer/lib/pageBand'
@@ -73,10 +73,10 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
   useLayoutEffect(() => {
     setBandFrame({ front, scene, ok, offers, covered })
   }, [front, scene, ok, offers, covered])
-  const host = useMemo<BandHost>(() => {
-    /** A `depart` was heard and no `rest` yet: the frames are a travel's, not a drag's. */
-    let travelling = false
-    return {
+  /** A `depart` was heard and no `rest` yet: the frames are a travel's, not a drag's. */
+  const travelling = useRef(false)
+  const host = useMemo<BandHost>(
+    () => ({
       translate: (x) => {
         // A frame below the seat with no travel announced is a drag's: the band is unseated
         // for it – the one relayout the drag costs, the page full-frame and moved by the offset
@@ -84,18 +84,19 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
         // seated and baring a strip. A frame at or past the seat (a drag pulling the band down
         // to its rest) leaves the seat as it is; a travel's frames below it (a spring's
         // undershoot) were seated for by `depart`.
-        if (!travelling && x < bandSeat()) seatBand(0)
+        if (!travelling.current && x < bandSeat()) seatBand(0)
         movePage(x)
       },
       rest: (height) => {
-        travelling = false
+        travelling.current = false
         seatBand(height)
       },
       depart: (to) => {
-        travelling = true
+        travelling.current = true
         seatBand(Math.min(bandSeat(), to))
       }
-    }
-  }, [])
+    }),
+    []
+  )
   return <PageEdgeBand host={host} />
 }
