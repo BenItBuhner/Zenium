@@ -19,8 +19,8 @@ import {
   type DropTargetState
 } from '@renderer/lib/gestures/dropTarget'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
-import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
-import { LIFT_SCALE } from '@renderer/lib/motion/tokens'
+import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { LIFT_SCALE, SPRING_FOLLOW } from '@renderer/lib/motion/tokens'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { createStore } from '@renderer/lib/store'
 import { CardSwipe } from './cardSwipe'
@@ -35,17 +35,10 @@ const AUTOSCROLL_ZONE = 56
 const MENU_DELAY_MS = 250
 const AUTOSCROLL_SPEED = 14
 
-/**
- * The ghost tracks the finger closely but not rigidly: a firm spring with a little give. Let go,
- * it glides home on the grid's own `SPRING_SNAPPY` from the velocity it had (v2 §11.4).
- */
-const SPRING_FOLLOW: SpringConfig = {
-  stiffness: 640,
-  damping: 46,
-  mass: 1,
-  restDelta: 0.3,
-  restSpeed: 6
-}
+// The ghost tracks the finger on §1's follow spring (`SPRING_FOLLOW`, the tokens': a hair of
+// lag and weight, no rubbery drag). Let go, it glides home on the grid's own `SPRING_SNAPPY`
+// from the velocity it had (v2 §11.4).
+
 /** The card in the hand is drawn at the lift's scale (v2 §11.4, `LIFT_SCALE`); over a merge target it tucks in further. */
 const TUCK_SCALE = 0.84
 

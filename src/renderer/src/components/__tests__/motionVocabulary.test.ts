@@ -13,7 +13,7 @@ import {
 /*
  * One motion vocabulary (motion-and-interaction-spec §1, W8-M1): every duration, spring and
  * curve a surface moves by is one of `lib/motion/tokens.ts`'s – `MOTION_STATE_MS` 120,
- * `MOTION_POP_MS` 180, `MOTION_MESSAGE_MS` 200, `MOTION_CAP_MS` 300, the two springs, the one
+ * `MOTION_POP_MS` 180, `MOTION_MESSAGE_MS` 200, `MOTION_CAP_MS` 300, the three springs, the one
  * curve – never a number written in the component. Pinned the way the tooltip vocabulary is
  * (`tooltipVocabulary.test.tsx`): the chrome's sources under `components/**` and `lib/motion/**`
  * are walked as syntax trees for a literal in a motion's seat, and the ones left are listed here
@@ -36,7 +36,7 @@ import {
  *             wait under a second paces a motion; longer is a clock with a token of its own
  *             (`TOAST_DURATION`, `TOAST_UNDO_MS`, `BAND_CLOCK_MS`).
  *   spring    an object literal written with a numeric `stiffness` or `damping` – a spring that
- *             is neither `SPRING_SNAPPY` nor `SPRING_GENTLE` nor spread from one.
+ *             is none of `SPRING_SNAPPY`, `SPRING_GENTLE`, `SPRING_FOLLOW`, nor spread from one.
  *
  * Out of the walk: `__tests__`, `lib/motion/tokens.ts` (the owner) and `lib/motion/spring.ts`
  * (`SPRING_STEP_CLAMP_MS`'s owner, re-exported by the tokens). The stylesheet's own `120ms` /
@@ -84,11 +84,10 @@ const LEFT: Record<string, { count: number; why: string }> = {
     count: 1,
     why: 'a row’s 220 ms step between slots; the spring or the token for it is the lead’s call'
   },
-  // The ghost card's follow spring (k 640, c 46) and its scale spring (k 520, c 34): firmer
-  // than `SPRING_SNAPPY`, so the ghost tracks the finger; §1 names no follow spring.
+  // The ghost card's scale spring (k 520, c 34); its follow spring is `SPRING_FOLLOW` now.
   'components/phone/useCardLift.ts': {
-    count: 2,
-    why: 'the lifted card’s follow and scale springs; §1 has no follow spring – the lead’s call (Android’s card lift)'
+    count: 1,
+    why: 'the lifted card’s scale spring; §1’s lift is a MOTION_STATE_MS rise – the lead’s call (Android’s card lift)'
   },
   // Tailwind arbitrary values (`duration-[120ms]`) in class strings, which cannot read a TS
   // token: a `--zen-motion-state` custom property in main.css is the follow-up.
