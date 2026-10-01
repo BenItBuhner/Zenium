@@ -71,6 +71,19 @@ describe('urlFilter anchors', () => {
     expect(urlFilterToRegExpSource('a|b')).toBe('a\\|b')
     expect(urlFilterToRegExpSource('|a|b|')).toBe('^a\\|b$')
   })
+
+  it('rewrites every character of the body by the one table: metacharacters escaped, * and ^ translated, the rest as it is', () => {
+    expect(urlFilterToRegExpSource('.+?${}()[]\\/|x')).toBe(
+      '\\.\\+\\?\\$\\{\\}\\(\\)\\[\\]\\\\\\/\\|x'
+    )
+    expect(urlFilterToRegExpSource('a*b^c')).toBe('a.*b(?:[^a-zA-Z0-9_\\-.%]|$)c')
+    expect(urlFilterToRegExpSource('ünï-_%日本😀 ')).toBe('ünï-_%日本😀 ')
+    expect(urlFilterToRegExpSource('||ads.example^*/t?id=*|')).toBe(
+      '^[a-zA-Z][a-zA-Z0-9+.\\-]*://(?:[^/?#]*\\.)?ads\\.example(?:[^a-zA-Z0-9_\\-.%]|$).*\\/t\\?id=.*$'
+    )
+    expect(urlFilterToRegExpSource('')).toBe('')
+    expect(urlFilterToRegExpSource('||')).toBe('^[a-zA-Z][a-zA-Z0-9+.\\-]*://(?:[^/?#]*\\.)?')
+  })
 })
 
 describe('regexFilter', () => {

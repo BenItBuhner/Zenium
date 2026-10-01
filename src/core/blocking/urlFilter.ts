@@ -12,9 +12,15 @@ const HOSTNAME_ANCHOR = '^[a-zA-Z][a-zA-Z0-9+.\\-]*://(?:[^/?#]*\\.)?'
 /**
  * Everything that is not `*` or `^` is literal in a `urlFilter`, including a `|` that is neither
  * the first nor the last character (Chromium's `UrlPattern` only reads anchors at the ends).
+ * The characters a pattern's body rewrites, in one pass: the wildcard, the separator, and the
+ * regular expression's own metacharacters escaped; every other character is copied as it is.
  */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.+?${}()[\]\\/|]/g, '\\$&')
+const PATTERN_CHAR_RE = /[.+?${}()[\]\\/|*^]/g
+
+function patternChar(ch: string): string {
+  if (ch === '*') return '.*'
+  if (ch === '^') return SEPARATOR
+  return `\\${ch}`
 }
 
 /**
@@ -36,13 +42,7 @@ export function urlFilterToRegExpSource(filter: string): string {
     suffix = '$'
     body = body.slice(0, -1)
   }
-  let out = ''
-  for (const ch of body) {
-    if (ch === '*') out += '.*'
-    else if (ch === '^') out += SEPARATOR
-    else out += escapeRegExp(ch)
-  }
-  return prefix + out + suffix
+  return prefix + body.replace(PATTERN_CHAR_RE, patternChar) + suffix
 }
 
 /**
