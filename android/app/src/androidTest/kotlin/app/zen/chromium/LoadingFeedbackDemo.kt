@@ -427,13 +427,13 @@ class LoadingFeedbackDemo : DemoHarness("loading-demo-state.json", "loading-$THE
                     "window.__rm = c ? c.style.transform + ' @ ' + c.style.opacity : 'none' }, 40))"
             )
             SystemClock.sleep(1_300)
-            shot("18-reduced-toast")
+            shot("21-reduced-toast")
             val appearing = chromeJs("window.__rm === null ? '' : window.__rm").let { (JSONTokener(it).nextValue() as? String).orEmpty() }
             finding("  the card 40 ms in: $appearing; in its slot, fading in ${verdict(appearing.contains("translate3d(0.00px, 0.00px") && !appearing.endsWith("@ "))}")
             startSampling()
             navigate("$ORIGIN/slow")
             SystemClock.sleep(1_800)
-            shot("19-reduced-load-bar")
+            shot("22-reduced-load-bar")
             awaitLoaded("$ORIGIN/slow", 15_000)
             SystemClock.sleep(1_200)
             val run = Samples(stopSampling())
