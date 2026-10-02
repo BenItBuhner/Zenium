@@ -3156,11 +3156,16 @@ export class AgentService implements SessionStore, McpHandlers {
   /**
    * A host that answers page dialogs itself answered one on an agent's tab
    * (`TabViewEvents.onPageDialogAnswered`): the same path as the core's own answers – the
-   * agent reads it in its next result, and the `once` rule the report names is spent.
+   * agent reads it in its next result, and the `once` rule the report names is spent. A
+   * reported "Leave site?" `stay` is the navigating call's reading too (`takeStayed`), as the
+   * core's own stay is (`onLeaveSite`): the host answers the moment the page objects, so the
+   * report lands while the call waits on the load; one that lands after the call returned is
+   * dropped by the next `prepare`, and the agent reads the Notice alone.
    */
   onPageDialogAnswered(tabId: string, report: PageDialogAnswered): void {
     const owner = this.driver(tabId)
     if (!owner) return
+    if (report.kind === 'beforeunload' && report.answer === 'stay') this.stayed.set(tabId, 'policy')
     this.absorbAnswered(owner, answeredDialogOf(tabId, report), report.answer, report.rule)
   }
 
