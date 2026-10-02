@@ -1,0 +1,9 @@
+{
+  "id": "overview-cleanup",
+  "class": "OverviewCleanupDemo",
+  "shard": "phone-g",
+  "mirrors": "android-overview-demo.yml",
+  "dir": "overview-cleanup-demo",
+  "estimate": 8,
+  "note": "The tab overview after the cleanup spec (docs/tab-overview-cleanup-spec.md §1–§6), the device record the design gate reads, on the overview demo's profile: the one header row with the title alone (56 tall; no Spaces button, search toggle, ⋯ of its own or segment row), the title as the space switcher (the Spaces sheet, a pick, the GN-19 swipe between spaces), a group as one card in its place (fold, unfold, its header's ⋯ sheet), the bar's ⋯ as the overview's menu with §4's rows in order, Search Tabs as a row (the field under the header, the X clearing then closing), the private view (New Private Tab, the view's menu, back, the row switches, Close Private Tabs' prompt with back as Cancel) and the select-tabs mode (a pick, the action row, the selection menu, Select all, Done) – stills in both colour schemes. On phone-g, the shard opened for the overflow and the home of inactive-tabs, the overview's other driver (47 of 68 minutes before it; phone-e, the brief's first choice, stood at 61 once text-fragment landed); without an order, so it runs last by its id. On this shard's WebView (the image's own, no profiles) capabilities.privateTabs is off: the menu is pinned without its New Private Tab row and the private-view step is skipped as a line in the findings, no failure – its §3 claims ran for the gate through the private security demo's environment (the Chromium snapshot WebView), where the capability is on."
+}

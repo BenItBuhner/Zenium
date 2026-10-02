@@ -1135,9 +1135,8 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         /** How far over its viewport the second short page runs: under the bar's travel (50 CSS px) with room. */
         private const val OVER_PX = 30
         private const val TAB_ID = "tab_long"
-        /** The bar's tab-count button (`Tabs (1)`), and the overview's header button that says it is up. */
+        /** The bar's tab-count button (`Tabs (1)`); the overview's presence is its landmark (`awaitOverview`). */
         private const val TABS_LABEL = "Tabs ("
-        private const val OVERVIEW_LABEL = "Spaces"
         private const val MUTE_ROW = "Mute Tab"
         private const val UNMUTE_ROW = "Unmute Tab"
         private const val HIDE_ROW = "Hide toolbar when scrolling"

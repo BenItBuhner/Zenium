@@ -333,3 +333,60 @@ describe('ElectronShortcuts on macOS', () => {
     expect(h.confirmed).toHaveLength(20)
   })
 })
+
+/*
+ * The dialog's "Open as window" (W8-M3b): off, the launcher runs `zenium <url>` – the bare URL
+ * the running copy's second-instance path opens as a tab – instead of `--app=<url>`; on, or
+ * with no word of it (the pill's popover installs an app), `--app=` as ever.
+ */
+describe('ElectronShortcuts with "Open as window" off', () => {
+  const TAB_SHORTCUT: ShortcutRequest = { ...REQUEST, openAsWindow: false }
+
+  it('Linux: the Exec line carries the bare URL', async () => {
+    const host = h.host('linux')
+    expect(await host.pin(TAB_SHORTCUT)).toBe(true)
+    const slug = appSlug(REQUEST.id)
+    const text = readFileSync(join(h.paths.applications, `zenium-webapp-${slug}.desktop`), 'utf8')
+    expect(text).toContain(`Exec="/opt/Zenium/zenium" "${REQUEST.url}"\n`)
+    expect(text).not.toContain('--app=')
+    expect(h.confirmed).toEqual([
+      { id: REQUEST.id, icon: `file://${join(h.profile, slug, 'icon.png')}` }
+    ])
+  })
+
+  it('Windows: the .lnk runs the bare URL and lands in the browser’s taskbar group, not the app’s own', async () => {
+    const host = h.host('win32')
+    expect(await host.pin(TAB_SHORTCUT)).toBe(true)
+    expect(written).toHaveLength(2)
+    for (const { options } of written) {
+      expect(options.target).toBe('C:\\Program Files\\Zenium\\zenium.exe')
+      expect(options.args).toBe(REQUEST.url)
+      expect(options.appUserModelId).toBe('io.github.benitbuhner.zenium')
+    }
+  })
+
+  it('macOS: the bundle’s script runs the bare URL', async () => {
+    const host = h.host('darwin')
+    expect(await host.pin(TAB_SHORTCUT)).toBe(true)
+    const bundle = join(h.paths.userApplications, LAUNCHER_FOLDER, 'Sketch Studio.app')
+    const script = readFileSync(join(bundle, 'Contents', 'MacOS', 'app'), 'utf8')
+    expect(script).toBe(`#!/bin/sh\nexec '/opt/Zenium/zenium' '${REQUEST.url}'\n`)
+  })
+
+  it('on, or unsaid, the launcher runs --app= as it always did', async () => {
+    const host = h.host('linux')
+    const slug = appSlug(REQUEST.id)
+    const entry = join(h.paths.applications, `zenium-webapp-${slug}.desktop`)
+    await host.pin({ ...REQUEST, openAsWindow: true })
+    expect(readFileSync(entry, 'utf8')).toContain(
+      `Exec="/opt/Zenium/zenium" "--app=${REQUEST.url}"\n`
+    )
+    // A reinstall without the box (the popover) puts the window launcher back.
+    await host.pin(TAB_SHORTCUT)
+    expect(readFileSync(entry, 'utf8')).toContain(`Exec="/opt/Zenium/zenium" "${REQUEST.url}"\n`)
+    await host.pin(REQUEST)
+    expect(readFileSync(entry, 'utf8')).toContain(
+      `Exec="/opt/Zenium/zenium" "--app=${REQUEST.url}"\n`
+    )
+  })
+})

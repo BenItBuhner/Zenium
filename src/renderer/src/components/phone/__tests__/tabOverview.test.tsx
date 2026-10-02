@@ -6,6 +6,7 @@ import { act, createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { BLANK_URL, SETTINGS_URL } from '@shared/url'
+import { MOTION_MESSAGE_MS, MOTION_POP_MS, MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 
 /*
  * The phone tab overview rendered for real: (A) every kind of card the grid draws – a pinned
@@ -30,8 +31,10 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { NEW_TAB_CELL, TabOverview } = await import('../TabOverview')
 const { activeLiftPointer, cancelLift, liftStore } = await import('../useCardLift')
-const { privateTabsStore, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { pickOverviewPane, privateTabsStore, resetOverviewPane } =
+  await import('@renderer/lib/privateTabs')
 const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
+const { dispatchOverviewCommand } = await import('@renderer/lib/overviewCommands')
 const { BAR_ITEMS, barContext, tabCount } = await import('../barItems')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
@@ -139,7 +142,7 @@ const AREA = { x: 0, y: 0, width: 220, height: 600 }
  * loose cards below, the New Tab card last.
  */
 const GRID = 'grid'
-/** The pane's slot (the strip and the grid or the empty note), under the header and the segment. */
+/** The view's slot (the strip and the grid or the empty note), under the one header row. */
 const SLOT = 'slot'
 const DEFAULT_LAYOUT: Array<[string, DOMRect]> = [
   [GRID, new DOMRect(0, 0, 220, 600)],
@@ -537,6 +540,12 @@ describe('the card and group menus', () => {
       'Close Other Tabs (3)',
       'Close Tab'
     ])
+    // The closes stand last in the danger ink after the one hairline (the cleanup spec §4: the
+    // one form for every sheet here, the ⋯ sheet's before Close All Tabs).
+    const seps = document.querySelectorAll('.zen-sheet .zen-sheet-sep')
+    expect(seps).toHaveLength(1)
+    expect(seps[0]!.getAttribute('aria-hidden')).toBe('true')
+    expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Close Other Tabs (3)')
   })
 
   it("a held member's rows offer the move out of its group in Title Case", () => {
@@ -634,9 +643,10 @@ describe('the card and group menus', () => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
     act(() => settleSprings())
+    // The cleanup spec's §2 rows, in its order: no Collapse (a tap on the header folds the group).
     expect(sheetLabels()).toEqual([
       'Rename',
-      'Collapse',
+      'New Tab in Group',
       'Ungroup',
       'Close Group (2 Tabs)',
       'Delete Group'
@@ -847,6 +857,51 @@ describe('a card dragged out of its group', () => {
     expect(commands()).toEqual([])
     act(() => settleSprings())
     expect(liftStore.get().phase).toBe('idle')
+  })
+})
+
+// --- the card in the hand: compositor-only (motion spec §0.4) -------------------------------------
+
+describe('the card in the hand', () => {
+  const seat = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-overview-ghost-seat')!
+  const card = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-overview-ghost')!
+
+  it('follows by a translate on its seat and scales on the card inside: no left/top, no frame of layout', () => {
+    render(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')]))
+    pickUp('a')
+    act(() => settleSprings())
+    const origin = liftStore.get().ghost!
+    // The seat is the fixed, sized element and carries the follow alone.
+    expect(seat().contains(card())).toBe(true)
+    expect(seat().style.transform).toBe(`translate(${origin.x}px, ${origin.y}px)`)
+    expect(seat().style.width).toBe(`${origin.width}px`)
+    expect(seat().style.height).toBe(`${origin.height}px`)
+    expect(seat().style.left).toBe('')
+    expect(seat().style.top).toBe('')
+    // The card carries the lift's scale alone – the 120 ms transition is its – and no position.
+    expect(card().style.transform).toBe('scale(1.02)')
+    expect(card().style.left).toBe('')
+    expect(card().style.top).toBe('')
+    expect(card().style.width).toBe('')
+    expect(card().style.height).toBe('')
+    expect(card().classList.contains('zen-overview-card')).toBe(true)
+    // The card keeps the hooks the stylesheet and the drivers read.
+    expect(card().dataset.active).toBe('true')
+
+    // A drag moves the seat's translate and nothing else on either element.
+    const from = at('a', 0.5, 0.5)
+    drag(from.x + 40, from.y + 60)
+    act(() => settleSprings())
+    const moved = liftStore.get().ghost!
+    expect(moved).toMatchObject({ x: origin.x + 40, y: origin.y + 60 })
+    expect(seat().style.transform).toBe(`translate(${moved.x}px, ${moved.y}px)`)
+    expect(seat().style.left).toBe('')
+    expect(seat().style.top).toBe('')
+    expect(card().style.transform).toBe('scale(1.02)')
+    expect(Array.from(card().style)).toEqual(['transform'])
+    expect(Array.from(seat().style).sort()).toEqual(['height', 'transform', 'width'])
+    letGo(from.x + 40, from.y + 60)
+    act(() => settleSprings())
   })
 })
 
@@ -1583,7 +1638,7 @@ describe('a group whose every card goes', () => {
     const group = cellOf(`group:${GROUP}`)
     const a = cellOf('a')
     const b = cellOf('b')
-    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-search-toggle"]')!.click())
+    act(() => dispatchOverviewCommand('search-tabs'))
     // "test" is in a's and b's addresses and not in m1's: the group's one card is dropped, and
     // the group with it – one exit, m1 drawn inside it, none of m1's own; the New Tab card's
     // beside it (§9.34). The grid re-lays out without them.
@@ -1676,7 +1731,7 @@ describe('a group whose every card goes', () => {
     const loose = [tab('a', 'https://alpha.test/'), tab('b', 'https://beta.test/')]
     bodyHeights.set(`group:${GROUP}`, bodyOf(1))
     render(stateOf([m1, m2, ...loose]))
-    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-search-toggle"]')!.click())
+    act(() => dispatchOverviewCommand('search-tabs'))
     place(`group:${GROUP}`, 0, 0, 100, groupOf(1))
     place('m2', 6, ROW_1)
     place('a', 110, 0)
@@ -2053,7 +2108,7 @@ describe('under reduced motion', () => {
 describe('the private pane', () => {
   const privateTab = (id: string, url: string, patch: Partial<Tab> = {}): Tab =>
     tab(id, url, { containerId: PRIVATE_CONTAINER_ID, ...patch })
-  /** The same state on a host with private tabs (the Android host): the segment shows. */
+  /** The same state on a host with private tabs (the Android host): the private view exists. */
   const withPrivate = (state: UIState): UIState => ({
     ...state,
     capabilities: { ...state.capabilities, privateTabs: true }
@@ -2072,10 +2127,11 @@ describe('the private pane', () => {
       )
     )
   const cellKeys = (): string[] => [...collectCells(grid()).keys()]
-  const segment = (pane: 'tabs' | 'private'): HTMLElement =>
-    host!.querySelector<HTMLElement>(`[data-testid="overview-pane-${pane}"]`)!
-  const selected = (pane: 'tabs' | 'private'): boolean =>
-    segment(pane).getAttribute('aria-selected') === 'true'
+  /** The one header row's title: the view it stands for (`data-view`), its words for TalkBack. */
+  const title = (): HTMLElement =>
+    host!.querySelector<HTMLElement>('[data-testid="overview-title"]')!
+  const view = (): string | undefined => title().dataset.view
+  const titleLabel = (): string | null => title().getAttribute('aria-label')
   const countShown = (): string =>
     host!.querySelector<HTMLElement>('[data-testid="overview-count"]')!.textContent!
   /** The `zen-new-tab` requests the overview makes while `during` runs: their details. */
@@ -2094,23 +2150,22 @@ describe('the private pane', () => {
     act(() => resetOverviewPane())
   })
 
-  it('a host without private tabs has no Private segment, and a private card never reaches its grid', () => {
+  it('a host without private tabs has no private view – a pick of it is ignored – and a private card never reaches its grid', () => {
     render(stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], []))
-    // The segment stays for the Groups pane (TAB-16); the Private pane alone needs the host's say.
-    expect([...host!.querySelectorAll('[role="tab"]')].map((b) => b.textContent)).toEqual([
-      'Tabs',
-      'Groups'
-    ])
-    // The list's name names the segments present, no more.
-    const tablist = (): string | null =>
-      host!.querySelector('[role="tablist"]')!.getAttribute('aria-label')
-    expect(tablist()).toBe('Tabs and groups')
+    // The one header row (§1): the space's title over the regular grid, no segment row anywhere.
+    expect(host!.querySelector('[role="tablist"]')).toBeNull()
+    expect(view()).toBe('tabs')
+    expect(titleLabel()).toBe('Work, 1 tab')
+    expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+    // The private view alone needs the host's say: picked on a host without it, nothing moves.
+    act(() => pickOverviewPane('private'))
+    expect(view()).toBe('tabs')
     expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
     render(mixed())
-    expect(tablist()).toBe('Tabs, groups and private tabs')
+    expect(view()).toBe('private')
   })
 
-  it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill is named on no regular surface of the overview – not a card’s sheet, not the Groups pane, not its count', () => {
+  it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill is named on no regular surface of the overview – not a card’s sheet, not a group card, not its count', () => {
     // Ghost: a PRIVATE group (private tabs alone, nothing saved), made on the tablet's sidebar;
     // Research: a regular group. The space holds the private tabs among the regular ones.
     const ghost: Folder = { ...folder, id: 'ghost', name: 'Ghost', color: 'red' }
@@ -2140,41 +2195,38 @@ describe('the private pane', () => {
     expect(sheetLabels()).toContain('Add to Research')
     expect(sheetLabels().some((label) => label?.includes('Ghost'))).toBe(false)
     expect(document.body.textContent).not.toContain('Ghost')
-    // The Groups pane: Research's row alone, one group counted, Ghost's name nowhere.
-    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-pane-groups"]')!.click())
-    expect(countShown()).toBe('1 group')
-    expect(
-      [...host!.querySelectorAll<HTMLElement>('.zen-list-title')].map((el) => el.textContent)
-    ).toEqual(['Research'])
+    // The grid's group cards (§2): Research's alone – Ghost is no card, saved or open, and its
+    // name is in no attribute of the overview's.
+    expect(host!.querySelectorAll('[data-testid="saved-group-card"]').length).toBe(0)
     expect(host!.textContent).not.toContain('Ghost')
     expect(host!.innerHTML).not.toContain('Ghost')
   })
 
   it('the regular pane shows the space without its private tabs; the private pane every private tab and no regular one', () => {
     render(mixed())
-    expect(selected('tabs')).toBe(true)
+    expect(view()).toBe('tabs')
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
     expect(countShown()).toBe('2 tabs')
     expect(grid().dataset.pane).toBe('tabs')
     const regularGrid = grid()
 
-    // The segment switches panes: the private grid is a fresh one (it fades in over the backdrop).
-    act(() => segment('private').click())
+    // The ⋯ menu's Private Tabs row picks the view (§3): the private grid is a fresh one (it
+    // fades in over the backdrop), the title the mask heading "Private · 2 tabs".
+    act(() => pickOverviewPane('private'))
     expect(privateTabsStore.get().pane).toBe('private')
-    expect(selected('private')).toBe(true)
-    expect(selected('tabs')).toBe(false)
+    expect(view()).toBe('private')
     expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
     expect(countShown()).toBe('2 tabs')
     expect(grid().dataset.pane).toBe('private')
     expect(grid()).not.toBe(regularGrid)
-    expect(host!.querySelector('.zen-title')!.textContent).toBe('Private')
+    expect(titleLabel()).toBe('Private, 2 tabs')
     // Its last card asks for a private tab.
     expect(cellOf(NEW_TAB_CELL).dataset.testid).toBe('overview-new-private-tab')
 
     // And back: the space's grid again, the space's name over it.
-    act(() => segment('tabs').click())
+    act(() => pickOverviewPane('tabs'))
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
-    expect(host!.querySelector('.zen-title')!.textContent).toBe('Work')
+    expect(titleLabel()).toBe('Work, 2 tabs')
     expect(cellOf(NEW_TAB_CELL).dataset.testid).toBe('overview-new-tab')
   })
 
@@ -2225,7 +2277,7 @@ describe('the private pane', () => {
     state.spaces[0].activeTabId = 'p1'
     render(state)
     expect(privateTabsStore.get().pane).toBeNull()
-    expect(selected('private')).toBe(true)
+    expect(view()).toBe('private')
     expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
     // Pinned and grouped regular tabs stay on their pane too.
     render(
@@ -2239,7 +2291,7 @@ describe('the private pane', () => {
       )
     )
     expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
-    act(() => segment('tabs').click())
+    act(() => pickOverviewPane('tabs'))
     expect(cellKeys()).toEqual(['pinned', `group:${GROUP}`, 'm1', 'm2', NEW_TAB_CELL])
   })
 
@@ -2260,11 +2312,11 @@ describe('the private pane', () => {
     expect(privateSurfaceActive(state, false)).toBe(false)
     render(state)
     expect(privateTabsStore.get().pane).toBeNull()
-    expect(selected('tabs')).toBe(true)
+    expect(view()).toBe('tabs')
     expect(grid().dataset.pane).toBe('tabs')
     expect(cellKeys()).toEqual(['settings', 'a', NEW_TAB_CELL])
     expect(privateSurfaceActive(state, true)).toBe(false)
-    act(() => segment('private').click())
+    act(() => pickOverviewPane('private'))
     expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
   })
 
@@ -2279,9 +2331,9 @@ describe('the private pane', () => {
     try {
       act(() => applyPrivateLock({ locked: true, screenLock: true }))
       render(mixed())
-      expect(selected('tabs')).toBe(true)
+      expect(view()).toBe('tabs')
       expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
-      act(() => segment('private').click())
+      act(() => pickOverviewPane('private'))
       const cover = host!.querySelector<HTMLElement>('[data-testid="private-lock-cover"]')!
       expect(cover).not.toBeNull()
       expect(cover.getAttribute('aria-label')).toBe('Private tabs locked')
@@ -2296,7 +2348,7 @@ describe('the private pane', () => {
       // Leaving the pane: the still of it is the covered pane – a copy of the slot, cover included.
       // (The Tabs pane's still from the way in may still be fading – here without `animate()`
       // it waits on its timer – so the newest still is the one to read.)
-      act(() => segment('tabs').click())
+      act(() => pickOverviewPane('tabs'))
       const still = [...host!.querySelectorAll<HTMLElement>('[data-testid="pane-still"]')].at(-1)!
       expect(still).not.toBeNull()
       expect(
@@ -2324,7 +2376,7 @@ describe('the private pane', () => {
     try {
       act(() => applyPrivateLock({ locked: true, screenLock: true }))
       render(state)
-      expect(selected('private')).toBe(true)
+      expect(view()).toBe('private')
       const cover = host!.querySelector<HTMLElement>('[data-testid="private-lock-cover"]')!
       expect(cover).not.toBeNull()
       // The cover stands on its own base: no `data-backdrop` variant leaning on a blur of what
@@ -2374,7 +2426,7 @@ describe('the private pane', () => {
       expect(hero.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
       // The Tabs pane beside it is not locked: its cards keep their names, the grid is reachable.
       render(state)
-      act(() => segment('tabs').click())
+      act(() => pickOverviewPane('tabs'))
       expect(grid().hasAttribute('inert')).toBe(false)
       expect(grid().hasAttribute('aria-hidden')).toBe(false)
       expect(
@@ -2382,7 +2434,7 @@ describe('the private pane', () => {
       ).toMatch(/^a, tab 1 of 2/)
       expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
       // The lock off: the cards read their titles again.
-      act(() => segment('private').click())
+      act(() => pickOverviewPane('private'))
       act(() => applyPrivateLock({ locked: false }))
       render(state)
       expect(grid().hasAttribute('inert')).toBe(false)
@@ -2394,74 +2446,62 @@ describe('the private pane', () => {
     }
   })
 
-  it('with no private tab the private pane is §9.17’s sentence with New private tab as its one follow-up, never a card', () => {
+  it('with no private tab there is no private view: a pick of it reads as the regular view, with neither an empty note nor a card of the private session (the cleanup spec §4)', () => {
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
-    act(() => segment('private').click())
-    expect(host!.querySelector('.zen-overview-grid')).toBeNull()
-    const empty = host!.querySelector<HTMLElement>('[data-testid="overview-private-empty"]')!
-    // TAB-03 as §9.34 writes it: a standing state, not a message – the phone panels' one-sentence
-    // note (the Groups pane's, `PhoneEmptyNote`) in the pane's flow under the segment, "No private
-    // tabs" and the follow-up beneath it; no title-plus-description pair, no glyph, no message
-    // card (the explainer of what private keeps is the private new tab page's, NTP-31).
-    expect(empty.classList.contains('zen-overview-private-empty')).toBe(true)
-    const note = empty.querySelector<HTMLElement>(':scope > .zen-phone-empty')!
-    expect(note).not.toBeNull()
-    expect(note.querySelector('p')!.textContent).toBe('No private tabs')
-    expect(empty.querySelector('h2')).toBeNull()
-    expect(empty.querySelector('svg')).toBeNull()
-    expect(empty.querySelector('.zen-private-explainer')).toBeNull()
-    expect(empty.querySelector('[data-surface="page"]')).toBeNull()
-    expect(empty.textContent).toBe('No private tabsNew private tab')
+    act(() => pickOverviewPane('private'))
+    // The pick stands in the store, but the view it resolves to is the regular one
+    // (`overviewPane`): the private view stands only while a private tab is open – the ⋯ menu
+    // offers no "Private Tabs (N)" row while none is, and the last private close hands the
+    // regular view back – so TAB-03's empty room ("No private tabs", New private tab) is gone
+    // with the state it stood for.
+    expect(privateTabsStore.get().pane).toBe('private')
+    expect(view()).toBe('tabs')
+    expect(grid().dataset.pane).toBe('tabs')
+    expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+    expect(countShown()).toBe('1 tab')
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(host!.querySelector('.zen-overview-private-empty')).toBeNull()
+    expect(host!.textContent).not.toContain('No private tabs')
     // No cover: with nothing open there is nothing the lock protects.
     expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
-    expect(countShown()).toBe('0 tabs')
-    // The follow-up is the note's secondary button (§9.17: 88 minimum at 40, 16 beneath, never
-    // primary) – the one control in the pane. A button, so sentence case (v2 §9.1).
-    const buttons = Array.from(empty.querySelectorAll<HTMLElement>('button'))
-    expect(buttons).toHaveLength(1)
-    const button = buttons[0]!
-    expect(button.classList.contains('zen-v2-button')).toBe(true)
-    expect(button.classList.contains('zen-phone-empty-action')).toBe(true)
-    expect(button.hasAttribute('data-primary')).toBe(false)
-    expect(button.textContent).toBe('New private tab')
-    expect(newTabRequests(() => act(() => button.click()))).toEqual([
-      { containerId: PRIVATE_CONTAINER_ID }
-    ])
-    // The pane's two rules are the Groups pane's own (main.css): the window family's inks and
-    // fills read to the note, and the 48 under the segment; nothing of the card is left.
+    // Nothing of the empty room is left in the sheet: the regular view's note alone has its rules.
     const rules = rulesOf(readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8'))
-    const family = rules.find((r) => r.selectors.includes('.zen-overview-private-empty'))!
-    expect(family.selectors).toContain('.zen-overview-groups')
+    expect(rules.some((r) => r.selectors.some((s) => s.includes('private-empty')))).toBe(false)
+    const family = rules.find((r) => r.selectors.includes('.zen-overview-tabs-empty'))!
+    expect(family.selectors).toEqual(['.zen-overview-tabs-empty'])
     expect(family.declarations.get('--v2-text-deemphasized')?.value).toBe(
       'var(--v2-control-text-deemphasized)'
     )
     expect(family.declarations.get('--v2-fill')?.value).toBe('var(--v2-control-fill)')
     const top = rules.find((r) =>
-      r.selectors.includes('.zen-overview-private-empty > .zen-phone-empty')
+      r.selectors.includes('.zen-overview-tabs-empty > .zen-phone-empty')
     )!
-    expect(top.selectors).toContain('.zen-overview-groups > .zen-phone-empty')
+    expect(top.selectors).toEqual(['.zen-overview-tabs-empty > .zen-phone-empty'])
     expect(top.declarations.get('padding-top')?.value).toBe('48px')
+    expect(rules.some((r) => r.selectors.some((s) => s.includes('.zen-overview-groups')))).toBe(
+      false
+    )
     expect(rules.some((r) => r.selectors.some((s) => s.includes('.zen-private-explainer')))).toBe(
       false
     )
-    // The first private tab replaces the sentence with the grid.
+    // The first private tab opened: the pick takes, the private view with its card.
     render(
       withPrivate(
         stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], [])
       )
     )
-    expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(view()).toBe('private')
     expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
   })
 
   /*
    * The last private tab closing returns the overview to the Tabs pane, picked or followed
-   * (Chrome's switcher); the empty note is still a pick away with none open.
+   * (Chrome's switcher), and releases the pick; a pick of Private with none open reads as Tabs.
    */
-  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again is the empty note', () => {
+  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again with none open is still the Tabs pane', () => {
     const state = mixed()
     render(state)
-    act(() => segment('private').click())
+    act(() => pickOverviewPane('private'))
     expect(privateTabsStore.get().pane).toBe('private')
     expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
 
@@ -2478,7 +2518,7 @@ describe('the private pane', () => {
         )
       )
     )
-    expect(selected('private')).toBe(true)
+    expect(view()).toBe('private')
     expect(cellKeys()).toEqual(['p2', NEW_TAB_CELL])
 
     // The last one closes: back to the Tabs pane, the pick released to it.
@@ -2486,15 +2526,16 @@ describe('the private pane', () => {
       withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
     )
     expect(privateTabsStore.get().pane).toBe('tabs')
-    expect(selected('tabs')).toBe(true)
+    expect(view()).toBe('tabs')
     expect(grid().dataset.pane).toBe('tabs')
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
     expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
 
-    // Private picked with none open: the empty note, as before.
-    act(() => segment('private').click())
-    expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
-    expect(selected('private')).toBe(true)
+    // Private picked with none open: no private view to show – the Tabs pane stands.
+    act(() => pickOverviewPane('private'))
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(view()).toBe('tabs')
+    expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
   })
 
   it('returns to the Tabs pane when the last private tab closes with the pane following the tab in view', () => {
@@ -2502,29 +2543,32 @@ describe('the private pane', () => {
     state.spaces[0].activeTabId = 'p1'
     render(state)
     expect(privateTabsStore.get().pane).toBeNull()
-    expect(selected('private')).toBe(true)
+    expect(view()).toBe('private')
     // The core closes p1 and brings a regular tab into view; nothing is picked, so the pane follows.
     render(
       withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
     )
     expect(privateTabsStore.get().pane).toBeNull()
-    expect(selected('tabs')).toBe(true)
+    expect(view()).toBe('tabs')
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
   })
 
-  it('opening the overview on an empty private session with Private picked shows the empty note, not the Tabs pane', () => {
-    // No transition from some to none: the pick holds (a pick made before the overview came up).
+  it('opening the overview on an empty private session with Private picked shows the Tabs pane: there is no empty private view', () => {
+    // No transition from some to none: the pick holds in the store (a pick made before the
+    // overview came up), but with no private tab it resolves to the regular view.
     act(() => privateTabsStore.set({ pane: 'private' }))
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
     expect(privateTabsStore.get().pane).toBe('private')
-    expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
+    expect(view()).toBe('tabs')
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
   })
 
   it("each pane's New Tab card asks for a tab of its own mode", () => {
     render(mixed())
     const asked = newTabRequests(() => {
       act(() => cellOf(NEW_TAB_CELL).click())
-      act(() => segment('private').click())
+      act(() => pickOverviewPane('private'))
       act(() => cellOf(NEW_TAB_CELL).click())
     })
     expect(asked).toEqual([{}, { containerId: PRIVATE_CONTAINER_ID }])
@@ -2547,7 +2591,7 @@ describe('the private pane', () => {
         )
       )
     )
-    expect(selected('private')).toBe(true)
+    expect(view()).toBe('private')
     place('p1', 0, 0)
     pickUp('p1')
     const p = at('p1', 0.5, 0.5)
@@ -2577,7 +2621,7 @@ describe('the private pane', () => {
         )
       )
     )
-    expect(selected('private')).toBe(true)
+    expect(view()).toBe('private')
     place('p1', 0, 0)
     pickUp('p1')
     const p = at('p1', 0.5, 0.5)
@@ -2627,7 +2671,7 @@ describe('the private pane', () => {
         )
       )
     )
-    expect(selected('private')).toBe(true)
+    expect(view()).toBe('private')
     expect(cellKeys()).toEqual(['p1', 'p2', 'p3', NEW_TAB_CELL])
     place('p1', 0, 0)
     place('p2', 110, 0)
@@ -2779,7 +2823,7 @@ describe('the private pane', () => {
       expect(stills()).toEqual([])
       grid().scrollTop = 40
 
-      act(() => segment('private').click())
+      act(() => pickOverviewPane('private'))
       // The private grid is up, fresh, on the stylesheet's fade in.
       expect(grid().dataset.pane).toBe('private')
       expect(grid().closest('.zen-overview-pane')).not.toBeNull()
@@ -2818,7 +2862,7 @@ describe('the private pane', () => {
       expect(stills()).toEqual([])
 
       // Back to Tabs: the still is the private pane's.
-      act(() => segment('tabs').click())
+      act(() => pickOverviewPane('tabs'))
       expect(stills()).toHaveLength(1)
       expect(stills()[0].querySelector('[data-pane="private"]')).not.toBeNull()
       expect(grid().dataset.pane).toBe('tabs')
@@ -2829,33 +2873,30 @@ describe('the private pane', () => {
     }
   })
 
-  it('the pane following the tab in view cross-fades the same when the core moves it; the explainer too', () => {
+  it('the pane following the tab in view cross-fades the same when the core moves it; a pick of Private with none open moves nothing', () => {
     const { finish, restore } = recordFades()
     try {
       const state = mixed()
       state.spaces[0].activeTabId = 'p1'
       render(state)
-      expect(selected('private')).toBe(true)
+      expect(view()).toBe('private')
       // The private tabs close and a regular tab comes into view: the pane follows, over a
       // still of the private grid.
       render(
         withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
       )
-      expect(selected('tabs')).toBe(true)
+      expect(view()).toBe('tabs')
       expect(stills()).toHaveLength(1)
       expect(stills()[0].querySelector('[data-pane="private"]')).not.toBeNull()
       finish()
 
-      // Private picked with none open: the explainer comes up over a still of the Tabs grid,
-      // and leaves the same way.
-      act(() => segment('private').click())
-      expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
-      expect(stills()).toHaveLength(1)
-      finish()
-      act(() => segment('tabs').click())
-      expect(stills()[0].textContent).toContain('No private tabs')
+      // Private picked with none open: there is no private view to cross-fade to (§4) – the
+      // Tabs pane stands, no still, nothing moves.
+      act(() => pickOverviewPane('private'))
+      expect(view()).toBe('tabs')
       expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
-      finish()
+      expect(stills()).toEqual([])
+      act(() => pickOverviewPane('tabs'))
       expect(stills()).toEqual([])
     } finally {
       restore()
@@ -2867,7 +2908,7 @@ describe('the private pane', () => {
     const { fades, finish, restore } = recordFades()
     try {
       render(mixed())
-      act(() => segment('private').click())
+      act(() => pickOverviewPane('private'))
       expect(stills()).toHaveLength(1)
       expect(fades[0].frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
       expect(fades[0].options.duration).toBe(REDUCED_FADE_MS)
@@ -2881,7 +2922,7 @@ describe('the private pane', () => {
     const had = proto.animate
     proto.animate = undefined
     try {
-      act(() => segment('tabs').click())
+      act(() => pickOverviewPane('tabs'))
       expect(stills()).toHaveLength(1)
       act(() => elapse(REDUCED_FADE_MS - 1))
       expect(stills()).toHaveLength(1)
@@ -3006,27 +3047,25 @@ describe('the Tabs pane with no tab', () => {
     expect(note()!.hasAttribute('data-in-place')).toBe(true)
   })
 
-  it('the note that comes up with its pane carries no mark: the Tabs segment picked, or the last private tab’s close handing the pane over', () => {
+  it('the note that comes up with its view carries no mark: the regular view picked (the ⋯ menu’s Tabs row), or the last private tab’s close handing the view over', () => {
     const privateHost = (tabs: Tab[]): UIState => {
       const state = stateOf(tabs, [])
       return { ...state, capabilities: { ...state.capabilities, privateTabs: true } }
     }
-    const segment = (pane: 'tabs' | 'private'): HTMLElement =>
-      host!.querySelector<HTMLElement>(`[data-testid="overview-pane-${pane}"]`)!
     const p1 = tab('p1', 'https://one.example/', { containerId: PRIVATE_CONTAINER_ID })
     try {
-      // A private tab alone, active: the overview opens on the Private pane and its grid.
+      // A private tab alone, active: the overview opens on the private view and its grid.
       render(privateHost([p1]))
       expect(note()).toBeNull()
       expect(grid().dataset.pane).toBe('private')
-      // The Tabs segment: the Tabs pane enters on the panes' cross-fade, its note with it,
-      // unmarked – though a grid (the Private pane's) stood in the last commit.
-      act(() => segment('tabs').click())
+      // The Tabs row: the regular view enters on the views' cross-fade, its note with it,
+      // unmarked – though a grid (the private view's) stood in the last commit.
+      act(() => pickOverviewPane('tabs'))
       expect(note()!.hasAttribute('data-in-place')).toBe(false)
       expect(countShown()).toBe('0 tabs')
       // Back on the Private pane, its last tab closed: the pane hands over to the Tabs pane,
       // whose note comes up on the same cross-fade – unmarked again.
-      act(() => segment('private').click())
+      act(() => pickOverviewPane('private'))
       expect(note()).toBeNull()
       expect(grid().dataset.pane).toBe('private')
       render(privateHost([]))
@@ -3052,18 +3091,29 @@ describe('the Tabs pane with no tab', () => {
       const state = stateOf(tabs, [])
       return { ...state, capabilities: { ...state.capabilities, privateTabs: true } }
     }
+    const privateTab = (id: string, url: string): Tab =>
+      tab(id, url, { containerId: PRIVATE_CONTAINER_ID })
+    const view = (): string | undefined =>
+      host!.querySelector<HTMLElement>('[data-testid="overview-title"]')!.dataset.view
     try {
-      // A tab, then its close: the note took the grid's place and carries the mark.
-      render(privateHost([tab('a', 'https://a.example/')]))
+      // A regular tab beside a private one, then the regular one's close with the regular view
+      // held (picked: the view would otherwise follow the private tab now in view): the note
+      // took the grid's place and carries the mark.
+      render(
+        privateHost([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')])
+      )
       expect(note()).toBeNull()
-      render(privateHost([]))
+      act(() => pickOverviewPane('tabs'))
+      render(privateHost([privateTab('p1', 'https://one.example/')]))
+      expect(view()).toBe('tabs')
       expect(note()!.hasAttribute('data-in-place')).toBe(true)
-      // The Private segment: the Tabs pane leaves on the panes' cross-fade – a still of it,
+      // The Private Tabs row: the regular view leaves on the views' cross-fade – a still of it,
       // the note copied whole, its words with it – and the copy carries no mark, as it carries
       // no hook.
-      act(() => host!.querySelector<HTMLElement>('[data-testid="overview-pane-private"]')!.click())
+      act(() => pickOverviewPane('private'))
       expect(note()).toBeNull()
-      expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
+      expect(view()).toBe('private')
+      expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
       expect(stills()).toHaveLength(1)
       const copy = stills()[0]!.querySelector<HTMLElement>('.zen-overview-tabs-empty')!
       expect(copy).not.toBeNull()
@@ -3077,22 +3127,21 @@ describe('the Tabs pane with no tab', () => {
     }
   })
 
-  it('takes the Private pane’s two rules; the 120 ms fade, kept under reduced motion, is keyed to the mark (main.css)', () => {
+  it('the note’s two rules are its own (the private view has no empty room, §4); the 120 ms fade, kept under reduced motion, is keyed to the mark (main.css)', () => {
     const rules = rulesOf(readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8'))
-    // The window family's inks read to the note, one rule for the three panes…
+    // The window family's inks read to the note…
     const family = rules.find(
       (r) => r.selectors.includes('.zen-overview-tabs-empty') && r.declarations.has('--v2-text')
     )!
     expect(family).toBeDefined()
-    expect(family.selectors).toContain('.zen-overview-private-empty')
-    expect(family.selectors).toContain('.zen-overview-groups')
+    expect(family.selectors).toEqual(['.zen-overview-tabs-empty'])
     expect(family.declarations.get('--v2-text')?.value).toBe('var(--v2-control-text)')
-    // …and the first line 48 under the segment, the same rule as theirs.
+    // …and the first line 48 under the header.
     const top = rules.find((r) =>
       r.selectors.includes('.zen-overview-tabs-empty > .zen-phone-empty')
     )!
     expect(top).toBeDefined()
-    expect(top.selectors).toContain('.zen-overview-private-empty > .zen-phone-empty')
+    expect(top.selectors).toEqual(['.zen-overview-tabs-empty > .zen-phone-empty'])
     expect(top.declarations.get('padding-top')?.value).toBe('48px')
     // The fade in place (§11.4): opacity alone, 120 ms, written out again `!important` under
     // reduced motion past the sheet's closing rule that removes every other animation (§11.3) –
@@ -3105,11 +3154,11 @@ describe('the Tabs pane with no tab', () => {
     )
     expect(own).toHaveLength(2)
     expect(own.find((r) => !r.reduced)?.declarations.get('animation')).toEqual({
-      value: 'zen-fade 120ms var(--zen-ease)',
+      value: 'zen-fade var(--zen-motion-state) var(--zen-ease)',
       important: false
     })
     expect(own.find((r) => r.reduced)?.declarations.get('animation')).toEqual({
-      value: 'zen-fade 120ms var(--zen-ease)',
+      value: 'zen-fade var(--zen-motion-state) var(--zen-ease)',
       important: true
     })
     for (const rule of own) {
@@ -3189,7 +3238,19 @@ const commaList = (value: string): string[] => {
   items.push(current.trim())
   return items
 }
+/**
+ * A duration's ms: digits before `s` / `ms`, or the stylesheet's own face of a motion token –
+ * `var(--zen-motion-state)` – read at the token's value (`lib/__tests__/motionTokens.test.ts`
+ * holds main.css's declaration equal to it).
+ */
+const DURATION_VARS: Record<string, number> = {
+  'var(--zen-motion-state)': MOTION_STATE_MS,
+  'var(--zen-motion-pop)': MOTION_POP_MS,
+  'var(--zen-motion-message)': MOTION_MESSAGE_MS
+}
+const isDuration = (token: string): boolean => /m?s$/.test(token) || token in DURATION_VARS
 const ms = (token: string): number => {
+  if (token in DURATION_VARS) return DURATION_VARS[token]!
   const m = /^([\d.]+)(m?s)$/.exec(token)
   if (!m) throw new Error(`${token} is no duration`)
   return Number(m[1]) * (m[2] === 's' ? 1000 : 1)
@@ -3228,7 +3289,7 @@ describe('the chrome switch in the stylesheet', () => {
   const transitions = (selector: string, reduced = false): Map<string, number> => {
     const list = commaList(declared(selector, 'transition') ?? '').filter(Boolean)
     const properties = list.map((entry) => entry.split(' ')[0])
-    const durations = list.map((entry) => ms(entry.split(' ').find((t) => /m?s$/.test(t))!))
+    const durations = list.map((entry) => ms(entry.split(' ').find(isDuration)!))
     if (reduced) {
       const remover = rules.find(
         (r) => r.reduced && r.selectors.includes('*') && r.declarations.has('transition-property')
@@ -3247,7 +3308,7 @@ describe('the chrome switch in the stylesheet', () => {
       durations.splice(
         0,
         durations.length,
-        ...entries.map((e) => ms(e.split(' ').find((t) => /m?s$/.test(t))!))
+        ...entries.map((e) => ms(e.split(' ').find(isDuration)!))
       )
     }
     return new Map(properties.map((p, i) => [p, durations[i]]))
@@ -3288,7 +3349,7 @@ describe('the chrome switch in the stylesheet', () => {
     expect(remover?.declarations.get('animation')).toEqual({ value: 'none', important: true })
     const overview = forSelector('.zen-overview', true)
     expect(overview.map((r) => r.declarations.get('animation')).find(Boolean)).toEqual({
-      value: 'zen-fade 120ms var(--zen-ease)',
+      value: 'zen-fade var(--zen-motion-state) var(--zen-ease)',
       important: true
     })
   })
@@ -3296,12 +3357,14 @@ describe('the chrome switch in the stylesheet', () => {
   it('the panes and the segment change in place on a 120 ms opacity fade with no movement, the same under reduced motion (v2 §11.4)', () => {
     // A pane coming up: the 120 ms fade, written out again `!important` past the sheet's closing
     // rule that removes every other animation.
-    expect(declared('.zen-overview-pane', 'animation')).toMatch(/^zen-fade 120ms/)
+    expect(declared('.zen-overview-pane', 'animation')).toMatch(
+      /^zen-fade var\(--zen-motion-state\)/
+    )
     expect(
       forSelector('.zen-overview-pane', true)
         .map((r) => r.declarations.get('animation'))
         .find(Boolean)
-    ).toEqual({ value: 'zen-fade 120ms var(--zen-ease)', important: true })
+    ).toEqual({ value: 'zen-fade var(--zen-motion-state) var(--zen-ease)', important: true })
     // The segment primitive (§9.34): the label's ink and the line's opacity, nothing that moves.
     // Under reduced motion the line's opacity fade stays (re-declared, opacity alone) and the
     // ink's colour tween is removed: §11.3 keeps opacity fades, no other property's.

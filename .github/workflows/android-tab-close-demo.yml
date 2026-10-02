@@ -2,9 +2,10 @@ name: Android tab close demo
 
 # Records closing tabs from the phone's tab overview and taking it back (matrix TAB-05, TAB-06,
 # TAB-07, TAB-22, TAB-23, GN-16, BH-26): a card closed with its X and one swiped off the grid,
-# each followed by Undo on the toast; the header menu's Close all tabs with its "Close N tabs?"
-# prompt, the "N tabs closed" toast and Undo bringing every tab back in order; Don't ask again
-# turning the prompt off; and a tab restored from the Recently closed sheet. Every press is a
+# each followed by Undo on the toast; the menu's Close All Tabs closing every unpinned tab at
+# once with no prompt (v2 §9.23), its "N tabs closed" toast and Undo bringing every tab back in
+# order; Close Private Tabs still asking, its prompt without a Don't ask again (skipped where the
+# WebView has no profiles); and a tab restored from the Recently closed sheet. Every press is a
 # real touch and the driver reads each outcome off the core's state (findings text in the
 # artifact; the run fails on a FAIL). Dispatch-only, like the overview demo: it takes about ten
 # minutes and says nothing about a change being correct. The build, the emulator and the Gradle

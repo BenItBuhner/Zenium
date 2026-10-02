@@ -491,6 +491,29 @@ describe('the phone Extensions sheet', () => {
     expect(titles()).toEqual([])
   })
 
+  it('draws its trailing indicators – the management row’s chevron, a checked item’s check, a submenu row’s chevron – at 16, the leading glyphs at 20 (§9.3, A9)', async () => {
+    ownItems.set(UBLOCK, [
+      own({ id: 'action_1_3', label: 'Night Mode', type: 'checkbox', checked: true }),
+      own({ id: 'action_1_4', label: 'More', submenu: [own({ id: 'action_1_5', label: 'Help' })] })
+    ])
+    await show(three())
+    const manage = rows()[3].querySelector<SVGElement>('.lucide-chevron-right')!
+    expect(manage.getAttribute('class')).toContain('h-4 w-4')
+    expect(manage.getAttribute('class')).not.toContain('h-5 w-5')
+    // The chevron's 44 seat stays, as on the sibling rows; the leading Puzzle glyph stays 20.
+    expect(manage.parentElement?.getAttribute('class')).toContain('h-11 w-11')
+    expect(rows()[3].querySelector('.lucide-puzzle')?.getAttribute('class')).toContain('h-5 w-5')
+    hold(rows()[1])
+    await land()
+    const [night, more] = menuItems()
+    const check = night.querySelector<SVGElement>('.lucide-check')!
+    expect(check.getAttribute('class')).toContain('h-4 w-4')
+    expect(check.getAttribute('class')).not.toContain('h-5 w-5')
+    const chevron = more.querySelector<SVGElement>('.lucide-chevron-right')!
+    expect(chevron.getAttribute('class')).toContain('h-4 w-4')
+    expect(chevron.getAttribute('class')).not.toContain('h-5 w-5')
+  })
+
   it('Remove from Zenium asks first, in the menu’s place, and removes once the answer has landed', async () => {
     await show(three())
     hold(rows()[0])

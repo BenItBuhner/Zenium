@@ -993,11 +993,15 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
 })
 
 describe('private browsing and the space’s groups (a private group named on no regular surface)', () => {
-  /** "Move Tab ▸ Move to Folder ▸": the folders a menu offers, by label. */
+  /**
+   * "Move Tab ▸ Move to Folder ▸" – "Move to Group ▸" on a touch host (TABLET-22): the folders a
+   * menu offers, by label.
+   */
   const foldersOffered = (items: MenuItemTemplate[]): string[] => {
     const move = items.find((i) => i.label === 'Move Tab')?.submenu ?? []
-    const into = move.find((i) => i.label === 'Move to Folder')?.submenu ?? []
-    return labels(into).filter((l) => l !== '-' && l !== 'New Folder…')
+    const into =
+      move.find((i) => i.label === 'Move to Group' || i.label === 'Move to Folder')?.submenu ?? []
+    return labels(into).filter((l) => l !== '-' && l !== 'New Group…' && l !== 'New Folder…')
   }
 
   it('PRIVATE-BROWSING LEAK, fixed: a regular tab’s menu names no group that private tabs alone fill; a private tab’s names every folder of its space', () => {

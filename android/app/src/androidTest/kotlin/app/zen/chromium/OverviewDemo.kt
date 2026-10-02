@@ -10,7 +10,8 @@ import org.junit.runner.RunWith
 
 /**
  * Records the tab overview's presentation and its tab groups: the page morphing into its card
- * at a slow drag, the Spaces drawer, a group made by holding a card and one made by dropping a
+ * at a slow drag, the Spaces sheet (the title is the space switcher, the cleanup spec's §1), a
+ * group made by holding a card and one made by dropping a
  * card on another (with the merge preview), collapsing a group, moving a tab between groups,
  * and the group ribbon while swiping between grouped tabs on the pill.
  *
@@ -58,15 +59,15 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         f.up()
         SystemClock.sleep(2_500)
 
-        // 2. The Spaces drawer, then a swipe pushes it back out. (Springs advance at most 64 ms
-        //    per frame, so on the emulator's handful of frames per second they take a while.)
-        tap("Spaces")
+        // 2. The Spaces sheet from the title ("Work · 7 tabs": the one control the header keeps,
+        //    the cleanup spec's §1), then the system back puts it away unanswered (§9.23).
+        //    (Springs advance at most 64 ms per frame, so on the emulator's handful of frames
+        //    per second they take a while.)
+        val title = awaitOverviewTitle(8_000) ?: error("no overview title to tap")
+        Finger().tap(title.exactCenterX(), title.exactCenterY())
         SystemClock.sleep(3_000)
-        shot("02-spaces-drawer")
-        f.down(width * 0.45f, height * 0.5f)
-        f.moveBy(-n, 0f, 60)
-        f.moveBy(-0.4f * width, 0f, 350)
-        f.up()
+        shot("02-spaces-sheet")
+        back()
         SystemClock.sleep(2_500)
 
         // 3. Collapse the Research group (it also keeps the loose cards in reach below).

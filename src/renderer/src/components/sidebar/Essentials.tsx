@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { closeTabFromChrome } from '@renderer/lib/closeUndo'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { activeTab, tabTitle, tabTooltip } from '@renderer/lib/selectors'
@@ -127,7 +128,8 @@ function EssentialTile({
         run('tab.activate', { tabId: tab.id })
       }}
       onAuxClick={(e) => {
-        if (e.button === 1) run('tab.close', { tabId: tab.id })
+        // With Undo on the toast on a touch layout, as a row's × (§9.23).
+        if (e.button === 1) closeTabFromChrome(tab.id)
       }}
       onContextMenu={(e) => {
         e.preventDefault()

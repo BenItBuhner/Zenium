@@ -947,7 +947,9 @@ describe('a chip joining or leaving the strip', () => {
       return css.slice(start, css.indexOf('}', start))
     }
     expect(rule('.zen-group-chip')).not.toMatch(/transition|transform/)
-    expect(rule('.zen-group-chip-face')).toMatch(/transition:[^;]*transform 120ms/)
+    expect(rule('.zen-group-chip-face')).toMatch(
+      /transition:[^;]*transform var\(--zen-motion-state\)/
+    )
     // The press is v2's .98; and nothing is promoted at rest – `will-change` is the spring's,
     // for the frames it writes (§11).
     expect(rule('.zen-group-chip:active .zen-group-chip-face')).toMatch(/transform: scale\(0\.98\)/)

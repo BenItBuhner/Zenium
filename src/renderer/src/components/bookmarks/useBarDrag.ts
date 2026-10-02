@@ -251,19 +251,40 @@ export function useBarDrag({
     (settleTo: { x: number; y: number } | null): void => {
       const current = dragRef.current
       if (!current) return
+      const ghost = ghostRef.current
+      // The fade is the drag's last motion and the drag settles when it ends: on the ghost's own
+      // `transitionend` for its opacity, once that reads 0 – not a child's bubbling up, and not
+      // the end of the folder tint's run (`data-into`'s 0.45) landing a frame after the fade
+      // began. The timer stays as the fallback, a little past the fade's length, for the ends
+      // that never come: under reduced motion the fade is a cut (the stylesheet removes every
+      // transition), and a ghost under `display: none` or out of the document runs none. One
+      // settle either way – the first withdraws the other.
+      let ended = false
+      let fallback: ReturnType<typeof setTimeout> | null = null
       const settled = (): void => {
+        if (ended) return
+        ended = true
+        if (fallback !== null) clearTimeout(fallback)
+        ghost?.removeEventListener('transitionend', onEnd)
         if (dragRef.current !== current) return
         dragRef.current = null
         setDrag(null)
       }
-      const ghost = ghostRef.current
-      if (!settleTo) {
-        // Into a folder: the ghost dissolves where it is.
+      const onEnd = (event: TransitionEvent): void => {
+        if (!ghost || event.target !== ghost || event.propertyName !== 'opacity') return
+        if (getComputedStyle(ghost).opacity === '0') settled()
+      }
+      const fade = (): void => {
         if (ghost) {
-          ghost.style.transition = `opacity ${MOTION_STATE_MS}ms var(--zen-ease)`
+          ghost.addEventListener('transitionend', onEnd)
           ghost.style.opacity = '0'
         }
-        setTimeout(settled, MOTION_STATE_MS + 10)
+        fallback = setTimeout(settled, MOTION_STATE_MS + 10)
+      }
+      if (!settleTo) {
+        // Into a folder: the ghost dissolves where it is.
+        if (ghost) ghost.style.transition = `opacity ${MOTION_STATE_MS}ms var(--zen-ease)`
+        fade()
         return
       }
       const from = live.current
@@ -275,11 +296,8 @@ export function useBarDrag({
       const y = new SpringAnimation(
         SPRING_GENTLE,
         (v) => placeGhost(live.current.x, v),
-        () => {
-          // Home: the ghost fades over the state's length, as it dissolves into a folder.
-          if (ghost) ghost.style.opacity = '0'
-          setTimeout(settled, MOTION_STATE_MS + 10)
-        }
+        // Home: the ghost fades over the state's length, as it dissolves into a folder.
+        fade
       )
       springs.current = { x, y }
       x.start(from.x, 0, settleTo.x)

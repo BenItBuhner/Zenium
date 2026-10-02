@@ -234,7 +234,7 @@ abstract class ThumbsDemoBase(
         f.settleIn(0f, -NUDGE)
         f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
         f.up()
-        waitFor("Spaces", 8_000) ?: error("the overview never showed")
+        awaitOverview(8_000) ?: error("the overview never showed")
         SystemClock.sleep(3_500)
     }
 

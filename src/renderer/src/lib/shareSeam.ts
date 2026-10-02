@@ -1,4 +1,5 @@
 import type { HostCapabilities, MenuItemDescriptor, SharePanelRequest } from '@shared/types'
+import { MOTION_STATE_MS } from './motion/tokens'
 
 /**
  * The menu-to-panel seam (v2 draft §9.38, its last sentence): below Android 14 the app menu's
@@ -24,8 +25,8 @@ export const SHARE_ROW_KEY = 'row.share'
  */
 export const SHARE_SEAM_GUARD_MS = 4000
 
-/** The outgoing content's fade (§11's leave, 120 ms); the incoming rises over 250 ms (`main.css`). */
-export const SHARE_SEAM_OUT_MS = 120
+/** The outgoing content's fade (§11's leave: the state token, 120 ms); the incoming rises on the pop token (180 ms, `main.css`). */
+export const SHARE_SEAM_OUT_MS = MOTION_STATE_MS
 
 /**
  * How long the gather runs before the tapped Share row says so – §9.30's busy form: the row at

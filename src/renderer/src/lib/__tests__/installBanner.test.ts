@@ -8,10 +8,19 @@ vi.mock('@renderer/lib/api', () => ({
   run: vi.fn(),
   onEvent: vi.fn(() => () => undefined)
 }))
+/** The form factor's word on the touch layouts (the band is the door only there). */
+const touch = { value: false }
+vi.mock('@renderer/lib/formFactor', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@renderer/lib/formFactor')>()
+  return { ...actual, isTouchLayout: () => touch.value }
+})
 
 const { run } = await import('@renderer/lib/api')
 const { bannerSurfaceMounted, claimBannerSurface, claimMessageCards, dismissBanner, uiStore } =
   await import('../ui')
+const { bandStore, dismissBand, resetBands, setBandFrame } = await import('@renderer/lib/band')
+const { createModelDoor } = await import('@renderer/lib/band/door')
+const { setBandDoor } = await import('@renderer/lib/band/post')
 const { installBannerShown, presentInstallBanner, retireInstallBanner } =
   await import('../installBanner')
 
@@ -105,5 +114,97 @@ describe('the install banner’s word to the core (#740, seed #42)', () => {
     presentInstallBanner(BANNER)
     retireInstallBanner('t1')
     expect(calls()).toEqual([['webapp.bannerShown', { tabId: 't1' }]])
+  })
+})
+
+describe('the install banner at the band’s door: the cooldown counts from a shown offer (seed #43, the Lead’s S3)', () => {
+  const SHOWN = ['webapp.bannerShown', { tabId: 't1' }]
+  const ACCEPTED = ['webapp.bannerShown', { tabId: 't1', visible: false }]
+  const TIMED_OUT = ['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }]
+
+  beforeEach(() => {
+    touch.value = true
+    resetBands()
+    setBandDoor(createModelDoor())
+  })
+  afterEach(() => {
+    setBandDoor(null)
+    resetBands()
+    touch.value = false
+  })
+
+  it('posted under a cover, the word says the card is accepted but not seen; the plain word follows at the band’s first drawn frame, when the cover lifts – two words, in order', () => {
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    presentInstallBanner(BANNER)
+    // Posted and standing (the preview host's check reads it as up) – not drawn.
+    expect(installBannerShown('t1')).toBe(true)
+    expect(bandStore.get().shown).toBeNull()
+    expect(calls()).toEqual([ACCEPTED])
+    // The cover stands a while: no clock runs on a card nobody sees, no further word.
+    vi.advanceTimersByTime(60_000)
+    expect(calls()).toEqual([ACCEPTED])
+    // The cover lifts: the band draws the card, and the one offer clock starts with the word.
+    setBandFrame({ front: 't1', ok: true, covered: false })
+    expect(bandStore.get().shown).not.toBeNull()
+    expect(calls()).toEqual([ACCEPTED, SHOWN])
+    // Covered again and uncovered again: the card was seen once; no word repeats.
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    setBandFrame({ front: 't1', ok: true, covered: false })
+    expect(calls()).toEqual([ACCEPTED, SHOWN])
+    vi.advanceTimersByTime(BAND_CLOCK_MS)
+    expect(calls()).toEqual([ACCEPTED, SHOWN, TIMED_OUT])
+    expect(installBannerShown('t1')).toBe(false)
+  })
+
+  it('in the open the one word goes as the card is posted, today’s bytes – no second word when a cover comes and goes over the standing card', () => {
+    setBandFrame({ front: 't1', ok: true })
+    presentInstallBanner(BANNER)
+    expect(bandStore.get().shown).not.toBeNull()
+    expect(calls()).toEqual([SHOWN])
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    setBandFrame({ front: 't1', ok: true, covered: false })
+    vi.advanceTimersByTime(BAND_CLOCK_MS - 1)
+    expect(calls()).toEqual([SHOWN])
+    vi.advanceTimersByTime(1)
+    expect(calls()).toEqual([SHOWN, TIMED_OUT])
+  })
+
+  it('put away unanswered under the cover (the Back): the core hears the band is gone, and the cover lifting brings no word of a show', () => {
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    presentInstallBanner(BANNER)
+    expect(calls()).toEqual([ACCEPTED])
+    const entry = bandStore.get().entries[0]
+    dismissBand(entry.id, 'back')
+    expect(calls()).toEqual([ACCEPTED, TIMED_OUT])
+    setBandFrame({ front: 't1', ok: true, covered: false })
+    vi.advanceTimersByTime(60_000)
+    expect(calls()).toEqual([ACCEPTED, TIMED_OUT])
+    expect(installBannerShown('t1')).toBe(false)
+  })
+
+  it('retired by the core under the cover (the page left the app, another tab in front, the tab closed): no report back, and no word when the cover lifts', () => {
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    presentInstallBanner(BANNER)
+    retireInstallBanner('t1')
+    expect(installBannerShown('t1')).toBe(false)
+    expect(bandStore.get().entries).toEqual([])
+    setBandFrame({ front: 't1', ok: true, covered: false })
+    vi.advanceTimersByTime(60_000)
+    expect(calls()).toEqual([ACCEPTED])
+  })
+
+  it('a newer card for another tab replaces the one held back: its own word goes, the replaced one never speaks of a show', () => {
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    presentInstallBanner(BANNER)
+    presentInstallBanner({ ...BANNER, tabId: 't2' })
+    expect(installBannerShown('t1')).toBe(false)
+    expect(installBannerShown('t2')).toBe(true)
+    expect(calls()).toEqual([ACCEPTED, ['webapp.bannerShown', { tabId: 't2', visible: false }]])
+    setBandFrame({ front: 't2', ok: true, covered: false })
+    expect(calls()).toEqual([
+      ACCEPTED,
+      ['webapp.bannerShown', { tabId: 't2', visible: false }],
+      ['webapp.bannerShown', { tabId: 't2' }]
+    ])
   })
 })

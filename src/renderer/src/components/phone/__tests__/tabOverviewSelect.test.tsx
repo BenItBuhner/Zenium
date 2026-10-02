@@ -9,8 +9,9 @@ import { BLANK_URL } from '@shared/url'
 
 /*
  * The phone overview's select-tabs mode (matrix TAB-08, TAB-35, SH-12; v2 §9.6, §9.29, §9.30,
- * §9.33): on from the header menu's "Select Tabs" or a card's hold sheet (with that card picked),
- * the cards are checkboxes, the header REPLACES its row with Android's contextual bar – the ×
+ * §9.33; tab overview cleanup spec §4, §5): on from the bar's ⋯ menu's "Select Tabs" (the row's
+ * `overview.command`; the overview draws no ⋯ of its own) or a card's hold sheet (with that card
+ * picked), the cards are checkboxes, the header REPLACES its row with Android's contextual bar – the ×
  * (Done), the live count, Select all / Deselect all – and a bottom action strip holds Close,
  * Group, Bookmark and Share, each off when nothing among the picks is its. Done, back and every
  * action end the mode. Rendered for real in happy-dom with the sheets on the frame's dialog
@@ -57,7 +58,9 @@ const { browserStore, claimMessageCards, pickToastAction, uiStore } =
   await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
-const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { dispatchOverviewCommand } = await import('@renderer/lib/overviewCommands')
+const { overviewMenuRequest } = await import('@renderer/lib/overviewMenuRequest')
 const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { bookmarkFolderTitle } = await import('@renderer/lib/overviewSelection')
@@ -333,8 +336,6 @@ afterEach(async () => {
 
 // --- helpers -----------------------------------------------------------------------------------
 
-const byLabel = (label: string): HTMLElement =>
-  document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
 const byTestId = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
 const buttonByText = (text: string): HTMLElement | undefined =>
@@ -391,13 +392,6 @@ const actions = (): Array<[string, string, boolean]> =>
   ])
 const action = (id: string): HTMLElement => byTestId(`overview-action-${id}`)!
 
-/** Open the header's menu and let it read the list and come up. */
-async function openMenu(): Promise<void> {
-  act(() => byLabel('More').click())
-  await settle()
-  await land()
-}
-
 /** Pick a row of the sheet that is up: the sheet leaves, then the row's action runs. */
 async function pick(text: string): Promise<void> {
   const row = buttonByText(text)
@@ -406,11 +400,20 @@ async function pick(text: string): Promise<void> {
   await land()
 }
 
-/** Enter the mode from the header's menu. */
-async function enter(): Promise<void> {
-  await openMenu()
-  await pick('Select Tabs')
+/** A row of the bar's ⋯ menu picked (§4): its `overview.command` reaches the overview. */
+async function command(name: Parameters<typeof dispatchOverviewCommand>[0]): Promise<void> {
+  act(() => dispatchOverviewCommand(name))
+  await settle()
+  await land()
 }
+
+/** Enter the mode from the ⋯ menu's Select Tabs. */
+async function enter(): Promise<void> {
+  await command('select-tabs')
+}
+
+/** The header at rest (§1): the one title control, "Work, N tabs", and nothing trailing it. */
+const AT_REST = (count: number): string[] => [`Work, ${count} tabs`]
 
 // --- a finger ----------------------------------------------------------------------------------
 
@@ -460,10 +463,10 @@ async function holdCard(id: string): Promise<void> {
 // --- entering and leaving ----------------------------------------------------------------------
 
 describe('entering the mode', () => {
-  it("from the header menu's first row: the cards become checkboxes, none checked; the header row is replaced by ×, 'Select tabs' and Select all; the strip is up with every action off (§9.6, §9.30)", async () => {
+  it("from the ⋯ menu's Select Tabs: the cards become checkboxes, none checked; the header row is replaced by ×, 'Select tabs' and Select all; the strip is up with every action off (§9.6, §9.30)", async () => {
     show(five())
-    // Before: the overview's own header row, cards as buttons, no strip.
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
+    // Before: the overview's own header row – the title alone – cards as buttons, no strip.
+    expect(headerButtons()).toEqual(AT_REST(5))
     expect(checkboxes()).toEqual([])
     expect(byTestId('overview-actions')).toBeNull()
     await enter()
@@ -486,6 +489,11 @@ describe('entering the mode', () => {
     expect(byTestId('overview-count')).toBeNull()
     expect(countTitle()?.textContent).toBe('Select tabs')
     expect(countTitle()?.getAttribute('aria-live')).toBe('polite')
+    // The bar's ⋯ now asks for the selection's rows (Select All, Deselect All, Close Selected),
+    // told how many of how many are picked.
+    expect(overviewMenuRequest()).toEqual({
+      overview: { view: 'tabs', selection: { selected: 0, total: 5 } }
+    })
     // The action strip, every action named and off: nothing is picked.
     expect(actions()).toEqual([
       ['close', 'Close 0 tabs', true],
@@ -560,8 +568,9 @@ describe('entering the mode', () => {
     expect(
       [...document.querySelectorAll('[data-cell]')].map((c) => c.getAttribute('data-cell'))
     ).toEqual(['p', 'a', 'b', 'c', 'blank', 'new-tab'])
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
+    expect(headerButtons()).toEqual(AT_REST(5))
     expect(byTestId('overview-count')?.textContent).toBe('5 tabs')
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
     expect(commands()).toEqual([])
   })
 
@@ -598,7 +607,7 @@ describe('entering the mode', () => {
       dispatchBackEvent('commit')
     })
     expect(checkboxes()).toEqual([])
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
+    expect(headerButtons()).toEqual(AT_REST(5))
     expect(stageStore.get().overview.phase).toBe('open')
     expect(topBackSurface()?.name).not.toBe('overview-selection')
   })
@@ -785,17 +794,20 @@ describe('the grid under the mode', () => {
     ])
   })
 
-  it('the private pane has the mode without Group: its pages share and bookmark', async () => {
+  it('the private view has the mode without Group: its pages share and bookmark', async () => {
     const state = stateOf([
       tab('r', 'https://r.example/', { title: 'Regular' }),
       tab('p1', 'https://one.example/', { title: 'One', containerId: PRIVATE_CONTAINER_ID }),
       tab('p2', 'https://two.example/', { title: 'Two', containerId: PRIVATE_CONTAINER_ID })
     ])
     show({ ...state, capabilities: { ...state.capabilities, privateTabs: true } })
-    act(() => byTestId('overview-pane-private')!.click())
-    await openMenu()
-    expect(sheetTitle()).toBe('Private')
-    await pick('Select Tabs')
+    await command('switch-view')
+    expect(byTestId('overview-title')?.getAttribute('data-view')).toBe('private')
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'private' } })
+    await enter()
+    expect(overviewMenuRequest()).toEqual({
+      overview: { view: 'private', selection: { selected: 0, total: 2 } }
+    })
     expect(checkboxes()).toEqual([
       ['p1', false],
       ['p2', false]
@@ -815,7 +827,7 @@ describe('the grid under the mode', () => {
     ])
   })
 
-  it('a pane switch ends the mode: the other pane comes up out of it', async () => {
+  it('a view switch ends the mode: the other view comes up out of it, under its own header', async () => {
     const state = stateOf([
       tab('r', 'https://r.example/', { title: 'Regular' }),
       tab('p1', 'https://one.example/', { title: 'One', containerId: PRIVATE_CONTAINER_ID })
@@ -824,9 +836,11 @@ describe('the grid under the mode', () => {
     await enter()
     tapCard('r')
     expect(countTitle()?.textContent).toBe('1 selected')
-    act(() => byTestId('overview-pane-private')!.click())
+    act(() => pickOverviewPane('private'))
     await land()
     expect(countTitle()).toBeNull()
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
+    // The private view's header is the mask heading, no control (§3).
+    expect(headerButtons()).toEqual([])
+    expect(byTestId('overview-title')?.getAttribute('data-view')).toBe('private')
   })
 })

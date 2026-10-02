@@ -1,10 +1,13 @@
 import type { CSSProperties, JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { FolderOpen, Plus, Trash2, Ungroup, X } from 'lucide-react'
+import { touchLayout } from '@shared/formFactor'
 import type { Folder, FolderColor, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { closeGroupUndoable } from '@renderer/lib/closeUndo'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
+import { useViewport } from '@renderer/lib/formFactor'
 import { closeGroupEditor } from '@renderer/lib/groupEditor'
 import { GROUP_PALETTE, groupColorVars } from '@renderer/lib/groups'
 import { measureRow, placeHoverCard } from '@renderer/lib/hoverCard'
@@ -27,6 +30,36 @@ import { V2_GLYPH } from '../v2/controls'
 
 /** A form: a field, the swatches and rows with a leading glyph (§9.20). */
 const WIDTH = POPOVER_WIDTH.form
+
+/**
+ * The bubble's words by the host (§6: the desktop says Folder, the touch hosts say Group;
+ * TABLET-22): the tablet shows this desktop surface once after a group is made from its tab
+ * menu, and names it as its menu and the phone's sheets do – "Edit group", "Close group", …
+ * – while the desktop's set reads byte for byte as it always has. One block, the two sets side
+ * by side, so the strings table takes them whole.
+ */
+const WORDS = {
+  folder: {
+    title: 'Edit folder',
+    placeholder: 'Name this folder',
+    actions: 'Folder actions',
+    open: 'Open folder',
+    newTab: 'New tab in folder',
+    unpack: 'Unpack folder',
+    close: 'Close folder',
+    remove: 'Delete folder'
+  },
+  group: {
+    title: 'Edit group',
+    placeholder: 'Name this group',
+    actions: 'Group actions',
+    open: 'Open group',
+    newTab: 'New tab in group',
+    unpack: 'Unpack group',
+    close: 'Close group',
+    remove: 'Delete group'
+  }
+} as const
 
 /** The header row of a folder in the sidebar, the bubble's anchor. */
 const headerOf = (folderId: string): HTMLElement | null =>
@@ -69,7 +102,11 @@ export function GroupEditorLayer(): JSX.Element | null {
  * first when the folder holds anything (`requestFolderDelete`); a saved folder – its tabs
  * closed, its pages kept – has Open folder with the count of the tabs it brings back (the
  * menu's noun, one for one number), New tab in folder (the core opens the folder first) and
- * Delete folder. It renders through
+ * Delete folder. On the touch layout – the tablet, after a group is made from its tab menu –
+ * the nouns read Group ({@link WORDS}; §6, TABLET-22) and Close goes the phone's undoable way
+ * (`closeGroupUndoable`: the tabs close through the core's `folder.close` as here, and the toast
+ * that follows, "<Name> tab group closed and saved", offers Undo); the desktop's bubble is the
+ * one it always was, by the same condition. It renders through
  * the chrome layer (`ChromePortal`) over a picture of the page (`holdFloatingChrome`) and the
  * layer's light dismiss puts it away: a press anywhere else closes it on `pointerdown` and
  * reaches nothing beneath – the header's own press closes it and does not fold the folder – and
@@ -99,6 +136,10 @@ function GroupEditorBubble({
   const colourId = useId()
   const [name, setName] = useState(folder.name)
   const [box, setBox] = useState<PopoverBox | null>(null)
+  // The host's noun and the Close row's route (TABLET-22): the tablet's layout says Group and
+  // closes with Undo; the desktop's says Folder and closes as before.
+  const touch = touchLayout(useViewport().formFactor)
+  const words = touch ? WORDS.group : WORDS.folder
   /** Where the keyboard goes when the bubble leaves: the page, or nowhere (Escape, a chrome opener). */
   const focusOnClose = useRef<'page' | 'chrome'>(keyboard ? 'chrome' : 'page')
   /** The header row the bubble hangs from, for Escape (§9.22: focus returns to the anchor). */
@@ -243,7 +284,7 @@ function GroupEditorBubble({
       >
         <div className="zen-bm-title-block">
           <h2 id={titleId} className="zen-bm-title">
-            Edit folder
+            {words.title}
           </h2>
         </div>
         <div className="zen-bm-popover-body flex flex-col">
@@ -255,7 +296,7 @@ function GroupEditorBubble({
                 id={nameId}
                 type="text"
                 className="zen-v2-field"
-                placeholder="Name this folder"
+                placeholder={words.placeholder}
                 autoComplete="off"
                 spellCheck={false}
                 value={name}
@@ -276,7 +317,7 @@ function GroupEditorBubble({
               />
             </div>
           </div>
-          <div className="zen-group-editor-actions" role="group" aria-label="Folder actions">
+          <div className="zen-group-editor-actions" role="group" aria-label={words.actions}>
             {saved && (
               <button
                 type="button"
@@ -285,7 +326,7 @@ function GroupEditorBubble({
                 onClick={() => act(() => run('folder.open', { folderId: folder.id }))}
               >
                 <FolderOpen className={V2_GLYPH} aria-hidden />
-                <span className="zen-v2-label truncate">Open folder</span>
+                <span className="zen-v2-label truncate">{words.open}</span>
                 <span className="zen-v2-description zen-group-editor-count">{savedLabel}</span>
               </button>
             )}
@@ -296,7 +337,7 @@ function GroupEditorBubble({
               onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
             >
               <Plus className={V2_GLYPH} aria-hidden />
-              <span className="zen-v2-label truncate">New tab in folder</span>
+              <span className="zen-v2-label truncate">{words.newTab}</span>
             </button>
             {count > 0 && (
               <>
@@ -309,19 +350,26 @@ function GroupEditorBubble({
                   }
                 >
                   <Ungroup className={V2_GLYPH} aria-hidden />
-                  <span className="zen-v2-label truncate">Unpack folder</span>
+                  <span className="zen-v2-label truncate">{words.unpack}</span>
                 </button>
                 {/* Chrome's Close group: the tabs close, the folder stays saved with their
                     pages – it destroys nothing the saved folder does not keep, so the plain
-                    ink (§6); Delete alone takes the danger ink. */}
+                    ink (§6); Delete alone takes the danger ink. The touch layout's close is
+                    the group row menu's (`folder.closeUndoable`'s route): Undo on the toast. */}
                 <button
                   type="button"
                   className="zen-v2-row zen-group-editor-action"
                   data-action="close"
-                  onClick={() => act(() => run('folder.close', { folderId: folder.id }))}
+                  onClick={() =>
+                    act(() =>
+                      touch
+                        ? closeGroupUndoable(folder.id)
+                        : run('folder.close', { folderId: folder.id })
+                    )
+                  }
                 >
                   <X className={V2_GLYPH} aria-hidden />
-                  <span className="zen-v2-label truncate">Close folder</span>
+                  <span className="zen-v2-label truncate">{words.close}</span>
                   <span className="zen-v2-description zen-group-editor-count">{tabsLabel}</span>
                 </button>
               </>
@@ -334,7 +382,7 @@ function GroupEditorBubble({
               onClick={deleteFolder}
             >
               <Trash2 className={V2_GLYPH} aria-hidden />
-              <span className="zen-v2-label truncate">Delete folder</span>
+              <span className="zen-v2-label truncate">{words.remove}</span>
             </button>
           </div>
         </div>

@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AgentDialogPolicy,
   AgentSkillStatus,
   AppLinkState,
   AppWindowInfo,
@@ -37,6 +38,7 @@ import type {
   NewTabPageAction,
   NewTabPageCommand,
   NewTabPageState,
+  PageDialogAnswered,
   PageDialogResponse,
   PageRules,
   PermissionPrompt,
@@ -858,6 +860,16 @@ export interface TabViewEvents {
    * (the core told it), the host shows nothing; `user`: the host carries on as it would have.
    */
   onPagePrompt?(prompt: PagePromptRequest): 'agent' | 'user'
+  /**
+   * The host answered a page dialog on an agent's tab itself – from the kind's entry in the
+   * policy it was handed through `TabView.setDialogPolicy` (`report.rule` names the entry's
+   * rule), or with the default answer for a kind left out (`rule: 'default'`). The core
+   * reports it to the tab's agent in its next result, in the same words every host gets, and
+   * spends the `once` rule the report names. Hosts whose dialogs reach the core (`onDialog`,
+   * `onLeaveSite`; `HostCapabilities.agentDialogs`) never call it: the core answers and
+   * reports those itself.
+   */
+  onPageDialogAnswered?(report: PageDialogAnswered): void
 }
 
 /**
@@ -1232,6 +1244,20 @@ export interface TabView {
    * Hosts whose hidden pages lay out anyway (Android's WebView) leave it out.
    */
   setAgentDriven?(driven: boolean): void
+  /**
+   * The effective dialog policy of this page's agent for this tab
+   * (`HostCapabilities.agentDialogPolicy`): each kind's answer with the rule that supplies it
+   * (`tab` or `session`). Set beside `setAgentDriven` at each prepare and whenever the policy
+   * changes for the tab – a set or clear, a `once` rule spent, a `ttl` run out – and `null`
+   * when no rule covers the tab (any more) or the session lets it go. A host that answers page
+   * dialogs itself (Android's WebChromeClient) answers from it at once and reports every
+   * answer through `TabViewEvents.onPageDialogAnswered` with the kind's `rule` – the default
+   * answers too, as `default`; it never spends a `once` rule itself: the core does on the
+   * report, and calls this again with what is left. Hosts whose dialogs reach the core leave
+   * it out: the core answers from the policy before holding a dialog for
+   * `browser_handle_dialog`.
+   */
+  setDialogPolicy?(policy: AgentDialogPolicy | null): void
   /**
    * An agent works this page (`true` from the session's prepare, `false` once it lets the tab
    * go): the page's file choosers, `window.print()` and File System Access pickers come to the
@@ -1653,6 +1679,13 @@ export interface MenuPopupOptions {
    * it to the sheet; hosts with native menus have no header to draw and leave it be.
    */
   header?: MenuHeader
+  /**
+   * What the renderer-drawn surface calls the menu – the phone's sheet title, the tablet
+   * popover's name – when the source's generic name is not it: the tab overview's ⋯ menu is
+   * titled as the overview is ("Work · 10 tabs"; cleanup spec §4, `MenuDescriptor.title`).
+   * Native menus have no title to draw and leave it be.
+   */
+  title?: string
   /**
    * The phone app menu's keys in the build's default order, for the sheet's edit mode (TB-22;
    * `MenuDescriptor.defaultOrder`). Native hosts have no edit mode and leave it be.
@@ -2901,15 +2934,22 @@ export interface ShortcutRequest {
   themeColor?: string | null
   /** The manifest's `background_color` as `#rrggbb`, the window's colour before the page paints. */
   backgroundColor?: string | null
+  /**
+   * The desktop's "Open as window" (Chrome's box in "Create shortcut?"): true, the launcher
+   * runs `zenium --app=<url>` and the page opens in an app window of its own; false, it runs
+   * `zenium <url>` and the page opens as a tab in the running Zenium (the second-instance
+   * path). Absent, the host's own rule – a window on the desktop; Android reads `display`.
+   */
+  openAsWindow?: boolean
 }
 
 /**
  * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`; on desktop a
  * launcher – Start menu / desktop `.lnk`, `.desktop` entry, `.app` bundle – that runs the app in
- * a window of its own, `zenium --app=<url>`). `pin` resolves once the request reached the
- * launcher; the launcher's confirmation arrives later through `Browser.webApps.onPinned` because
- * Android's system dialog has no cancel callback (desktop hosts confirm as soon as the files are
- * written, with the icon they kept).
+ * a window of its own, `zenium --app=<url>`, or as a tab, `zenium <url>`, as `openAsWindow`
+ * says). `pin` resolves once the request reached the launcher; the launcher's confirmation
+ * arrives later through `Browser.webApps.onPinned` because Android's system dialog has no cancel
+ * callback (desktop hosts confirm as soon as the files are written, with the icon they kept).
  */
 export interface ShortcutHost {
   pin(request: ShortcutRequest): Promise<boolean>

@@ -160,6 +160,16 @@ describe('the Site settings row (omnibox-28)', () => {
     expect(buttons).toContain(row)
   })
 
+  it('trails the open glyph at 16 on every platform, not at the leading glyph token (§9.3, A9)', async () => {
+    render(<Popover onDismiss={vi.fn()} />)
+    await settle()
+    const glyph = dialog().querySelector<SVGElement>(
+      '[data-site-settings] svg.lucide-external-link'
+    )!
+    expect(glyph.getAttribute('class')).toContain('h-4 w-4')
+    expect(glyph.getAttribute('class')).not.toContain('var(--v2-icon)')
+  })
+
   it('opens Settings › Privacy and security on the site’s landing and lets the popover go', async () => {
     const onDismiss = vi.fn()
     render(<Popover onDismiss={onDismiss} />)

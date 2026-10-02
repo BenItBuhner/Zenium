@@ -26,13 +26,17 @@ import java.util.Calendar
  *     ring at 2 outside, so it stands off the fill by the surface between them (§4);
  *  2. a Settings row (the Look and Feel section's rows, `.zen-settings-row`): the ring 2 inside,
  *     the row running edge to edge in a clipping body (#272's (1b));
- *  3. the Close-all prompt's "Don't ask again" checkbox (`input.zen-v2-checkbox`, #207): the ring
- *     at 2 outside on the unticked box, then Space ticks it and the ring stands off the accent
- *     fill the same way;
- *  4. the History list's multi-select checkbox on the span form (§9.34, #239): a real long press
+ *  3. the History list's multi-select checkbox on the span form (§9.34, #239): a real long press
  *     on a row enters selection, a real touch on a second row ticks its `[role=checkbox]`, read
  *     as `aria-checked` in the DOM and as checked in the accessibility tree; the local
  *     `.zen-list-checkbox` is gone.
+ *
+ * A third scene, the Close-all prompt's "Don't ask again" `input.zen-v2-checkbox` under the Tab
+ * key (#207), went with the question itself: the regular view's Close All Tabs asks nothing
+ * since the Lead's seed A3 (v2 §9.23, Undo on the toast), the private view's prompt carries no
+ * checkbox, and no other input checkbox stands on a phone prompt (the Sync disconnect form's is
+ * behind a connected account, `SyncWebDavDemo`'s). The input form's ring is pinned by the
+ * desktop's tests (`v2Tokens.test.ts`).
  *
  * Each ring is checked for what §1 says: `outline: 2px solid --v2-ring` on the element that has
  * the focus (`:focus-visible`), at the control's offset. The width is read in device pixels:
@@ -129,7 +133,6 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
     override fun demo() {
         installPrimary()
         settingsRow()
-        closeAllCheckbox()
         historySelection()
         finding("\nend: ${failures.size} claim(s) failed${if (failures.isEmpty()) "" else ": " + failures.joinToString("; ")}")
     }
@@ -189,58 +192,10 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
         }
     }
 
-    // --- 3. the Close-all prompt's checkbox (an input; unticked, then ticked by Space) --------------
-
-    private fun closeAllCheckbox() {
-        step("3. The Close-all prompt's checkbox under the Tab key, then ticked by Space (§4: the accent fill)") {
-            openOverview()
-            val menu = touchTapLabelExpecting("More", "the overview's menu rows are up", timeoutMs = 6_000) {
-                chromeValue("String(!!document.querySelector('.zen-sheet-item'))") == "true"
-            }
-            if (!menu) error("the overview's More menu never opened")
-            SystemClock.sleep(1_200)
-            val prompt = touchTapLabelExpecting("Close All Tabs", "the Close-all prompt is up", prefix = true, timeoutMs = 8_000) {
-                chromeValue("String(!!document.querySelector('$PROMPT_CHECKBOX'))") == "true"
-            }
-            if (!prompt) error("the Close-all prompt never came up")
-            val rested = awaitSheetAtRest(6_000)
-            finding("  the prompt at rest: ${verdict(rested)}; it asks '${chromeValue("(document.querySelector('.zen-frame-dialogs .zen-sheet-title-block h2')||{}).textContent||''")}'")
-            chromeJs("window.__zenFocusPath=[]")
-            finding("  focus on open: ${focusedElement()}")
-            val reached = tabTo(PROMPT_CHECKBOX, 8)
-            expect("the Tab key reaches the 'Don't ask again' checkbox", reached, "checkbox")
-            expect("the checkbox is unticked before the key", chromeValue("String(document.querySelector('$PROMPT_CHECKBOX').checked)") == "false", "checkbox-unticked")
-            ringStills("checkbox", "outside", accentFill = false)
-            pressKey(KeyEvent.KEYCODE_SPACE)
-            SystemClock.sleep(500)
-            expect("Space ticks the checkbox", chromeValue("String(document.querySelector('$PROMPT_CHECKBOX').checked)") == "true", "checkbox-ticked")
-            expect("the tree reads the checkbox checked", awaitTree(4_000) { it.isCheckable && it.isChecked }, "checkbox-tree")
-            ringStills("checkbox-checked", "outside", accentFill = true)
-            // Back keeps the tabs (the prompt's Escape route), then back leaves the overview.
-            back()
-            expect("back keeps the tabs and closes the prompt", awaitChrome("!document.querySelector('$PROMPT_CHECKBOX')", 8_000), "prompt-closed")
-            SystemClock.sleep(800)
-            back()
-            SystemClock.sleep(1_500)
-            expect("the tabs are still open", coreState().getJSONObject("tabs").length() >= 2, "tabs-kept")
-        }
-    }
-
-    /** Open the overview with a touch on the bar's Tabs button (the count trails its label). */
-    private fun openOverview() {
-        val close = closeUrlField()
-        if (!close.ok) finding("  (${close.describe()})")
-        val opened = touchTapLabelExpecting("Tabs (", "the overview is up", prefix = true, timeoutMs = 8_000) {
-            chromeValue("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
-        }
-        if (!opened) error("the overview never opened")
-        SystemClock.sleep(2_000)
-    }
-
-    // --- 4. History selection: the span-form checkbox under a real touch (§9.34) -------------------
+    // --- 3. History selection: the span-form checkbox under a real touch (§9.34) -------------------
 
     private fun historySelection() {
-        step("4. History multi-select: the span-form checkbox under a long press and a real touch (§9.34)") {
+        step("3. History multi-select: the span-form checkbox under a long press and a real touch (§9.34)") {
             if (!openMenuItem("History")) error("the app menu has no 'History'")
             val panel = awaitChrome("!!document.querySelector('input[placeholder=\"$HISTORY_SEARCH\"]')", 10_000)
             finding("  the History panel is up: ${verdict(panel)}")
@@ -565,7 +520,6 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
         private const val SETTINGS_SEARCH = ".zen-settings-search-field"
         private const val DRILL_IN = ".zen-settings-drill-in"
         private const val SETTINGS_ROW = ".zen-settings-row"
-        private const val PROMPT_CHECKBOX = ".zen-frame-dialogs input.zen-v2-checkbox"
         private const val LIST_CHECKBOX_ROW = ".zen-phone-row > .zen-list-main[role=\"checkbox\"]"
         private const val HISTORY_SEARCH = "Search history"
 

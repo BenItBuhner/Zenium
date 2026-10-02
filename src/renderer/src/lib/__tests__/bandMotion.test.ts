@@ -421,6 +421,67 @@ describe('BandMotion – the page-edge band’s travel (motion spec §2, §3.1�
     expect(plain.phase).toBe('open')
   })
 
+  it('tells the seam a hand took hold (dragStart) once per take-hold, before the drag’s first frame – on a band at rest and on one caught mid-travel alike; not on a shut or leaving band, where the drag is refused; a seam without the word is served the same', () => {
+    const frames = clockedFrames()
+    const heard: string[] = []
+    const band = new BandMotion({
+      translate: (o) => heard.push(`translate ${o}`),
+      rest: (h) => heard.push(`rest ${h}`),
+      depart: (to) => heard.push(`depart ${to}`),
+      dragStart: () => heard.push('dragStart'),
+      paint: () => undefined
+    })
+    // Shut: the drag is refused and the seam hears nothing of it.
+    band.dragStart()
+    expect(band.phase).toBe('closed')
+    expect(heard).toEqual([])
+    band.open(BAND_HEIGHT_ONE_LINE)
+    settle(frames)
+    heard.length = 0
+    // At rest: the take-hold once, then the drag's frames – no second word within the drag.
+    band.dragStart()
+    band.drag(-10)
+    band.drag(-20)
+    expect(heard).toEqual(['dragStart', 'translate 46', 'translate 36'])
+    // The release names its destination as any travel does: the seam's next word is a depart.
+    band.release(0)
+    expect(heard[3]).toBe(`depart ${BAND_HEIGHT_ONE_LINE}`)
+    settle(frames)
+    expect(heard.at(-1)).toBe(`rest ${BAND_HEIGHT_ONE_LINE}`)
+    // Mid-travel: a re-target toward 76 departs and runs three frames; the hand takes it between
+    // the travel's last frame and the drag's first – the spring stopped, the clock idle.
+    heard.length = 0
+    band.open(BAND_HEIGHT_TWO_LINE)
+    frames.tick(3)
+    expect(heard).toHaveLength(4)
+    expect(heard[0]).toBe(`depart ${BAND_HEIGHT_TWO_LINE}`)
+    expect(heard.slice(1).every((w) => w.startsWith('translate '))).toBe(true)
+    band.dragStart()
+    expect(frames.pending()).toBe(0)
+    band.drag(-30)
+    expect(heard.slice(4)).toEqual(['dragStart', `translate ${BAND_HEIGHT_TWO_LINE - 30}`])
+    band.release(0)
+    settle(frames)
+    expect(heard.at(-1)).toBe(`rest ${BAND_HEIGHT_TWO_LINE}`)
+    // Leaving: refused – the frames stay the leave's, and the seam hears no take-hold.
+    band.close()
+    heard.length = 0
+    band.dragStart()
+    expect(band.phase).toBe('closing')
+    expect(heard).toEqual([])
+    settle(frames)
+    expect(heard.at(-1)).toBe('rest 0')
+    expect(heard).not.toContain('dragStart')
+    // A seam without the word is served the same.
+    const plain = new BandMotion(trace().seam)
+    plain.open(BAND_HEIGHT_ONE_LINE)
+    settle(frames)
+    plain.dragStart()
+    plain.drag(-10)
+    expect(plain.phase).toBe('dragging')
+    expect(plain.offset).toBe(46)
+  })
+
   it('dispose() stops the motion and the clock hears nothing more; close() on a shut band is nothing', () => {
     const frames = clockedFrames()
     const t = trace()

@@ -1217,8 +1217,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.stop" -> { tab?.stopLoading(); reply(null) }
             // --- the page's beforeunload (PUI-28; `TabWebView.confirmUnload`) ---
             // Whether the page may be unloaded (the core's `TabView.confirmUnload`, before a tab
-            // close or the app's exit): true once its `beforeunload` handlers let it go or the user
-            // chose to leave, false when they chose to stay. A view already gone may go.
+            // close or the app's exit): true once its `beforeunload` handlers let it go or an
+            // objection was overruled (a close path never asks on a touch host, §9.23; the close is
+            // undoable). A view already gone may go.
             "view.confirmUnload" -> if (tab == null) reply(true) else tab.confirmUnload { leave -> reply(leave) }
             "view.setMuted" -> { tab?.setMuted(args.bool("muted")); reply(null) }
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
@@ -1226,6 +1227,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
             // The agent's word on driving the page while the layout hides it (OS-40; `TabWebView.agentDriven`).
             "view.setAgentDriven" -> { tab?.agentDriven = args.bool("driven"); reply(null) }
+            // The agent's dialog policy for the tab, resolved by the core, or null when none
+            // covers it (`TabWebView.dialogPolicy`, `DialogPolicyAnswer.parse`): a hidden
+            // agent-driven page's dialogs are answered from it at once and reported.
+            "view.setDialogPolicy" -> {
+                tab?.dialogPolicy = DialogPolicyAnswer.parse(args.optJSONObject("policy"))
+                reply(null)
+            }
             // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
             // one as the self-submitting form document the core built (`ImagePostNavigation`).
             "view.post" -> {
@@ -1280,6 +1288,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
+            // The page-edge band's seat for a document under it (`lib/band/androidHost.ts`): the
+            // view laid out that much lower and shorter at rest, the offset less it translated.
+            "view.setBandSeat" -> { tabs.setBandSeat(args.str("tabId"), args.num("seat")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
             "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible"), args.bool("switched")); reply(null) }
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).

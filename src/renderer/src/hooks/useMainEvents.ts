@@ -69,12 +69,13 @@ import {
   showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
-import { activeTab, isEmptySplitPane, regularOf } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { closeWithUndo } from '@renderer/lib/closeUndo'
+import { closeGroupUndoable, closeUndoable } from '@renderer/lib/closeUndo'
 import { requestAgentRelease } from '@renderer/lib/agentRelease'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
-import { tabsOnPane } from '@renderer/lib/privateTabs'
+import { dispatchOverviewCommand } from '@renderer/lib/overviewCommands'
+import { overviewMenuRequest } from '@renderer/lib/overviewMenuRequest'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
@@ -93,28 +94,6 @@ import {
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
   return state ? (activeTab(state)?.id ?? null) : null
-}
-
-/**
- * Close the group's tabs with Undo on the toast (`folder.closeUndoable`, TAB-16): the group's
- * live members as the phone's overview reads them for its own Close Group (`liveMembersOf`: the
- * space's regular tabs in the group, a private one none of them), the close the core's
- * `folder.close` – the group stays, saved with their pages – and the toast the group's words.
- */
-function closeGroupUndoable(folderId: string): void {
-  const state: UIState | null = browserStore.get().state
-  const folder = state?.folders[folderId]
-  if (!state || !folder) return
-  const space = state.spaces.find((s) => s.id === folder.spaceId)
-  if (!space) return
-  const tabs = tabsOnPane(regularOf(state, space), 'tabs').filter((t) => t.folderId === folderId)
-  closeWithUndo({
-    tabs,
-    settings: state.settings,
-    activeTabId: activeTab(state)?.id ?? null,
-    close: () => run('folder.close', { folderId }),
-    group: folder
-  })
 }
 
 function followsCover(): boolean {
@@ -299,7 +278,12 @@ export function useMainEvents(): void {
         // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
-        if (!claimed) run('app.menu', { keyboard: true, mediaHubFolded: mediaHubFolded() })
+        if (!claimed)
+          run('app.menu', {
+            keyboard: true,
+            mediaHubFolded: mediaHubFolded(),
+            ...overviewMenuRequest()
+          })
       }),
       // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
       // and the page (lib/panes.ts).
@@ -430,6 +414,11 @@ export function useMainEvents(): void {
       // saved", whose Undo brings them back into the group. Inert on the desktop, whose folder
       // menu never emits it (`showFolderContextMenu` calls the core's `closeFolder` itself).
       onEvent('folder.closeUndoable', ({ folderId }) => closeGroupUndoable(folderId)),
+      // The touch hosts' tab menus' close rows, the same way (§9.23: Close Tab, Remove Tab, the
+      // directed and other closes, the selection's Close N Tabs – the tabs the close takes and the
+      // core command that closes them, `lib/closeUndo.ts`); the desktop's rows close in the core
+      // and never emit it.
+      onEvent('tab.closeUndoable', ({ tabIds, close }) => closeUndoable(tabIds, close)),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
@@ -490,6 +479,9 @@ export function useMainEvents(): void {
         )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
+      // A row of the tab overview's ⋯ menu that is the chrome's to act on (tab overview cleanup
+      // spec §4): the mounted overview hears it (`onOverviewCommand`).
+      onEvent('overview.command', ({ command }) => dispatchOverviewCommand(command)),
       onEvent('menu.hide', ({ menuId }) => {
         if (uiStore.get().menu?.id === menuId) closeMenu(false)
       }),

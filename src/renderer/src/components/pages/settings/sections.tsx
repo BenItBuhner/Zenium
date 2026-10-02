@@ -90,6 +90,7 @@ import {
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
+import { isShortcutRecord } from '@shared/webApp'
 import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
@@ -1856,20 +1857,8 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     : []
-  // The inverse: the tab overview's Close all tabs and its "Close N tabs?" prompt are the phone
-  // host's (a windowed host has no overview), so the switch that turns the prompt off is too.
-  const overviewRows: SettingsRow[] = windows
-    ? []
-    : [
-        {
-          kind: 'switch',
-          id: 'confirm-close-all',
-          label: 'Confirm before closing all tabs',
-          description: 'The tab overview asks before it closes every tab of a Space.',
-          checked: s.confirmCloseAll,
-          onChange: (v) => set({ confirmCloseAll: v })
-        }
-      ]
+  // No switch for the phone's Close all tabs: it asks nothing, and one toast undoes the lot (the
+  // Lead's A3/S1 ruling).
   // The startup on a host without windows: the phone's boot knows two – the last session back,
   // or one fresh tab – so its row stays the switch it was (`startup.mode` underneath: on is
   // "Continue where you left off", off "Open the New Tab page"; a synced `pages` reads as on,
@@ -1914,7 +1903,6 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.ctrlTabCyclesWithinSection,
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
-        ...overviewRows,
         ...startupRows,
         ...sessionRows
       ]
@@ -3307,7 +3295,7 @@ export const PRIVATE_LOCK_ROW = {
  * is confirmed by the device first, on or off (`setPrivateLockOnLeave`: the system's prompt,
  * else turning the lock off would be the way past it); without a screen lock the row is
  * disabled at .4 and its description says a screen lock is needed (§9.30). Phone-host-only,
- * as `confirmCloseAll` is: a desktop private window has no lock.
+ * as the Tabs section's startup switch is (`startupRows`): a desktop private window has no lock.
  */
 function privateLockGroups({ state, screenLock }: SectionContext): RowGroup[] {
   if (state.capabilities.windows || !state.capabilities.privateTabs) return []
@@ -4787,34 +4775,42 @@ function extensionsSection(ctx: SectionContext): RowGroup[] {
 
 /**
  * Settings › Apps (shortcuts-menus-138; Edge's Apps › Manage apps, Chrome's chrome://apps): the
- * web apps installed on this computer (`state.webApps`, the launchers the host pinned), one
- * item row each by name – its icon where the host kept one, the site it opens at under the
- * name – with the row's ⋯ (§10.5: a row of actions and nothing to set, so no dialog opens to
- * hold them) holding Open, which launches the app as its launcher does (`webapp.launch`: the
- * app's open window forward, else a window of its own), and Uninstall in the danger ink
- * (`webapp.uninstall`: the launcher and the record go, the app's windows close). A row's
- * action runs at once (§10.5) – except that closing a window the user has in front of them is
- * the one thing here that costs something, so WHILE A WINDOW OF THE APP IS OPEN (`windows`,
- * the snapshot's count) Uninstall asks first with §9.23's notice: "Uninstall <app>? Its open
- * window closes." (or "Its open windows close."), Cancel | Uninstall as two secondaries with
- * the verb in the plain ink, since nothing of the user's data goes (the #435 lead check, ruling
- * 5); with no window open, no prompt. Installing is a page's own act – the app menu's Save and
- * Share › Install <app>… or Create Shortcut… on the site – which the empty state and the
- * description name, since nothing here adds one.
+ * web apps installed on this computer and the shortcuts made to pages (`state.webApps`, the
+ * launchers the host pinned; a shortcut's record is `kind` `shortcut`), under the one heading
+ * "Apps and shortcuts" – as chrome://apps lists both – one item row each by name, its icon
+ * where the host kept one. Under an app's name the site it opens at; under a shortcut's what
+ * its launcher does, "Shortcut · opens as a tab" or "Shortcut · opens in a window" by the
+ * record's `openAsWindow` (absent is a window, the host's rule), since the description's first
+ * clause is true of apps alone and the heading would otherwise call a shortcut an installed app
+ * (the Design Lead's ruling on #767). The row's ⋯ (§10.5: a row of actions and nothing to set,
+ * so no dialog opens to hold them) holds Open, which launches the app as its launcher does
+ * (`webapp.launch`: the app's open window forward, else a window of its own – a tab for a
+ * shortcut made to open one), and Uninstall in the danger ink (`webapp.uninstall`: the
+ * launcher and the record go, the app's windows close; Uninstall is Chrome's verb for a
+ * shortcut too). A row's action runs at once (§10.5) – except that closing a window the user
+ * has in front of them is the one thing here that costs something, so WHILE A WINDOW OF THE APP
+ * IS OPEN (`windows`, the snapshot's count) Uninstall asks first with §9.23's notice:
+ * "Uninstall <app>? Its open window closes." (or "Its open windows close."), Cancel | Uninstall
+ * as two secondaries with the verb in the plain ink, since nothing of the user's data goes (the
+ * #435 lead check, ruling 5); with no window open, no prompt. Installing is a page's own act –
+ * the app menu's Save and Share › Install <app>… or Create Shortcut… on the site – which the
+ * empty state and the description name, since nothing here adds one.
  */
 function appsSection({ state }: SectionContext): RowGroup[] {
   const apps = [...state.webApps].sort((a, b) => a.name.localeCompare(b.name))
   return [
     {
       id: 'apps',
-      heading: 'Installed apps',
+      heading: 'Apps and shortcuts',
       description:
-        'Sites installed as apps open in a window of their own. To install one, open the site and pick Install… or Create Shortcut… from the app menu’s Save and Share.',
+        "Sites installed as apps open in a window of their own; a shortcut opens its page as a tab or in a window, as you chose when you made it. To add one, open the site and pick Install… or Create Shortcut… from the app menu's Save and Share.",
       rows: apps.map((app) =>
         item(
           `app:${app.id}`,
           app.name,
-          appSite(app.startUrl),
+          isShortcutRecord(app)
+            ? `Shortcut · opens ${app.openAsWindow === false ? 'as a tab' : 'in a window'}`
+            : appSite(app.startUrl),
           [
             {
               kind: 'action',
@@ -4854,7 +4850,10 @@ function appsSection({ state }: SectionContext): RowGroup[] {
   ]
 }
 
-/** The site an app opens at, as its row's second line: the host alone, no scheme. */
+/**
+ * The site an app opens at, as its row's second line and every row's search keyword: the host
+ * alone, no scheme. A shortcut's second line says what its launcher does instead.
+ */
 function appSite(startUrl: string): string {
   try {
     return new URL(startUrl).host

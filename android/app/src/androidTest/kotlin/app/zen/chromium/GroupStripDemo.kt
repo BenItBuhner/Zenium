@@ -52,8 +52,8 @@ import kotlin.math.roundToInt
  * transforms included) and the band's custom property; the driver reads the log back and checks
  * the order of events. Where the chips are is read from the DOM too, not the accessibility tree
  * (which trails the grid by seconds on the API 34 emulator); DOM boxes are CSS px, scaled by the
- * device pixel ratio and checked once against the accessibility bounds of the overview's Spaces
- * button. The pages come from a loopback server in this process ([DemoServer]); the profile
+ * device pixel ratio and checked once against the accessibility bounds of the overview's title.
+ * The pages come from a loopback server in this process ([DemoServer]); the profile
  * (`group-strip-demo-state.json`) is one space of five loose tabs, Home active. Driven by the
  * `android-group-strip-demo` workflow. See [DemoHarness].
  */
@@ -620,14 +620,14 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         return domRect(selector) ?: after
     }
 
-    /** Check the DOM's coordinates against the accessibility tree once, on the overview's Spaces button. */
+    /** Check the DOM's coordinates against the accessibility tree once, on the overview's title. */
     private fun calibrate() {
         if (calibrated) return
-        val fromDom = domRect(SPACES) ?: return
-        val fromTree = waitFor("Spaces", 4_000) ?: return
+        val fromDom = domRect(TITLE) ?: return
+        val fromTree = awaitOverviewTitle(4_000) ?: return
         val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
         val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
-        finding("coordinates: Spaces button at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
+        finding("coordinates: the overview's title at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
         if (abs(dx) <= MAX_OFFSET && abs(dy) <= MAX_OFFSET) {
             originX = dx
             originY = dy
@@ -1015,6 +1015,6 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         private const val BAR_ROW = ".zen-phone-bar:not([aria-hidden]) .zen-phone-bar-row"
         private const val GRID = ".zen-overview-grid"
         private const val GROUP = ".zen-group"
-        private const val SPACES = "[aria-label=\"Spaces\"]"
+        private const val TITLE = OVERVIEW_TITLE_SELECTOR
     }
 }

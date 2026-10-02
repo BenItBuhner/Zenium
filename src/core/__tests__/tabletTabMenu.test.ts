@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ANDROID, DESKTOP, deepItem, labels, pageHarness } from './menusFixture'
 
 /**
@@ -40,6 +40,137 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(deepItem(h.shown(), 'Close Tabs Above').enabled).toBe(false)
   })
 
+  /*
+   * §9.23, OS-40 part B: on a touch host, closing a tab never asks and can always be undone.
+   * The tablet menu's close rows close nothing in the core themselves: each emits
+   * `tab.closeUndoable` with the tabs the close takes, as the core's own rule reads them, and
+   * the core command that closes them; the chrome runs that command through its one
+   * close-with-undo (`lib/closeUndo.ts`, pinned in `hooks/__tests__/closeUndoable.test.tsx`).
+   */
+  const emitted = (emit: ReturnType<typeof vi.spyOn>): unknown[] =>
+    emit.mock.calls.map(([name, payload]) => [name, payload])
+
+  it("Close Other Tabs closes nothing itself on the tablet: it emits tab.closeUndoable with the tabs the core's rule closes and the core's tab.closeOthers (§9.23, OS-40 part B)", () => {
+    const h = tablet()
+    const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Other Tabs').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [other], close: { command: 'tab.closeOthers', tabId: h.tabId } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+    // The chrome answers with the core's own close, once its undo is armed.
+    h.browser.handleCommand(h.win, 'tab.closeOthers', { tabId: h.tabId })
+    expect(h.browser.tabs.tab(other)).toBeUndefined()
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+  })
+
+  it('Close Tabs Above and Close Tabs Below emit the directed close the same way, with the tabs on that side of the row', () => {
+    const h = tablet()
+    const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Tabs Below').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [other], close: { command: 'tab.closeBelow', tabId: h.tabId } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+    emit.mockClear()
+    // From the second row, the first is the one above.
+    h.browser.menus.showTabContextMenu(other, h.win)
+    deepItem(h.shown(), 'Close Tabs Above').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.closeAbove', tabId: other } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+    h.browser.handleCommand(h.win, 'tab.closeAbove', { tabId: other })
+    expect(h.browser.tabs.tab(h.tabId)).toBeUndefined()
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+  })
+
+  it("Close Tab emits the row's own close (tab.close, not forced) and closes nothing until the chrome runs it", async () => {
+    const h = tablet()
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Tab').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.close', tabId: h.tabId, force: false } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+    // The chrome answers with the core's own close (its page's unload check heard first).
+    h.browser.handleCommand(h.win, 'tab.close', { tabId: h.tabId, force: false })
+    await vi.waitFor(() => expect(h.browser.tabs.tab(h.tabId)).toBeUndefined())
+  })
+
+  it("a pinned row's Close Tab (keep pinned) and Remove Tab emit tab.close unforced and forced in turn", () => {
+    const h = tablet()
+    h.browser.tabs.togglePin(h.tabId, h.win)
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    expect(labels(h.shown())).toEqual(
+      expect.arrayContaining(['Close Tab (keep pinned)', 'Remove Tab'])
+    )
+    deepItem(h.shown(), 'Close Tab (keep pinned)').click?.()
+    deepItem(h.shown(), 'Remove Tab').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.close', tabId: h.tabId, force: false } }
+      ],
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.close', tabId: h.tabId, force: true } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+  })
+
+  it("the selection menu's Close N Tabs emits the selection with the core's tab.closeMany", () => {
+    const h = tablet()
+    const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showSelectionContextMenu([h.tabId, other], h.win)
+    deepItem(h.shown(), 'Close 2 Tabs').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId, other], close: { command: 'tab.closeMany', tabIds: [h.tabId, other] } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+  })
+
+  it("the desktop's close rows close in the core themselves and emit nothing (their paths are as they were)", () => {
+    const h = pageHarness(DESKTOP)
+    h.browser.tabs.createTab({ url: 'https://example.org/second', active: false }, h.win)
+    h.browser.tabs.createTab({ url: 'https://example.org/third', active: false }, h.win)
+    const [other, third] = h.win.activeSpace().tabIds.filter((id) => id !== h.tabId)
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Tabs Below').click?.()
+    expect(h.browser.tabs.tab(other)).toBeUndefined()
+    expect(h.browser.tabs.tab(third)).toBeUndefined()
+    h.browser.tabs.createTab({ url: 'https://example.org/fourth', active: false }, h.win)
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Other Tabs').click?.()
+    expect(h.win.activeSpace().tabIds).toEqual([h.tabId])
+    expect(emit.mock.calls.map(([name]) => name)).not.toContain('tab.closeUndoable')
+  })
+
   it('opens a new tab below the row (Chrome\'s "New tab below" for a vertical strip)', () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
@@ -56,19 +187,46 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(before).not.toContain(after[at + 1])
   })
 
-  it("adds the tab to a group – Zenium's folder – from Move Tab: a new folder while the space has none, the space's folders once it has", () => {
+  it("adds the tab to a group – Zenium's folder – from Move Tab: a new group while the space has none, the space's groups once it has", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
-    expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Folder')
-    deepItem(h.shown(), 'Add Tab to New Folder').click?.()
+    expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Group')
+    deepItem(h.shown(), 'Add Tab to New Group').click?.()
     const folder = Object.values(h.browser.state.model.folders)[0]
     expect(folder).toBeDefined()
     expect(h.browser.tabs.tab(h.tabId)?.folderId).toBe(folder!.id)
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const menu = labels(h.shown())
-    expect(menu).toContain('Move Tab > Move to Folder')
-    expect(menu).toContain('Move Tab > Remove from Folder')
-    expect(menu).not.toContain('Move Tab > Add Tab to New Folder')
+    expect(menu).toContain('Move Tab > Move to Group')
+    expect(deepItem(h.shown(), 'New Group…').click).toBeTypeOf('function')
+    expect(menu).toContain('Move Tab > Remove from Group')
+    expect(menu).not.toContain('Move Tab > Add Tab to New Group')
+  })
+
+  it('TABLET-22: the four folder rows say Group on the phone and the tablet – Chrome for Android speaks of groups, never folders – and Folder on the desktop, byte for byte', () => {
+    const rows = (h: ReturnType<typeof pageHarness>): string[] => {
+      h.browser.menus.showTabContextMenu(h.tabId, h.win)
+      return labels(h.shown()).filter((l) => /Folder|Group/.test(l))
+    }
+    for (const layout of ['phone', 'tablet'] as const) {
+      const h = pageHarness(ANDROID, { formFactor: layout })
+      // Before the space has a group: the one row. After: the move's submenu and the removal.
+      expect(rows(h)).toEqual(['Move Tab > Add Tab to New Group'])
+      deepItem(h.shown(), 'Add Tab to New Group').click?.()
+      expect(rows(h)).toEqual(
+        expect.arrayContaining(['Move Tab > Move to Group', 'Move Tab > Remove from Group'])
+      )
+      expect(deepItem(h.shown(), 'New Group…').click).toBeTypeOf('function')
+      expect(JSON.stringify(h.shown())).not.toContain('Folder')
+    }
+    const desktop = pageHarness(DESKTOP)
+    expect(rows(desktop)).toEqual(['Move Tab > Add Tab to New Folder'])
+    deepItem(desktop.shown(), 'Add Tab to New Folder').click?.()
+    expect(rows(desktop)).toEqual(
+      expect.arrayContaining(['Move Tab > Move to Folder', 'Move Tab > Remove from Folder'])
+    )
+    expect(deepItem(desktop.shown(), 'New Folder…').click).toBeTypeOf('function')
+    expect(JSON.stringify(desktop.shown())).not.toContain('Group')
   })
 
   it("keeps Chrome's window moves out where the host has no windows (capabilities.windows), and in on a host that has", () => {

@@ -38,6 +38,7 @@ describe('readBandSignals', () => {
       tabId: 't1',
       page: true,
       document: true,
+      chromePage: false,
       privateTab: false,
       covered: false,
       keyboardUp: false,
@@ -56,6 +57,8 @@ describe('readBandSignals', () => {
     expect(signals.tabId).toBeNull()
     expect(signals.page).toBe(false)
     expect(signals.document).toBe(false)
+    expect(signals.chromePage).toBe(false)
+    expect(bandFrameOf(signals).ok).toBe(false)
   })
 
   it('the new tab page and zen:// pages are not pages to the band (no offer there, §10)', () => {
@@ -70,31 +73,46 @@ describe('readBandSignals', () => {
     )
   })
 
-  it("a served zen:// document is a document in the tab's own view – a state stands on it (§10); a chrome-drawn page is not – the band waits there (the Lead's (B) on question (8))", () => {
-    const doc = (url: string, phone = false): boolean =>
-      readBandSignals(stateWith(url), ui(), IDLE, false, phone).document
-    expect(doc('https://example.com/')).toBe(true)
-    expect(doc('zen://newtab')).toBe(true)
-    expect(doc('zen://error?code=-2')).toBe(true)
-    expect(doc('zen://version')).toBe(true)
-    for (const url of ['zen://settings', 'zen://history', 'zen://downloads/', 'zen://bookmarks']) {
-      expect(doc(url), url).toBe(false)
+  it("a served zen:// document is a document in the tab's own view – a state stands on it (§10), the WebView makes room; a chrome-drawn page is the chrome's own layer's (`chromePage`) – a state stands on it too, through `PageBandLayer` (the Lead's (B) on question (8), its owed follow-up)", () => {
+    const read = (url: string, phone = false): BandSignals =>
+      readBandSignals(stateWith(url), ui(), IDLE, false, phone)
+    for (const url of [
+      'https://example.com/',
+      'zen://newtab',
+      'zen://error?code=-2',
+      'zen://version'
+    ]) {
+      expect(read(url), url).toMatchObject({ document: true, chromePage: false })
+      expect(bandFrameOf(read(url)).ok, url).toBe(true)
     }
-    expect(doc('')).toBe(false)
+    for (const url of ['zen://settings', 'zen://history', 'zen://downloads/', 'zen://bookmarks']) {
+      expect(read(url), url).toMatchObject({ document: false, chromePage: true })
+      expect(bandFrameOf(read(url)), url).toMatchObject({ ok: true, offers: false })
+    }
+    expect(read('')).toMatchObject({ document: false, chromePage: false })
+    expect(bandFrameOf(read('')).ok).toBe(false)
   })
 
-  it("the phone draws its new tab page in the chrome over zen://blank: no document under it, so the band waits (BandDemo scene 6's verdict, the §9.33 pin); the tablet's zen://blank is the view's own", () => {
-    expect(readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, true).document).toBe(false)
-    expect(readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, false).document).toBe(true)
-    expect(
-      bandFrameOf(readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, true))
-    ).toMatchObject({ ok: false, offers: false })
+  it("the phone draws its new tab page in the chrome over zen://blank: a chrome-drawn page, where a state stands on the band's layer (the default-browser reminder at launch, as Chrome's) and an offer never; the tablet's zen://blank is the view's own", () => {
+    const phoneNtp = readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, true)
+    expect(phoneNtp).toMatchObject({ document: false, chromePage: true, page: false })
+    expect(bandFrameOf(phoneNtp)).toMatchObject({ ok: true, offers: false })
+    const tabletBlank = readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, false)
+    expect(tabletBlank).toMatchObject({ document: true, chromePage: false, page: false })
+    expect(bandFrameOf(tabletBlank)).toMatchObject({ ok: true, offers: false })
     expect(
       bandFrameOf(readBandSignals(stateWith('zen://newtab'), ui(), IDLE, false, false))
     ).toMatchObject({
       ok: true,
       offers: false
     })
+  })
+
+  it('a pull withholds the band on a chrome-drawn page as on a document (one source of the offset at a time)', () => {
+    const pull: PullState = { tabId: 't1', phase: 'pulling', armed: false }
+    expect(
+      bandFrameOf(readBandSignals(stateWith('zen://settings'), ui(), pull, false, true)).ok
+    ).toBe(false)
   })
 
   it("every zen:// page is a chrome page (the Design Lead's ruling: not the new tab page and settings alone) – history, downloads, a page the chrome adds later, with a query or a fragment", () => {
@@ -238,6 +256,7 @@ describe('bandFrameOf', () => {
     tabId: 't1',
     page: true,
     document: true,
+    chromePage: false,
     privateTab: false,
     covered: false,
     keyboardUp: false,
@@ -252,7 +271,11 @@ describe('bandFrameOf', () => {
     expect(bandFrameOf({ ...free, page: false })).toMatchObject({ ok: true, offers: false })
   })
 
-  it('never on a chrome-drawn page (no document under the band), never without a page', () => {
+  it("a state stands on a chrome-drawn page too (the chrome's layer makes room): ok, no offers; never on the empty frame, never without a tab", () => {
+    expect(bandFrameOf({ ...free, document: false, chromePage: true, page: false })).toMatchObject({
+      ok: true,
+      offers: false
+    })
     expect(bandFrameOf({ ...free, document: false }).ok).toBe(false)
     expect(bandFrameOf({ ...free, tabId: null })).toMatchObject({ front: null, ok: false })
   })

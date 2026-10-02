@@ -52,6 +52,7 @@ import {
   type FakeboxPose,
   type FakeboxState
 } from './motion/fakebox'
+import { REDUCED_FADE_MS } from './motion/fade'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from './motion/spring'
 import { viewportStore } from './formFactor'
 import { focusOmnibox } from './omniboxFocus'
@@ -122,8 +123,8 @@ export function fakeboxHoldsChrome(s: FakeboxMorphState): boolean {
 /** The spring: SNAPPY's, the swipes' and the FLIP glides' (v2 §11), on the poses' distance. */
 export const SPRING_FAKEBOX = SPRING_SNAPPY
 
-/** Under reduced motion the omnibox arrives and leaves on a 120 ms fade in place (v2 §11.3). */
-export const FAKEBOX_REDUCED_FADE_MS = 120
+/** Under reduced motion the omnibox arrives and leaves on the 120 ms fade in place (v2 §11.3; motion spec §0.5's one fade). */
+export const FAKEBOX_REDUCED_FADE_MS = REDUCED_FADE_MS
 
 /** The morph's value, on the root and on each surface: 0 the page's, 1 the omnibox's. */
 export const FAKEBOX_VAR = '--zen-ntp-morph'

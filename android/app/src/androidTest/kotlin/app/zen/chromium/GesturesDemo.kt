@@ -21,6 +21,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import org.json.JSONObject
+import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -164,7 +165,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         returnToThird()
         touchpadSwitchStills()
         touchpadSwipeRefused()
-        paneSwipes()
+        spaceSwipes()
         pillHoldPaste()
         gesturalEdgeUntouched()
         finding("\nend: $checks claims, $failures failed")
@@ -792,69 +793,96 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         }
     }
 
-    // --- GN-19: the switcher's pane swipe -------------------------------------------------------
+    // --- GN-19: the overview's space swipe ------------------------------------------------------
 
     /**
-     * In the overview a drag left over the pane's background carries the segment's line and fades
-     * the pane; past a third of the width the release picks Groups. Back the same way; a short
-     * drag settles back on Tabs.
+     * In the overview a horizontal drag over the grid's background moves between the Spaces, the
+     * header following (tab overview cleanup spec §1, §6 – GN-19 turned to the Spaces now that
+     * the overview has no panes to move between): the Space's slot rides the finger 1:1, past a
+     * third of the width the release picks the neighbour and the title cross-fades to its name;
+     * back the same way; a short drag released still springs back. The seeded state has one Space
+     * – a swipe with nowhere to go is the scroller's – so the section makes a second one
+     * (`space.create`, a tab in it) and takes it away again at its end (`space.delete`).
      */
-    private fun paneSwipes() {
-        section("GN-19: the switcher's pane swipe")
-        if (!openOverview()) {
-            touchFault("the overview never opened for the pane swipe")
+    private fun spaceSwipes() {
+        section("GN-19: the overview's space swipe")
+        val personal = runCatching {
+            JSONTokener(coreInvoke("space.create", """{"name":"$SECOND_SPACE","icon":"🏠","containerId":"default","theme":null}""")).nextValue() as? String
+        }.getOrNull()
+        if (personal.isNullOrEmpty()) {
+            touchFault("no second Space for the space swipe (space.create answered nothing)")
             return
         }
-        claim("the overview opened on Tabs (selected '${selectedPane()}')", selectedPane() == "tabs")
-        val pane = domBox("document.querySelector('.zen-overview-pane')") ?: run {
-            touchFault("the overview's pane was not found")
-            closeOverview()
-            return
-        }
-        // The lower part of the pane: below the two cards, off the 32 dp gutters at either side.
-        val y = pane.top + pane.height() * 0.78f
-        val startX = width * 0.82f
-        val travel = width * 0.5f
-        val f = Finger()
-        val scene = traceFrames("pane-swipe-overview", JankBudget.Kind.GESTURE) {
-            f.down(startX, y)
-            f.moveBy(-travel, 0f, 900)
-            f.hold(200)
-        }
-        val live = js("(function(){var e=document.querySelector('.zen-overview-segment');return e&&e.hasAttribute('data-swipe')?'live':''})()") == "live"
-        val line = js("(function(){var e=document.querySelector('[data-testid=\"overview-segment-line\"]');return e?e.style.transform:''})()")
-        val opacity = js("(function(){var e=document.querySelector('.zen-overview-pane');return e?e.style.opacity:''})()")
-        claim("the segment is live under the finger (data-swipe)", live)
-        claim("the segment's line rides the finger (transform '$line')", line.startsWith("translate3d("))
-        claim("the pane fades in step (opacity '$opacity')", opacity.toFloatOrNull()?.let { it > 0f && it < 1f } == true)
-        noteScene(scene)
-        shot("06-pane-swipe-mid")
-        f.up()
-        claim("the release past a third picked Groups", awaitTrue(4_000) { selectedPane() == "groups" })
-        settle()
-        shot("07-pane-groups")
-
-        // Back to Tabs the same way.
-        val g = Finger()
-        g.down(width * 0.18f, y)
-        g.moveBy(travel, 0f, 900)
-        g.hold(200)
-        g.up()
-        claim("the swipe back picked Tabs again", awaitTrue(4_000) { selectedPane() == "tabs" })
-        SystemClock.sleep(1_200)
-
-        // A short drag, released still: under a third and no fling, so the segment settles back.
-        val h = Finger()
-        h.down(startX, y)
-        h.moveBy(-width * 0.15f, 0f, 700)
-        h.hold(700)
-        h.up()
+        // The new Space takes the window with it: a tab for it, then back to Work for the swipe.
+        runCatching { coreInvoke("tab.create", """{"url":${JSONObject.quote("${server.origin}/side.html")},"active":true,"spaceId":${JSONObject.quote(personal)}}""") }
+        runCatching { coreInvoke("space.activate", """{"spaceId":"$WORK_SPACE_ID"}""") }
         SystemClock.sleep(1_500)
-        claim("a short swipe released still settles back on Tabs (selected '${selectedPane()}')", selectedPane() == "tabs")
-        claim("the segment is at rest after the settle (no data-swipe)", awaitTrue(3_000) { js("(function(){var e=document.querySelector('.zen-overview-segment');return e&&e.hasAttribute('data-swipe')?'live':''})()") == "" })
-        shot("08-pane-settled")
-        closeOverview()
+        try {
+            if (!openOverview()) {
+                touchFault("the overview never opened for the space swipe")
+                return
+            }
+            val onWork = awaitTrue(4_000) { overviewTitleLabel()?.startsWith("$WORK_SPACE, ") == true }
+            claim("the overview opened on Work (title '${overviewTitleLabel()}')", onWork)
+            val slot = domBox("document.querySelector('$SPACE_SLOT')") ?: run {
+                touchFault("the overview's Space slot was not found")
+                closeOverview()
+                return
+            }
+            // The lower part of the slot: below the two cards, off the 32 dp gutters at either side.
+            val y = slot.top + slot.height() * 0.78f
+            val startX = width * 0.82f
+            val travel = width * 0.5f
+            val f = Finger()
+            val scene = traceFrames("space-swipe-overview", JankBudget.Kind.GESTURE) {
+                f.down(startX, y)
+                f.moveBy(-travel, 0f, 900)
+                f.hold(200)
+            }
+            val live = slotLive()
+            val transform = js("(function(){var e=document.querySelector('$SPACE_SLOT');return e?e.style.transform:''})()")
+            claim("the Space's slot is live under the finger (data-swipe)", live)
+            claim("the slot rides the finger towards the next Space (transform '$transform')", transform.startsWith("translate3d(-"))
+            claim("the title still reads Work under the finger (the cross-fade waits for the pick)", overviewTitleLabel()?.startsWith("$WORK_SPACE, ") == true)
+            noteScene(scene)
+            shot("06-space-swipe-mid")
+            f.up()
+            claim("the release past a third picked $SECOND_SPACE: the title follows", awaitTrue(4_000) { overviewTitleLabel()?.startsWith("$SECOND_SPACE, ") == true })
+            claim("and the core switched the Space with it", awaitTrue(4_000) { activeSpaceId() == personal })
+            settle()
+            shot("07-space-personal")
+
+            // Back to Work the same way.
+            val g = Finger()
+            g.down(width * 0.18f, y)
+            g.moveBy(travel, 0f, 900)
+            g.hold(200)
+            g.up()
+            claim("the swipe back picked Work again", awaitTrue(4_000) { overviewTitleLabel()?.startsWith("$WORK_SPACE, ") == true && activeSpaceId() == WORK_SPACE_ID })
+            SystemClock.sleep(1_200)
+
+            // A short drag, released still: under a third and no fling, so the slot springs back.
+            val h = Finger()
+            h.down(startX, y)
+            h.moveBy(-width * 0.15f, 0f, 700)
+            h.hold(700)
+            h.up()
+            SystemClock.sleep(1_500)
+            claim("a short swipe released still stays on Work (title '${overviewTitleLabel()}')", overviewTitleLabel()?.startsWith("$WORK_SPACE, ") == true && activeSpaceId() == WORK_SPACE_ID)
+            claim("the slot is at rest after the settle (no data-swipe, no transform)", awaitTrue(3_000) { !slotLive() && js("(function(){var e=document.querySelector('$SPACE_SLOT');return e?e.style.transform:''})()") == "" })
+            shot("08-space-settled")
+            closeOverview()
+        } finally {
+            runCatching { coreInvoke("space.delete", """{"spaceId":${JSONObject.quote(personal)}}""") }
+            SystemClock.sleep(1_000)
+        }
     }
+
+    /** The Space's slot carries `data-swipe` while a finger has it (`useSpaceSwipe`'s `paint`). */
+    private fun slotLive(): Boolean =
+        js("(function(){var e=document.querySelector('$SPACE_SLOT');return e&&e.hasAttribute('data-swipe')?'live':''})()") == "live"
+
+    private fun activeSpaceId(): String = coreState().optString("activeSpaceId")
 
     // --- GN-10: a hold on the pill --------------------------------------------------------------
 
@@ -1003,9 +1031,6 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
 
     private fun heldInstead(): Boolean =
         js("(function(){return document.querySelector('.zen-quick-menu, .zen-sheet')?'held':''})()") == "held"
-
-    private fun selectedPane(): String =
-        js("(function(){var e=document.querySelector('.zen-overview-segment [role=\"tab\"][aria-selected=\"true\"]');return e?e.getAttribute('data-pane')||'':''})()")
 
     // --- the chrome's word -----------------------------------------------------------------------
 
@@ -1273,6 +1298,12 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     companion object {
         const val PORT = 18175
         const val TAB = "tab_first"
+        /** The seeded Space (its id and its name), and the name of the one GN-19 makes beside it for the swipe. */
+        const val WORK_SPACE_ID = "space_work"
+        const val WORK_SPACE = "Work"
+        const val SECOND_SPACE = "Personal"
+        /** The Space's slot the swipe moves (`useSpaceSwipe`'s `SLOT`, `TabOverview`'s `PaneSlot` keyed by the Space). */
+        const val SPACE_SLOT = ".zen-overview-space"
         const val BACK_LABEL = "Back"
         const val CLIP_TEXT = "quiet mornings and long walks"
         /** Where a history drag begins: inside Chrome's 24 dp edge window. */

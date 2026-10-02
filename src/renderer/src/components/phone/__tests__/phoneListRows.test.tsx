@@ -362,7 +362,7 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     const glyphInButton =
       /<PhoneIconButton\b(?:(?!<PhoneIconButton)[\s\S])*?<(\w+)([^<>]*)\/>\s*<\/PhoneIconButton>/g
     let judged = 0
-    for (const file of ['PhoneBookmarksPanel.tsx', 'PhoneHistoryPanel.tsx', 'GroupsPane.tsx']) {
+    for (const file of ['PhoneBookmarksPanel.tsx', 'PhoneHistoryPanel.tsx', 'GroupSheets.tsx']) {
       const source = readFileSync(resolve(phone, file), 'utf8')
       for (const at of source.matchAll(glyphInButton)) {
         judged++

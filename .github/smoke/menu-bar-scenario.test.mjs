@@ -63,7 +63,7 @@ describe('expectedTabMenu', () => {
     expect(TAB_MENU_ROWS.slice(-3)).toEqual([
       'Move Tab to New Window',
       'Add Tab to New Split View',
-      'Search Tabs…'
+      'Search Tabs'
     ])
   })
   it('gives the chord rows the Chrome preset’s chords and the others none', () => {
@@ -76,7 +76,7 @@ describe('expectedTabMenu', () => {
       'Duplicate Tab': 'Cmd+Shift+K',
       'Pin Tab': 'Cmd+Ctrl+P',
       'Add Tab to New Split View': 'Cmd+Shift+*',
-      'Search Tabs…': 'Cmd+Shift+A',
+      'Search Tabs': 'Cmd+Shift+A',
       'New Tab Below': null,
       'Mute Site': null,
       'Move Tab to New Window': null
@@ -147,7 +147,7 @@ describe('tabMenuProblems', () => {
       '!Close Tabs Below',
       '!Move Tab to New Window',
       'Add Tab to New Split View',
-      'Search Tabs…'
+      'Search Tabs'
     ])
     expect(tabMenuProblems(items, expectedTabMenu('new-tab-page'))).toEqual([])
     const horizontal = rows([
@@ -163,7 +163,7 @@ describe('tabMenuProblems', () => {
       'Close Tabs to the Right',
       'Move Tab to New Window',
       'Add Tab to New Split View',
-      'Search Tabs…'
+      'Search Tabs'
     ])
     expect(tabMenuProblems(horizontal, expectedTabMenu('site-among-others', 'horizontal'))).toEqual(
       []

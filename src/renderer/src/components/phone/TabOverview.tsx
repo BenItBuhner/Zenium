@@ -1,29 +1,22 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import {
-  Archive,
-  Ellipsis,
-  Group,
-  PanelLeft,
-  PanelRight,
-  Search,
-  Share2,
-  Star,
-  VenetianMask,
-  X
-} from 'lucide-react'
+import { Group, Share2, Star, VenetianMask, X } from 'lucide-react'
 import type {
   ArchivedTabSummary,
   Folder,
   PhoneBarPosition,
   Rect,
-  Space,
   SyncRemoteTab,
   Tab,
   UIState
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
+import {
+  otherOverviewView,
+  OVERVIEW_LABELS,
+  type OverviewChromeCommand
+} from '@shared/overviewMenu'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
 import { isEmptyTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -33,7 +26,6 @@ import { useBackSurface } from '@renderer/lib/back'
 import { closeWithUndo } from '@renderer/lib/closeUndo'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
-import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
 import {
   closeOverview,
@@ -51,20 +43,17 @@ import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { ZEN_EASE } from '@renderer/lib/motion/tokens'
-import {
-  indicatorFrame,
-  planSpaceSwitch,
-  SPACE_SLIDE_ID,
-  switchDirection,
-  type StripBox
-} from '@renderer/lib/motion/spaceSwitch'
+import { planSpaceSwitch, SPACE_SLIDE_ID, switchDirection } from '@renderer/lib/motion/spaceSwitch'
 import {
   reducedMotion,
   SPRING_GENTLE,
   SPRING_SNAPPY,
   SpringAnimation
 } from '@renderer/lib/motion/spring'
+import { onOverviewCommand } from '@renderer/lib/overviewCommands'
+import { spaceSwatch } from '@renderer/lib/overviewHeader'
 import { tabCardLabel } from '@renderer/lib/overviewLabels'
+import { OVERVIEW_MENU_OFF, publishOverviewMenu } from '@renderer/lib/overviewMenuRequest'
 import {
   filterTabs,
   normalizeQuery,
@@ -138,10 +127,8 @@ import {
   tabTitle
 } from '@renderer/lib/selectors'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
-import { SpaceGlyph } from '../SpaceGlyph'
 import { CloseAllSheet } from './CloseAllSheet'
 import { Departures } from './Departures'
 import {
@@ -159,13 +146,16 @@ import {
 import { setQuickDeleteWipe, type QuickDeleteWipe } from './quickDelete'
 import { groupActions } from './groupActions'
 import { GroupCard } from './GroupCard'
-import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
+import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet } from './GroupSheets'
 import { InactiveTabsSheet } from './InactiveTabsSheet'
 import { CARD_ASPECT, CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
-import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
+import { OverviewTitle } from './OverviewHeader'
+import { OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
+import { SavedGroupCard } from './SavedGroupCard'
+import { SpacesSheet } from './SpacesSheet'
 import { PhoneEmptyNote } from './PhoneList'
 import { noteSheetOpener } from './phonePanel'
 import { PrivateLockCover } from './PrivateLockCover'
@@ -175,8 +165,8 @@ import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { overviewHintCandidates, useOverviewGroupsHint } from './useOverviewGroupsHint'
 import { useFlip } from './useFlip'
-import { SEGMENT_LINE_CLASS, usePaneSwipe } from './usePaneSwipe'
 import { useOverviewHandle } from './usePillGestures'
+import { useSpaceSwipe, type SpaceSwipeHandoff } from './useSpaceSwipe'
 import { useSearchReach } from './useSearchReach'
 
 /** Cell key of the New Tab card: the last cell of the grid, in the glide with the rest. */
@@ -197,8 +187,9 @@ const ENTER_SCALE = 0.1
 /** How long the search waits after a keystroke before its count is announced. */
 const SEARCH_ANNOUNCE_MS = 500
 /**
- * How long the Tabs pane waits for a group's card to show – a saved group's pages coming back as
- * tabs (`folder.open`) – before a "show the group" request from the Groups pane is dropped.
+ * How long the grid waits for a reopened group's card to show – a saved group's pages coming
+ * back as tabs (`folder.open`, the saved card's tap) – before the "show the group" request is
+ * dropped.
  */
 const REVEAL_TIMEOUT_MS = 800
 /**
@@ -232,12 +223,17 @@ interface Props {
   tablet?: boolean
 }
 
-/** A group the Groups pane asked the Tabs pane to show: scrolled to once its card is there. */
+/** A group the saved card asked the grid to show, reopened: scrolled to once its card is there. */
 interface Reveal {
   folderId: string
   /** When to give up waiting for the card (`performance.now()`). */
   deadline: number
 }
+/** The grid's catch of `folderId`'s card, asked now: it gives up after `REVEAL_TIMEOUT_MS`. */
+const revealOf = (folderId: string): Reveal => ({
+  folderId,
+  deadline: performance.now() + REVEAL_TIMEOUT_MS
+})
 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
@@ -254,12 +250,12 @@ interface HeldGroup {
 }
 
 interface ShownGroups {
-  /** The pane the grid showed: its groups are that pane's, and the other pane has none. */
+  /** The view the grid showed: its groups are the regular view's, and the private view has none. */
   pane: OverviewPane
   /**
-   * The Space the grid showed: its groups are that Space's. Another Space's grid (a switch in
-   * the strip, MOT-05) is a fresh one in the same component – the last Space's groups did not
-   * lose their cards, they are simply not there.
+   * The Space the grid showed: its groups are that Space's. Another Space's grid (a switch from
+   * the Spaces sheet or the swipe, MOT-05) is a fresh one in the same component – the last
+   * Space's groups did not lose their cards, they are simply not there.
    */
   spaceId: string
   /** The groups holding cards after the last render, by folder id. */
@@ -272,27 +268,35 @@ interface ShownGroups {
 }
 
 /**
- * The tab overview of the phone layout: the active space's tabs as a grid of thumbnail cards –
- * Essentials on top, pinned tabs first, groups as tinted cards of their own – with the other
- * spaces as a strip of chips. Its entrance is driven by `overview.progress`: the grid scales and
- * fades in while the page shrinks into the slot of its own card (and grows back out of the card
- * that is picked when leaving), so a half-finished drag always shows exactly where things are
- * going. Cards can be held and dragged onto each other to make groups (see `useCardLift`).
+ * The tab overview of the phone layout (`docs/tab-overview-cleanup-spec.md`): the active
+ * space's tabs as a grid of thumbnail cards – Essentials on top, pinned tabs first, its groups
+ * INLINE as cards of their own (§2: folded, one card with a mosaic in the group's place; a tap
+ * unfolds it in place; the SAVED groups, whose tabs have closed but whose pages the group kept,
+ * as cards with the saved ring at the grid's end before New Tab) – under ONE header row (§1):
+ * the space's dot and name with the count, "Default · 3 tabs", which IS the space switcher
+ * (`OverviewTitle`: a tap opens the Spaces sheet; a horizontal drag across the grid's background
+ * moves between the spaces, GN-19, `useSpaceSwipe`), and nothing trailing it. The overview draws
+ * no ⋯ of its own: while it stands the BAR's ⋯ opens the overview's menu (§4, the core's
+ * `overviewMenuTemplate`), whose picks come back here as `overview.command`s. Its entrance is
+ * driven by `overview.progress`: the grid scales and fades in while the page shrinks into the
+ * slot of its own card (and grows back out of the card that is picked when leaving), so a
+ * half-finished drag always shows exactly where things are going. Cards can be held and dragged
+ * onto each other to make groups (see `useCardLift`).
  *
- * The overview's panes stand under a segment (TAB-02, TAB-03, TAB-16): the space's tabs; its
- * tab GROUPS as rows (`GroupsPane`, Chrome's "Tab groups" pane) – the open ones, and the SAVED
- * ones whose tabs have closed but whose pages the group kept, to be opened again; and, on a host
- * with private tabs, the private ones – the private session is one across the spaces, so that
- * pane lists every private tab, as loose cards on the private theme's backdrop (the window
- * surfaces blend to it while the pane is up, §9.29), with §9.17's sentence when there are none. A
- * private card never shows in the regular pane, nor a regular one in the private pane
- * (`tabsOnPane`); the overview opens on the pane of the tab in view.
+ * The overview has two VIEWS (§3, `OverviewView`; TAB-02, TAB-03): the space's tabs, and – on a
+ * host with private tabs – the private ones: the private session is one across the spaces, so
+ * that view lists every private tab, as loose cards on the private theme's backdrop (the window
+ * surfaces blend to it while the view is up, §9.29), under the mask and "Private · N tabs" (no
+ * control: the session has no space to switch), with §9.17's sentence when there are none. A
+ * private card never shows in the regular view, nor a regular one in the private view
+ * (`tabsOnPane`); the overview opens on the view of the tab in view, and the menu's "Private
+ * Tabs (N)" / "Tabs (N)" row switches between them, a 120 ms cross-fade (§6).
  *
- * The header's magnifier opens the TAB SEARCH (TAB-21, `lib/overviewSearch.ts`): a field pinned
- * under the header that narrows the pane's cards to the ones whose title or address holds what
+ * The menu's Search Tabs opens the TAB SEARCH (TAB-21, `lib/overviewSearch.ts`): a field pinned
+ * under the header that narrows the view's cards to the ones whose title or address holds what
  * is typed – the cards the query drops depart in place as closing cards do while the rest glide
  * into their slots (§11.4), and come back as the exit run backwards when the query lets them.
- * On the Tabs pane the search reaches past the cards (the #316 gate): this device's recently
+ * In the regular view the search reaches past the cards (the #316 gate): this device's recently
  * closed tabs and the other devices' open ones – History's two groups (TAB-02, history-07) – list
  * as rows under headings beneath the matching cards (`OverviewSearchReach`), as Chrome's tab
  * search lists its recently closed matches; a row brings its tab to the front and the overview
@@ -304,39 +308,30 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const active = activeTab(state)
   const picked = privateTabsStore.use((s) => s.pane)
   const hasPrivate = state.capabilities.privateTabs
-  // A host without private tabs has no Private pane to follow a private tab onto.
+  // A host without private tabs has no private view to follow a private tab onto.
   const followed = overviewPane(state, picked)
   const pane: OverviewPane = followed === 'private' && !hasPrivate ? 'tabs' : followed
   const privatePane = pane === 'private'
-  const groupsPane = pane === 'groups'
-  // The private tabs are locked (INC-05): the Private pane is under the lock cover, its cards
-  // blurred beneath it; the Tabs pane and the header are not.
+  // The private tabs are locked (INC-05): the private view is under the lock cover, its cards
+  // blurred beneath it; the regular view and the header are not.
   const locked = privateLockStore.use((s) => s.locked)
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
   const interactive = overviewInteractive(overview)
-  // The tab search (TAB-21): open from the header's magnifier, off with the overview – the
-  // field is reset in the commit that takes it off, as the select-tabs mode's scope is. It is
-  // the card panes' – Tabs and Private – as Chrome's Hub search box is: the Groups pane lists
-  // groups as rows, not tabs as cards, so it has no magnifier, and a pick of it closes the search.
-  // The state is `overviewUiStore`'s, not this component's – with the picks, the sheet and the
+  // The tab search (TAB-21): open from the menu's Search Tabs row (§4), off with the overview –
+  // the field is reset in the commit that takes it off, as the select-tabs mode's scope is. The
+  // state is `overviewUiStore`'s, not this component's – with the picks, the sheet and the
   // scroll – so that a window resized from the phone layout into the tablet's (or back) swaps
   // shells with the overview, the field and the query where they were (TABLET-08); the stage
   // resets the store when the overview goes, so the field never outlives the grid it narrowed.
+  // The field is the same on the tablet (§7: the tablet's header field moved into the ⋯ row).
   const search = overviewUiStore.use((s) => s.search)
   const setSearch = setOverviewSearch
-  const searchable = interactive && !groupsPane
-  useEffect(() => {
-    if (search.open && !searchable) setOverviewSearch(SEARCH_OFF)
-  }, [search.open, searchable])
-  // On the tablet the field stands in the header whenever the pane is searchable, so "the search
-  // is up" – what back and Escape address first, what the tree's `aria-expanded` says – is a
-  // query being typed; a field standing empty is a control like the others.
-  const searchOpen = tablet ? searchable && search.query.length > 0 : search.open && searchable
+  const searchOpen = search.open && interactive
   const query = searchOpen ? normalizeQuery(search.query) : ''
   const searching = query.length > 0
-  // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
+  // The private view is a session, not a workspace: its cards are neither pinned nor grouped
   // here – a drag rearranges them and nothing more (`hoverAt`, `dropCard`), as Chrome's incognito
-  // grid lets it; the regular pane keeps its structure. The `all` lists are the pane's; the
+  // grid lets it; the regular view keeps its structure. The `all` lists are the view's; the
   // grid's are the ones the search leaves (the same lists with no query).
   const essentialsAll = privatePane ? [] : tabsOnPane(essentialsFor(state, space), 'tabs')
   const pinnedAll = privatePane ? [] : tabsOnPane(pinnedOf(state, space), 'tabs')
@@ -347,9 +342,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const pinned = searching ? filterTabs(pinnedAll, query) : pinnedAll
   const regular = searching ? filterTabs(regularAll, query) : regularAll
   // The space's groups, less the PRIVATE ones (`isPrivateGroup`: private tabs alone live in
-  // them, nothing saved) – the Private pane's, whose existence and name no regular surface
-  // shows: not the Tabs pane's group sheets, not the Groups pane, not its count. `liveOf` names
-  // a group's live members, private ones included, the way the space holds them.
+  // them, nothing saved) – the private view's, whose existence and name no regular surface
+  // shows: not the group sheets, not a saved card, not a count. `liveOf` names a group's live
+  // members, private ones included, the way the space holds them.
   const liveOf = (folderId: string): Tab[] =>
     regularOf(state, space).filter((t) => t.folderId === folderId)
   const groups = privatePane
@@ -357,19 +352,21 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     : groupsOf(state, space.id).filter((f) => !isPrivateGroup(f, liveOf(f.id)))
   const count = essentialsAll.length + pinnedAll.length + regularAll.length
   const found = essentials.length + pinned.length + regular.length
-  // The Tabs pane with nothing on it (TAB-34): §9.17's sentence in place of the grid
-  // (`TabsEmpty`), as the Private pane at none is; not while a query stands, whose "No tabs
+  // The regular view with nothing on it (TAB-34): §9.17's sentence in place of the grid
+  // (`TabsEmpty`), as the private view at none is; not while a query stands, whose "No tabs
   // found" and reach are the grid's own.
   const tabsEmpty = pane === 'tabs' && count === 0 && !searching
-  // Past the cards, on the Tabs pane: the recently closed tabs and the other devices' tabs the
-  // query finds, as rows under the grid; nothing on the Private pane (a private tab is never
+  // Past the cards, in the regular view: the recently closed tabs and the other devices' tabs
+  // the query finds, as rows under the grid; nothing in the private view (a private tab is never
   // filed, and the other devices' pages are not private ones).
   const reach = useSearchReach(state, query, searching && !privatePane)
   const foundAll = found + reach.closed.length + reach.remote.length
 
-  // The last private tab closing ends the session, and the overview returns to the Tabs pane
-  // whether the Private pane was picked or followed (Chrome's switcher does the same); the
-  // empty pane's sentence stays a pick away, for whoever picks Private with none open.
+  // The last private tab closing ends the session, and the overview returns to the regular view
+  // whether the private view was picked or followed (Chrome's switcher does the same): the
+  // pick is released, so the next private tab opened does not find the private view picked
+  // already. (`overviewPane` reads a pick of the private view with none open as the regular
+  // view at once; there is no empty private view, §4.)
   const privateCount = hasPrivate ? privateTabsOf(state).length : 0
   const privateCountBefore = useRef(privateCount)
   useEffect(() => {
@@ -378,9 +375,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (before > 0 && privateCount === 0 && picked === 'private') pickOverviewPane('tabs')
   }, [privateCount, picked])
 
-  // A pane switch is a cross-fade (v2 §11.4): the pane that leaves is kept in view as a still
-  // fading out over its slot while the next fades in – `PaneSlot` takes the still as the pane
-  // goes, `PaneStills` draws it until its 120 ms are up.
+  // A view switch is a cross-fade (v2 §11.4; §6: the private view in and out, no slide): the
+  // view that leaves is kept in view as a still fading out over its slot while the next fades
+  // in – `PaneSlot` takes the still as the view goes, `PaneStills` draws it until its 120 ms
+  // are up. A Space switch is the grid's slot's own (`enterSpace`), the still the same.
   const [stills, setStills] = useState<PaneStill[]>([])
   const leavePane = useCallback((still: PaneStill) => setStills((s) => [...s, still]), [])
   const stillDone = useCallback(
@@ -421,7 +419,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // hero's mount and its card's hiding turn on; the frames between are the morph effect's.
   const p = clampProgress(progress)
   const settled = phase === 'open'
-  const side = state.settings.sidebarSide
   const isDark = isDarkScheme(state)
   // A phone on its side gets a row of four smaller cards, as Chrome's grid does.
   const viewportWidth = useViewport().width
@@ -476,14 +473,13 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // it as it writes, and a measurement is not a render of the grid (each phase change, each
   // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
   const heroCell = useRef<Rect | null>(null)
-  // The drag-to-group teaching's bubble (TB-19, `useOverviewGroupsHint`): on the Tabs pane of
-  // the phone's overview, on the loose page card in view nearest the active card – the cell
+  // The drag-to-group teaching's bubble (TB-19, `useOverviewGroupsHint`): in the regular view
+  // of the phone's overview, on the loose page card in view nearest the active card – the cell
   // before it in grid order, else the one after; the active card itself only when no other page
   // card is in view; never the new tab page's card, the one the tip's "Try it now" left (the
   // design lead's fold on #701). The cards go in grid order, the hook chooses among them as the
-  // bubble goes up; the Private pane groups nothing, the Groups pane has no cards, the tablet
-  // has no tips card. While it stands, its card pulses and carries it as its description
-  // (`OverviewCard`'s `hinted`).
+  // bubble goes up; the private view groups nothing, the tablet has no tips card. While it
+  // stands, its card pulses and carries it as its description (`OverviewCard`'s `hinted`).
   const hintCandidates =
     tablet || pane !== 'tabs'
       ? []
@@ -501,10 +497,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    */
   const leaveSheet = (kind: Sheet['kind']): void =>
     setSheet((current) => (current?.kind === kind ? null : current))
-  // The select-tabs mode (TAB-08, `lib/overviewSelection.ts`): on from the header's menu or a
-  // card's hold sheet, off by Done, back, Escape or an action. It belongs to the grid it was
-  // entered on – this pane of this space, with the overview open – and is off the moment that
-  // grid is another (a pane or space switch, the overview leaving): the mode is kept with the
+  // The select-tabs mode (TAB-08, `lib/overviewSelection.ts`): on from the menu's Select Tabs
+  // or a card's hold sheet, off by Done, back, Escape or an action. It belongs to the grid it was
+  // entered on – this view of this space, with the overview open – and is off the moment that
+  // grid is another (a view or space switch, the overview leaving): the mode is kept with the
   // scope it was entered in and read as off, and reset, under any other, in the commit that
   // brings the other grid. The picks are pruned against the cards on show the same way.
   const scope = interactive ? `${pane}|${space.id}` : null
@@ -532,30 +528,39 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const exitSelection = useCallback(() => setSelection(endSelection()), [setSelection])
   useBackSurface(selecting ? { name: 'overview-selection', onCommit: exitSelection } : null)
   const handle = useOverviewHandle({ edge })
-  // A horizontal drag over the pane's background moves to the neighbouring segment (GN-19), the
-  // segment's line under the finger; not while tabs are being selected (the pane is the
-  // selection's) and not before the overview has settled.
-  const swipe = usePaneSwipe(rootRef, {
-    pane,
-    panes: paneOrder(hasPrivate),
-    enabled: interactive && !selecting,
-    onPick: pickOverviewPane
+  // A horizontal drag over the grid's background moves to the neighbouring SPACE (GN-19; §1,
+  // §6), the Space's slot riding the finger and the header following; not while tabs are being
+  // selected (the grid is the selection's), not in the private view (the session is one across
+  // the spaces) and not before the overview has settled. A committed swipe hands the incoming
+  // grid where the finger left it (`swipeHandoff`, read by `enterSpace` in the commit that
+  // brings the next Space).
+  const swipeHandoff = useRef<SpaceSwipeHandoff | null>(null)
+  const swipe = useSpaceSwipe(rootRef, {
+    spaceId: space.id,
+    spaceIds: state.spaces.map((s) => s.id),
+    enabled: interactive && !selecting && pane === 'tabs' && state.spaces.length > 1,
+    onPick: (spaceId, handoff) => {
+      swipeHandoff.current = handoff
+      run('space.activate', { spaceId })
+    }
   })
-  // The grid's slot is the SPACE's on the Tabs pane (MOT-05, v2 §11.4 / §11.6): a Space switch
-  // brings the next Space's grid up in a slot of its own (`PaneSlot` keyed by `gridKey`, inside
-  // the pane's) – the strip above stays and its indicator glides – while a still of the grid
-  // that left fades over 120 ms (`PaneStills`, the pane switch's mechanism) and the new grid
-  // SLIDES in over 250 ms from the side the new Space stands on in the strip's order
+  // The grid's slot is the SPACE's in the regular view (MOT-05, v2 §11.4 / §11.6): a Space
+  // switch brings the next Space's grid up in a slot of its own (`PaneSlot` keyed by `gridKey`,
+  // inside the view's) – the header above stays, its title following – while a still of the
+  // grid that left fades over 120 ms (`PaneStills`, the view switch's mechanism) and the new
+  // grid comes in from the side the new Space stands on in the spaces' order: after a SWIPE it
+  // springs the rest of the way on `SPRING_SNAPPY` from the finger's speed (§6; `enterSpace`),
+  // after a tap – the Spaces sheet's row, the menu's Switch Space – it slides in over 250 ms
   // (`planSpaceSwitch`: later, from the trailing edge; earlier, from the leading), the window's
   // theme blending meanwhile (`useTheme`). Under reduced motion nothing travels (§11.3): the
-  // new grid fades in place over 120 ms and the indicator jumps; the blend stays, a colour blend
-  // being a fade and not travel (§11.6 as amended). The Private pane's grid is one slot for the
-  // pane's life (its key the pane's), so it never slides.
+  // new grid fades in place over 120 ms; the blend stays, a colour blend
+  // being a fade and not travel (§11.6 as amended). The private view's grid is one slot for the
+  // view's life (its key the view's), so it never slides.
   const gridKey = pane === 'tabs' ? space.id : `#${pane}`
   // The empty note's fade is keyed to the REPLACEMENT, not to its mount (v2 §11.1, the gate's
   // ruling on #562): it runs when the note takes the grid's place in the slot it stands in – the
   // last card gone, the New Tab card's exit `with` it – and not when the note comes up with its
-  // pane (the panes' cross-fade is the motion) or with its Space (the slot's slide is), or with
+  // view (the views' cross-fade is the motion) or with its Space (the slot's slide is), or with
   // the overview itself: one object, one move. `gridDrawn` is the slot whose grid the last commit
   // drew, written after each commit; the note reads it at its own mount (`TabsEmpty`, whose
   // layout effect runs before this one, so it still reads the last commit's word) and fades
@@ -568,14 +573,56 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // its transform held off (`useFlip`'s `frame`), so nothing reads the slide as a move.
   const spaceSlotRef = useRef<HTMLDivElement | null>(null)
   const slideRef = useRef<Animation | null>(null)
+  const springRef = useRef<SpringAnimation | null>(null)
   const endSlide = (): void => {
     const slide = slideRef.current
+    const spring = springRef.current
+    const slot = spaceSlotRef.current
     slideRef.current = null
+    springRef.current = null
     spaceSlotRef.current = null
     slide?.finish()
+    if (spring) {
+      spring.stop()
+      if (slot) slot.style.transform = ''
+    }
+  }
+  /**
+   * The grid of the Space a SWIPE picked comes in from where the finger left (§6; GN-19): the
+   * leaving grid's still stands `progress` of a width along, so this one starts the remaining
+   * `1 - progress` out on the same side and springs home on `SPRING_SNAPPY` at the finger's
+   * speed – one transform per frame, the FLIP tracker holding the slot's transform off
+   * (`spaceSlotRef`) as it does for the slide. Under reduced motion it stands home at once and
+   * fades in as the slot's own 120 ms does (§11.3).
+   */
+  const springIn = (el: HTMLDivElement, handoff: SpaceSwipeHandoff): void => {
+    const sign = handoff.direction === 'left' ? 1 : -1
+    const from = sign * (1 - handoff.progress) * handoff.width
+    if (reducedMotion() || from === 0) return
+    // The finger's progress per second is the slot's px per second along its travel.
+    const velocity = -sign * handoff.velocity * handoff.width
+    el.style.transform = `translate3d(${from}px, 0, 0)`
+    spaceSlotRef.current = el
+    const spring = new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => {
+        el.style.transform = `translate3d(${x}px, 0, 0)`
+      },
+      () => {
+        if (springRef.current === spring) endSlide()
+      }
+    )
+    springRef.current = spring
+    spring.start(from, velocity, 0)
   }
   const enterSpace = (el: HTMLDivElement, from: string): void => {
     endSlide()
+    const handoff = swipeHandoff.current
+    swipeHandoff.current = null
+    if (handoff) {
+      springIn(el, handoff)
+      return
+    }
     const direction = switchDirection(
       state.spaces.map((s) => s.id),
       from,
@@ -611,7 +658,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   }, [settled])
   /**
    * A group's card leaving the grid visibly, with its cards, where it stands: the one exit
-   * `Departures` draws over it (the Groups pane has no card, and nothing to leave from). A group
+   * `Departures` draws over it (a saved card holds no tab, and has nothing to leave). A group
    * whose every card goes – closed, or dropped by the query (`filtered`, TAB-21), or the last the
    * query left it closed – is a container with nothing to hold, and its frame departs as a card
    * does (v2 §11.4's leave: this exit fades in place while the cells below glide up on one
@@ -664,10 +711,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (newTab)
       exits.push({ key: NEW_TAB_CELL, kind: 'new-tab', isPrivate: privatePane, rect: newTab })
     depart(exits)
-    // The tablet's field is never "pinned" – it stands in the header – so `open` there says a
-    // query stands: what a phone the window narrows into shows as its pinned field (TABLET-08).
-    setSearch({ open: tablet ? next.length > 0 : true, query: next })
+    setSearch({ open: true, query: next })
   }
+  /** The menu's Search Tabs (§4): the field comes up pinned under the header, empty, focused. */
   const openSearch = (): void => setSearch((s) => (s.open ? s : { open: true, query: '' }))
   const closeSearch = (): void => setSearch(SEARCH_OFF)
   /** The X on a query: the query goes, the field stays, with the keyboard. */
@@ -685,8 +731,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   useEffect(() => {
     searchBack.current = backSearch
   })
-  // The field is the user's ask (the magnifier's tap): it takes the focus, and the keyboard with
-  // it through the host's policy on `focusin`. Nothing else ever focuses it – the overview opens
+  // The field is the user's ask (the menu's Search Tabs): it takes the focus, and the keyboard
+  // with it through the host's policy on `focusin`. Nothing else ever focuses it – the overview opens
   // with the field closed – so the keyboard never comes up with the overview. Nor does it come
   // up with a shell swap: a grid mounted with the search already up (the store's, from the
   // shell before, TABLET-08) was not asked for the keyboard by anyone, so only the change from
@@ -1034,12 +1080,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     lingering: new Map()
   }))
   const held = new Map<string, HeldGroup>()
-  // The Groups pane draws rows, not cards: nothing there is held, so nothing lingers.
-  for (const folder of groupsPane ? [] : groups) {
+  for (const folder of groups) {
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
-  // The other pane's grid, or another Space's, is a fresh one: its groups did not dissolve, they
+  // The other view's grid, or another Space's, is a fresh one: its groups did not dissolve, they
   // are simply not here (the Space switch draws the last grid as a still over this one, the
   // group's card among what it shows, see `PaneSlot`).
   const samePane = shownGroups.pane === pane && shownGroups.spaceId === space.id
@@ -1427,20 +1472,26 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
     closeSet(regularAll)
   }
+  /**
+   * The regular view's Close All asks nothing (v2 §9.23: a close that can be taken back from
+   * its toast confirms nothing, and `closeSet`'s one Undo brings the lot back); the private
+   * view's Close Private Tabs still asks (`CloseAllSheet`), since a private tab is never filed
+   * and there is no Undo to stand in for the question.
+   */
   const closeAllAsked = (): void => {
     if (regularAll.length === 0) return
-    if (state.settings.confirmCloseAll) setSheet({ kind: 'close-all' })
+    if (privatePane) setSheet({ kind: 'close-all' })
     else closeAll()
   }
   /**
-   * The header's menu: it reads the recently closed list first, so its row can say how many. The
-   * private pane's menu has no such row – a private tab is never filed (the core's
-   * `captureClosed`), and the list would be the regular tabs' – so it reads nothing.
+   * The menu's Recently Closed (N) row (§4; matrix TAB-22, TAB-23): the list is read as the
+   * sheet opens, the tabs among its entries (a window's entry is the desktop's). The private
+   * view has no such row – a private tab is never filed (the core's `captureClosed`).
    */
-  const openMenu = async (): Promise<void> => {
+  const openRecentlyClosed = async (): Promise<void> => {
     noteSheetOpener()
-    const closed = privatePane ? [] : await historyAdapter.recentlyClosed().catch(() => [])
-    setSheet({ kind: 'menu', closed: closed.filter((entry) => entry.kind === 'tab') })
+    const closed = await historyAdapter.recentlyClosed().catch(() => [])
+    setSheet({ kind: 'recently-closed', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
    * A tab brought back – a recently closed one into its place, an inactive one to the start of
@@ -1458,8 +1509,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const restoreClosed = (entry: ClosedEntrySummary): void =>
     leaveOnRestored(() => void historyAdapter.restoreClosed(entry.id))
   /**
-   * The segment row's Inactive tabs entry (TAB-20): it reads the archive first, so the sheet
-   * opens full; the private pane has no such entry, a private tab being never archived.
+   * The menu's Inactive Tabs (N) row (TAB-20; §4, §9: a ⋯ row, never a control of the header):
+   * it reads the archive first, so the sheet opens full; the private view has no such row, a
+   * private tab being never archived.
    */
   const openInactiveTabs = async (): Promise<void> => {
     noteSheetOpener()
@@ -1494,7 +1546,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
         ? run('tab.activate', { tabId: tab.tabId })
         : run('tab.create', { url: tab.url, spaceId: space.id, active: true })
     )
-  /** A group's card leaves the grid visibly, with its cards, where it stands (the Groups pane has none). */
+  /** A group's card leaves the grid visibly, with its cards, where it stands. */
   const departGroup = (folder: Folder): void => {
     const exit = groupExit(folder)
     if (exit) depart([exit])
@@ -1503,7 +1555,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    * "Close Group" (TAB-16): the group's tabs close – with the one Undo, as any close here, the
    * toast in the group's words, "<Name> tab group closed and saved" (the tablet's Close Group
    * says the same through `folder.closeUndoable`) – and the group stays, SAVED with their pages,
-   * on the Groups pane; the core's `folder.close`.
+   * a card with the saved ring at the grid's end (§2); the core's `folder.close`.
    */
   const closeGroup = (folder: Folder): void => {
     departGroup(folder)
@@ -1515,15 +1567,13 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       group: folder
     })
   }
-  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state, a group's
-  // private members counting for nothing (a group with pages saved and private tabs alone live
-  // is a saved group).
+  // The space's groups by state (TAB-16, `lib/groupRows.ts`): the SAVED ones – tabs closed,
+  // pages kept – stand as cards at the grid's end (§2, `SavedGroupCard`); a group's private
+  // members count for nothing (a group with pages saved and private tabs alone live is a saved
+  // group). The sheets read their group by its row, live.
   const rows = groupRows(groups, liveOf)
   const rowOf = (folderId: string): GroupRow | null =>
     [...rows.open, ...rows.saved].find((row) => row.folder.id === folderId) ?? null
-  const renamingId = uiStore.use((s) => s.renamingFolderId)
-  // The header's count on the Groups pane: every group listed, open, saved or empty.
-  const groupCount = rows.open.length + rows.saved.length
   /**
    * "Delete Group": the group's record goes, its live tabs closing with it – each to Recently
    * Closed, with no Undo on a toast after the ask (TAB-13 / TAB-16, the Design Lead's option C:
@@ -1553,10 +1603,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     remove()
   }
   /**
-   * The Groups pane's tap (TAB-16): the group is shown in the Tabs pane, expanded and scrolled
-   * to – a saved one opened first, its pages coming back as tabs of the group (`folder.open`),
-   * the Tabs pane catching its card as the tabs arrive (`reveal`); an empty group has nothing to
-   * show and its row takes no tap.
+   * The saved card's tap, and its sheet's Open (§2; TAB-16): the group is reopened – its pages
+   * come back as tabs of the group (`folder.open`) – and shown expanded and scrolled to, the grid
+   * catching its card as the tabs arrive (`reveal`); an open group's card is already there, and
+   * is unfolded and scrolled to; an empty group has nothing to show.
    */
   const reveal = useRef<Reveal | null>(null)
   const showGroup = (row: GroupRow): void => {
@@ -1564,9 +1614,19 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (row.kind === 'saved') void cmd('folder.open', { folderId: row.folder.id }).catch(() => null)
     else if (row.folder.collapsed)
       run('folder.update', { folderId: row.folder.id, patch: { collapsed: false } })
-    reveal.current = { folderId: row.folder.id, deadline: performance.now() + REVEAL_TIMEOUT_MS }
-    pickOverviewPane('tabs')
+    reveal.current = revealOf(row.folder.id)
   }
+  const reopenSaved = (folder: Folder): void => {
+    const row = rowOf(folder.id)
+    if (row) showGroup(row)
+  }
+  /**
+   * "New Tab in Group" (§2): a tab at the group's end through the core (`folder.newTab`, which
+   * makes it active), and the overview leaves on it once the browser shows it – its new tab page
+   * is the page under the overview, not a card to keep standing over.
+   */
+  const newTabInGroup = (folder: Folder): void =>
+    leaveOnRestored(() => run('folder.newTab', { folderId: folder.id }))
   useLayoutEffect(() => {
     const asked = reveal.current
     if (!asked) return
@@ -1601,13 +1661,30 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const placeOf = (tab: Tab): number => ordered.findIndex((t) => t.id === tab.id) + 1
 
   // The select-tabs mode's cards: what is on show as a card can be picked – the pinned cards,
-  // the members of the groups that are open, the loose cards; a folded group's members and the
-  // essentials' row are not cards and take no check, and the Groups pane shows no card at all.
-  // A pick whose card has left this set (its tab closed elsewhere, its group folded) goes in
-  // this same render.
-  const checkable = groupsPane
-    ? []
-    : [...pinned, ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)), ...loose]
+  // the members of the groups that are open, the loose cards; a folded group's members, a saved
+  // group's card and the essentials' row are not cards and take no check. A pick whose card has
+  // left this set (its tab closed elsewhere, its group folded) goes in this same render.
+  const checkable = [
+    ...pinned,
+    ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)),
+    ...loose
+  ]
+  // The bar's ⋯ asks for the overview's menu while the overview stands (§4): its word – the view
+  // on show and, in the select-tabs mode, "N selected" of the cards the selection could hold
+  // (§5) – is published at rest, not per frame, and withdrawn as the overview leaves or goes.
+  useEffect(() => {
+    publishOverviewMenu(
+      interactive
+        ? {
+            view: pane,
+            selection: selection.on
+              ? { selected: selection.picked.length, total: checkable.length }
+              : null
+          }
+        : OVERVIEW_MENU_OFF
+    )
+  }, [interactive, pane, selection, checkable.length])
+  useEffect(() => () => publishOverviewMenu(OVERVIEW_MENU_OFF), [])
   // The search's departures and returns (TAB-21). A card the query dropped is off the grid in
   // this commit: its exit runs from here (`Departures` waits for the browser to show a close;
   // this close is the grid's own). A card a shorter query lets back in is drawn again: the exit
@@ -1787,6 +1864,75 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
   ]
 
+  /**
+   * The bar's ⋯ menu's rows (§4, §5; `lib/overviewCommands.ts`): the core pops the menu while
+   * the overview stands and hands each picked row back as one command; the handlers are this
+   * render's, read through a ref so that the one subscription sees the latest grid. New Tab and
+   * New Private Tab are the New Tab card's tap (`newTabOn`: the phone's new tab page over the
+   * overview); Private Tabs (N) / Tabs (N) switches the view (§3); Select Tabs enters the mode;
+   * Search Tabs pins the field; Inactive Tabs and Recently Closed read their lists and open
+   * their sheets; Close All asks or closes as the setting says; the selection's three act on the
+   * picks.
+   */
+  const onCommand = (command: OverviewChromeCommand): void => {
+    switch (command) {
+      case 'new-tab':
+        newTabOn('tabs')
+        return
+      case 'new-private-tab':
+        newTabOn('private')
+        return
+      case 'switch-view':
+        pickOverviewPane(otherOverviewView(pane))
+        return
+      case 'select-tabs':
+        setSelection(startSelection())
+        return
+      case 'search-tabs':
+        openSearch()
+        return
+      case 'inactive-tabs':
+        void openInactiveTabs()
+        return
+      case 'recently-closed':
+        void openRecentlyClosed()
+        return
+      case 'close-all':
+        closeAllAsked()
+        return
+      case 'select-all':
+        setSelection((s) =>
+          selectAll(
+            s,
+            checkable.map((t) => t.id)
+          )
+        )
+        return
+      case 'deselect-all':
+        setSelection((s) => deselectAll(s))
+        return
+      case 'close-selected':
+        closeSelected()
+    }
+  }
+  const commandLatest = useRef(onCommand)
+  useLayoutEffect(() => {
+    commandLatest.current = onCommand
+  })
+  useEffect(() => {
+    if (!interactive) return
+    return onOverviewCommand((command) => commandLatest.current(command))
+  }, [interactive])
+  // The system back from a PICKED private view returns to the regular view (§3); a private view
+  // the overview opened on, following a private tab, is the overview's own state, and back
+  // leaves the overview as it does from the regular view.
+  const backToTabs = useCallback(() => pickOverviewPane('tabs'), [])
+  useBackSurface(
+    interactive && privatePane && picked === 'private' && !selecting
+      ? { name: 'overview-private-view', onCommit: backToTabs }
+      : null
+  )
+
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
       key={tab.id}
@@ -1825,8 +1971,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     />
   )
 
-  // A Groups pane row's sheet and the delete question read their row live: a group gone from
-  // under them (deleted elsewhere) leaves them nothing to show.
+  // A saved card's sheet and the delete question read their row live: a group gone from under
+  // them (deleted elsewhere) leaves them nothing to show.
   const rowSheet = sheet?.kind === 'group-row' ? rowOf(sheet.folderId) : null
   const deleteSheet = sheet?.kind === 'delete-group' ? rowOf(sheet.folderId) : null
 
@@ -2049,6 +2195,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           className="zen-overview absolute inset-0 flex flex-col"
           // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
           data-surface="window"
+          // One named landmark while the overview stands (it unmounts with it): TalkBack says
+          // "Tab overview" once on entry, and the harness waits on the name (`awaitOverview`)
+          // rather than on a control of the header's, which §1 took away.
+          role="region"
+          aria-label={OVERVIEW_LABELS.region}
           // The tablet's mount (TABLET-14): the layer is opaque – it slides over the page – in
           // the window's own tone, its gradient laid at the window's size and offset so that at
           // rest it is the window's, seamless at the toolbar's edge (the geometry effect writes
@@ -2061,6 +2212,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           {...swipe}
         >
           {tablet && <div className="zen-texture zen-overview-texture" />}
+          {/* The one header row (§1): the title – the space switcher – and nothing trailing it;
+              the select-tabs mode's bar replaces it (§5). The bar's ⋯ is the overview's menu. */}
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
             {selecting ? (
               <SelectionHeader
@@ -2071,76 +2224,22 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 onDone={exitSelection}
               />
             ) : (
-              <>
-                {privatePane ? (
-                  <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
-                ) : (
-                  <SpaceGlyph icon={space.icon} size={20} />
-                )}
-                <span className="zen-title min-w-0 truncate">
-                  {privatePane ? 'Private' : space.name}
-                </span>
-                <span
-                  className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
-                  data-testid="overview-count"
-                >
-                  {groupsPane
-                    ? `${groupCount} group${groupCount === 1 ? '' : 's'}`
-                    : `${count} tab${count === 1 ? '' : 's'}`}
-                </span>
-                <span className="flex-1" />
-                {!groupsPane && tablet && (
-                  // The tablet's tab search is the field itself, in the header's trailing run
-                  // where the phone has the magnifier (TABLET-14; §9.34's home for the search):
-                  // a tablet header has the room, and Chrome's Hub search box stands the same way.
-                  <OverviewSearchField
-                    inline
-                    value={search.query}
-                    inputRef={searchInput}
-                    onChange={changeQuery}
-                    onClear={clearQuery}
-                    onClose={closeSearch}
-                  />
-                )}
-                {!groupsPane && !tablet && (
-                  <button
-                    type="button"
-                    className="zen-toolbar-button h-9 w-9"
-                    aria-label="Search tabs"
-                    aria-expanded={searchOpen}
-                    aria-controls={searchOpen ? OVERVIEW_SEARCH_ID : undefined}
-                    data-testid="overview-search-toggle"
-                    onClick={() => (searchOpen ? closeSearch() : openSearch())}
-                  >
-                    <Search className="h-[18px] w-[18px]" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="zen-toolbar-button h-9 w-9"
-                  aria-label="Spaces"
-                  onClick={() => void openSpacesDrawer(active?.id ?? null)}
-                >
-                  {side === 'right' ? (
-                    <PanelRight className="h-[18px] w-[18px]" />
-                  ) : (
-                    <PanelLeft className="h-[18px] w-[18px]" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="zen-toolbar-button h-9 w-9"
-                  aria-label="More"
-                  aria-haspopup="menu"
-                  aria-expanded={sheet?.kind === 'menu'}
-                  onClick={() => void openMenu()}
-                >
-                  <Ellipsis className="h-[18px] w-[18px]" />
-                </button>
-              </>
+              <OverviewTitle
+                view={pane}
+                space={space}
+                count={count}
+                dotColor={spaceSwatch(space, isDark)}
+                spacesOpen={sheet?.kind === 'spaces'}
+                onOpenSpaces={() => {
+                  noteSheetOpener()
+                  setSheet({ kind: 'spaces' })
+                }}
+              />
             )}
           </header>
-          {!tablet && searchOpen && (
+          {searchOpen && (
+            // The tab search's field, pinned under the header while it stands (§4; the tablet's
+            // too, §7); closing it gives the header row back.
             <OverviewSearchField
               value={search.query}
               inputRef={searchInput}
@@ -2149,177 +2248,151 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
               onClose={closeSearch}
             />
           )}
-          <div className="flex shrink-0 items-center pr-1">
-            <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
-            <span className="flex-1" />
-            {!privatePane && state.archivedTabCount > 0 && (
-              // The Inactive tabs entry (TAB-20): the segment row's trailing control – never a
-              // fourth segment (v2 §9.34) – a §9.3 icon button with the §9.19 count badge
-              // after its glyph, there only while the archive holds something, as Chrome's
-              // card at the top of its grid is; the private pane has none (§9.29's family
-              // aside, a private tab is never archived).
-              <button
-                type="button"
-                className="zen-v2-icon-button zen-overview-inactive"
-                aria-label={`Inactive tabs, ${state.archivedTabCount}`}
-                aria-haspopup="dialog"
-                aria-expanded={sheet?.kind === 'inactive-tabs'}
-                data-testid="overview-inactive-tabs"
-                onClick={() => void openInactiveTabs()}
-              >
-                <Archive aria-hidden />
-                <span className="zen-v2-badge" aria-hidden>
-                  {state.archivedTabCount}
-                </span>
-              </button>
-            )}
-          </div>
           <PaneSlot
-            // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
-            // rows or the empty pane's note – coming up fresh on a 120 ms fade in while the still
-            // of the pane before fades out over the same slot (v2 §11.4); the cells start fresh
-            // with it.
+            // Each view is a slot's worth of its own – the grid or the empty view's note –
+            // coming up fresh on a 120 ms fade in while the still of the view before fades out
+            // over the same slot (v2 §11.4; §6: no slide); the cells start fresh with it.
             pane={pane}
             root={rootRef}
             onLeave={leavePane}
             className="zen-overview-pane relative flex min-h-0 flex-1 flex-col"
           >
-            {pane === 'tabs' && state.spaces.length > 1 && (
-              <SpaceStrip spaces={state.spaces} activeId={space.id} />
-            )}
-            {groupsPane ? (
-              <GroupsPane
-                rows={rows}
-                renamingId={renamingId}
-                onOpen={showGroup}
-                onMenu={(row) => {
-                  noteSheetOpener()
-                  setSheet({ kind: 'group-row', folderId: row.folder.id })
-                }}
-              />
-            ) : privatePane && count === 0 ? (
-              <PrivateEmpty />
-            ) : (
-              <PaneSlot
-                // The Space's slot (MOT-05): the grid comes up fresh per Space, sliding in from
-                // the side the Space stands on while the still of the last grid fades over it;
-                // the strip above is the pane's and stays. See `gridKey`.
-                pane={gridKey}
-                root={rootRef}
-                onLeave={leavePane}
-                onEnter={enterSpace}
-                className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
-              >
-                {tabsEmpty ? (
-                  <TabsEmpty slot={gridKey} gridDrawn={gridDrawn} />
-                ) : (
+            <PaneSlot
+              // The Space's slot (MOT-05): the grid comes up fresh per Space, sliding in from
+              // the side the Space stands on while the still of the last grid fades over it.
+              // See `gridKey`.
+              pane={gridKey}
+              root={rootRef}
+              onLeave={leavePane}
+              onEnter={enterSpace}
+              className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
+            >
+              {tabsEmpty ? (
+                <TabsEmpty slot={gridKey} gridDrawn={gridDrawn} />
+              ) : (
+                <div
+                  ref={gridRef}
+                  className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+                  data-pane={pane}
+                  // The Private pane under the lock cover (INC-05): its grid is out of reach – no
+                  // focus, no touch, nothing for a screen reader – until the cover lifts; the
+                  // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
+                  // So is the grid while Quick Delete's wipe runs over it (MOT-24, `wiping`).
+                  inert={(privatePane && locked) || wiping || undefined}
+                  aria-hidden={(privatePane && locked) || undefined}
+                  // The card the page morphs into is scrolled into view: keep it clear of the fades.
+                  style={{
+                    touchAction: 'pan-y',
+                    overscrollBehavior: 'contain',
+                    scrollPaddingBlock: 16
+                  }}
+                  onScroll={(e) => {
+                    noteOverviewScroll(pane, e.currentTarget.scrollTop)
+                    measure()
+                    rewindow(true)
+                  }}
+                >
+                  {searching && found === 0 && (
+                    // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
+                    // lists beneath it when they have rows – then the sentence names what is
+                    // missing, since the rows under it are tabs too.
+                    <p className="zen-overview-search-empty" data-testid="overview-search-empty">
+                      {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
+                    </p>
+                  )}
+                  {essentials.length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {essentials.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          className="zen-essential h-12 w-12"
+                          data-active={tab.id === active?.id}
+                          data-discarded={tab.discarded}
+                          aria-label={tabCardLabel(
+                            tabTitle(tab),
+                            placeOf(tab),
+                            ordered.length,
+                            tab.id === active?.id
+                          )}
+                          // An essential is no card: while tabs are being selected it takes no
+                          // pick and no tap (§9.30, laid out as it was).
+                          disabled={selecting}
+                          onClick={() => pick(tab)}
+                        >
+                          <Favicon tab={tab} size={22} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div
-                    ref={gridRef}
-                    className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-                    data-pane={pane}
-                    // The Private pane under the lock cover (INC-05): its grid is out of reach – no
-                    // focus, no touch, nothing for a screen reader – until the cover lifts; the
-                    // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
-                    // So is the grid while Quick Delete's wipe runs over it (MOT-24, `wiping`).
-                    inert={(privatePane && locked) || wiping || undefined}
-                    aria-hidden={(privatePane && locked) || undefined}
-                    // The card the page morphs into is scrolled into view: keep it clear of the fades.
-                    style={{
-                      touchAction: 'pan-y',
-                      overscrollBehavior: 'contain',
-                      scrollPaddingBlock: 16
-                    }}
-                    onScroll={(e) => {
-                      noteOverviewScroll(pane, e.currentTarget.scrollTop)
-                      measure()
-                      rewindow(true)
-                    }}
+                    // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                    // takes the shell out of the flow at its `offsetTop`, which is read against
+                    // the nearest positioned ancestor and ignores the scroller's scroll – against
+                    // this grid, which scrolls with the cells, the shell stands where the card
+                    // stood; against the pane outside the scroller it landed `scrollTop` px too
+                    // low, and the tracker held only the cells drawn under that lower box (#355's
+                    // finding, seed 49).
+                    className="relative grid gap-3"
+                    style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                   >
-                    {searching && found === 0 && (
-                      // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
-                      // lists beneath it when they have rows – then the sentence names what is
-                      // missing, since the rows under it are tabs too.
-                      <p className="zen-overview-search-empty" data-testid="overview-search-empty">
-                        {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
-                      </p>
-                    )}
-                    {essentials.length > 0 && (
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        {essentials.map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            className="zen-essential h-12 w-12"
-                            data-active={tab.id === active?.id}
-                            data-discarded={tab.discarded}
-                            aria-label={tabCardLabel(
-                              tabTitle(tab),
-                              placeOf(tab),
-                              ordered.length,
-                              tab.id === active?.id
-                            )}
-                            // An essential is no card: while tabs are being selected it takes no
-                            // pick and no tap (§9.30, laid out as it was).
-                            disabled={selecting}
-                            onClick={() => pick(tab)}
-                          >
-                            <Favicon tab={tab} size={22} />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div
-                      // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
-                      // takes the shell out of the flow at its `offsetTop`, which is read against
-                      // the nearest positioned ancestor and ignores the scroller's scroll – against
-                      // this grid, which scrolls with the cells, the shell stands where the card
-                      // stood; against the pane outside the scroller it landed `scrollTop` px too
-                      // low, and the tracker held only the cells drawn under that lower box (#355's
-                      // finding, seed 49).
-                      className="relative grid gap-3"
-                      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
-                    >
-                      {/*
+                    {/*
                     The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
                     is a card when this grid's window – the token's – holds it, a sized
                     placeholder until then. The group cards' members are the same cells, through
                     `card`.
                   */}
-                      <OverviewWindowContext.Provider value={token}>
-                        {pinned.map(card)}
-                        {groupCards.map(({ folder, tabs, gone }) => (
-                          <GroupCard
-                            key={folder.id}
-                            folder={folder}
-                            tabs={tabs}
-                            card={card}
-                            columns={columns}
-                            onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                            onCloseGroup={closeGroup}
-                            onDelete={deleteGroupOf}
-                            forming={tabs.length > 0 && forming(folder, tabs)}
-                            dissolving={tabs.length === 0}
-                            held={gone?.count}
-                            onDissolved={dissolvedGroup}
-                            onRelease={subscribeRelease}
-                          />
-                        ))}
-                        {loose.map(card)}
-                      </OverviewWindowContext.Provider>
-                      {!searching && <NewTabCard pane={pane} disabled={selecting} />}
-                    </div>
-                    {searching && !privatePane && (
-                      <OverviewSearchReach
-                        reach={reach}
-                        onRestore={restoreClosed}
-                        onOpenTab={openRemote}
-                      />
-                    )}
+                    <OverviewWindowContext.Provider value={token}>
+                      {pinned.map(card)}
+                      {groupCards.map(({ folder, tabs, gone }) => (
+                        <GroupCard
+                          key={folder.id}
+                          folder={folder}
+                          tabs={tabs}
+                          card={card}
+                          columns={columns}
+                          onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                          onNewTab={newTabInGroup}
+                          onCloseGroup={closeGroup}
+                          onDelete={deleteGroupOf}
+                          forming={tabs.length > 0 && forming(folder, tabs)}
+                          dissolving={tabs.length === 0}
+                          held={gone?.count}
+                          onDissolved={dissolvedGroup}
+                          onRelease={subscribeRelease}
+                        />
+                      ))}
+                      {loose.map(card)}
+                    </OverviewWindowContext.Provider>
+                    {/* The SAVED groups (§2): cards with the saved ring at the grid's end,
+                          before New Tab; off the grid with it while a query stands (§9.34: a
+                          saved page is no match) and while tabs are being selected they stand,
+                          no card to pick. */}
+                    {!searching &&
+                      rows.saved.map((row) => (
+                        <SavedGroupCard
+                          key={`saved:${row.folder.id}`}
+                          row={row}
+                          onOpen={reopenSaved}
+                          onMenu={(r) => {
+                            noteSheetOpener()
+                            setSheet({ kind: 'group-row', folderId: r.folder.id })
+                          }}
+                        />
+                      ))}
+                    {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                   </div>
-                )}
-              </PaneSlot>
-            )}
-            {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
+                  {searching && !privatePane && (
+                    <OverviewSearchReach
+                      reach={reach}
+                      onRestore={restoreClosed}
+                      onOpenTab={openRemote}
+                    />
+                  )}
+                </div>
+              )}
+            </PaneSlot>
+            {privatePane && <PrivateLockCover shown={locked} />}
           </PaneSlot>
           <PaneStills stills={stills} onDone={stillDone} />
           <SelectionActions shown={selecting} actions={selectionActions} />
@@ -2355,6 +2428,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           folder={state.folders[sheet.folderId]}
           count={liveMembersOf(sheet.folderId).length}
           onClose={() => leaveSheet('group')}
+          onNewTab={newTabInGroup}
           onCloseGroup={closeGroup}
           onDelete={deleteGroupOf}
         />
@@ -2375,29 +2449,14 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           onConfirm={deleteGroup}
         />
       )}
-      {interactive && sheet?.kind === 'menu' && (
-        <OverviewMenuSheet
-          title={privatePane ? 'Private' : space.name}
-          privateTabs={privatePane}
-          selectable={checkable.length}
-          open={regularAll.length}
-          closed={sheet.closed.length}
-          onClose={() => leaveSheet('menu')}
-          onSelect={() => setSelection(startSelection())}
-          onRecentlyClosed={() => setSheet({ kind: 'recently-closed', closed: sheet.closed })}
-          onCloseAll={closeAllAsked}
-        />
+      {interactive && sheet?.kind === 'spaces' && (
+        <SpacesSheet state={state} isDark={isDark} onClose={() => leaveSheet('spaces')} />
       )}
       {interactive && sheet?.kind === 'close-all' && (
         <CloseAllSheet
           count={regularAll.length}
-          spaceName={space.name}
-          privateTabs={privatePane}
           onClose={() => leaveSheet('close-all')}
-          onConfirm={(askAgain) => {
-            if (!askAgain) run('settings.update', { confirmCloseAll: false })
-            closeAll()
-          }}
+          onConfirm={closeAll}
         />
       )}
       {interactive && sheet?.kind === 'recently-closed' && (
@@ -2420,84 +2479,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
 }
 
 /**
- * The header's menu: "Select Tabs" (TAB-08, the select-tabs mode's entry from the header, as
- * Chrome's tab switcher menu carries it; the header itself keeps its two icon buttons, §9.3),
- * the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06); "Close Other
- * Tabs" stays on a card's own menu, where it names the card it keeps. The rows are menu items,
- * so Title Case (v2 §9.1), as the card and group menus' rows are; a row with nothing to act on
- * keeps its count, at zero ("Recently Closed (0)"), and is disabled at .4, never hidden (§9.17)
- * – Select Tabs the same, with no card to pick.
- * The private pane's menu is "Select Tabs" and the one row "Close Private Tabs", named as the
- * app menu names it: no recently closed list applies there (Chrome's Incognito switcher has no
- * Recent tabs either), so the row is not there, not greyed – §9.17's rule is for a count of zero.
- */
-function OverviewMenuSheet({
-  title,
-  privateTabs,
-  selectable,
-  open,
-  closed,
-  onClose,
-  onSelect,
-  onRecentlyClosed,
-  onCloseAll
-}: {
-  title: string
-  /** Whether this is the private pane's menu. */
-  privateTabs: boolean
-  /** How many cards the select-tabs mode could pick. */
-  selectable: number
-  /** How many tabs "Close All Tabs" would close (the unpinned ones). */
-  open: number
-  /** How many tabs the recently closed list holds. */
-  closed: number
-  onClose: () => void
-  onSelect: () => void
-  onRecentlyClosed: () => void
-  onCloseAll: () => void
-}): JSX.Element {
-  const counted = (label: string, n: number): string => `${label} (${n})`
-  const select: SheetAction = {
-    id: 'select',
-    label: 'Select Tabs',
-    disabled: selectable === 0,
-    onPick: onSelect
-  }
-  const actions: SheetAction[] = privateTabs
-    ? [
-        select,
-        {
-          id: 'close-all',
-          label: counted('Close Private Tabs', open),
-          destructive: true,
-          disabled: open === 0,
-          onPick: onCloseAll
-        }
-      ]
-    : [
-        select,
-        {
-          id: 'recently-closed',
-          label: counted('Recently Closed', closed),
-          disabled: closed === 0,
-          onPick: onRecentlyClosed
-        },
-        {
-          id: 'close-all',
-          label: counted('Close All Tabs', open),
-          destructive: true,
-          disabled: open === 0,
-          onPick: onCloseAll
-        }
-      ]
-  return <OverviewSheet title={title} actions={actions} onClose={onClose} />
-}
-
-/**
- * The header while tabs are being selected (TAB-08; v2 §9.6): Android's contextual action bar
- * in the overview's own 56 header – its content REPLACES the header row's (the space's name and
- * count, Spaces, More), never stacks under it, and the Tabs | Private segment stays beneath as
- * before. The leading X is the platform's action-mode close, named "Done" as Android names it
+ * The header while tabs are being selected (TAB-08; v2 §9.6; §5): Android's contextual action
+ * bar in the overview's own 56 header – its content REPLACES the header row's (the title), never
+ * stacks under it. The leading X is the platform's action-mode close, named "Done" as Android names it
  * (the back gesture does the same; a trailing Done is iOS's and is not drawn), the count in the
  * title's place as a live region ("3 selected"; "Select tabs" before the first pick, so the
  * mode announces itself), and Select all – Deselect all once every card is picked – as the one
@@ -2713,20 +2697,31 @@ function LiftGhost({
   if (lift.phase === 'idle' || !lift.ghost || !lift.tabId) return null
   const tab = state.tabs[lift.tabId]
   if (!tab) return null
+  // Two elements (motion spec §0.4): the SEAT follows the finger by a per-frame `translate` –
+  // `left`/`top` per frame laid the page out on every frame – and the CARD inside it carries the
+  // lift's scale, whose 120 ms stylesheet transition would otherwise smear the follow when both
+  // sat on one `transform`. The seat is snapped to the device pixel grid as the layout box was,
+  // so the card's text stays sharp wherever the follow rests.
+  const dpr = window.devicePixelRatio || 1
+  const x = Math.round(lift.ghost.x * dpr) / dpr
+  const y = Math.round(lift.ghost.y * dpr) / dpr
   return (
     <div
-      className="zen-overview-card zen-overview-ghost pointer-events-none fixed z-30 flex flex-col overflow-hidden"
-      data-active={tab.id === activeTabId}
-      data-landing={lift.phase === 'dropping' || undefined}
+      className="zen-overview-ghost-seat pointer-events-none fixed z-30"
       style={{
-        left: lift.ghost.x,
-        top: lift.ghost.y,
         width: lift.ghost.width,
         height: lift.ghost.height,
-        transform: `scale(${lift.scale})`
+        transform: `translate(${x}px, ${y}px)`
       }}
     >
-      <CardBody tab={tab} closable={false} />
+      <div
+        className="zen-overview-card zen-overview-ghost flex h-full w-full flex-col overflow-hidden"
+        data-active={tab.id === activeTabId}
+        data-landing={lift.phase === 'dropping' || undefined}
+        style={{ transform: `scale(${lift.scale})` }}
+      >
+        <CardBody tab={tab} closable={false} />
+      </div>
     </div>
   )
 }
@@ -2818,25 +2813,28 @@ function TabSheet({
 }
 
 /**
- * A group card's hold sheet (the header's menu): the colour swatches (`GroupColorPalette`, the
- * Groups pane's row sheet shares them) over the group's actions (`groupActions`: Rename,
- * Collapse / Expand, Ungroup, Close Group, Delete Group – the same actions the card gives a
- * reader as controls under touch exploration, by the same names).
+ * A group card's sheet (its ⋯, or the header held; §2): the colour swatches (`GroupColorPalette`,
+ * the saved card's sheet shares them) over the group's actions (`groupActions`: Rename, New Tab
+ * in Group, Ungroup, Close Group, Delete Group – the same actions the card gives a reader as
+ * controls under touch exploration, by the same names).
  */
 function GroupSheet({
   folder,
   count,
   onClose,
+  onNewTab,
   onCloseGroup,
   onDelete
 }: {
   folder: Folder
   count: number
   onClose: () => void
+  onNewTab: (folder: Folder) => void
   onCloseGroup: (folder: Folder) => void
   onDelete: (folder: Folder) => void
 }): JSX.Element {
   const actions: SheetAction[] = groupActions(folder, count, {
+    newTabInGroup: onNewTab,
     closeGroup: onCloseGroup,
     deleteGroup: onDelete
   }).map(({ id, label, destructive, run: onPick }) => ({ id, label, destructive, onPick }))
@@ -2852,8 +2850,8 @@ function GroupSheet({
 
 /**
  * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
- * closed or grouped it glides to its new place on the same spring as they do. On the private
- * pane it opens a private tab (INC-01). While tabs are being selected it is no card to pick and
+ * closed or grouped it glides to its new place on the same spring as they do. In the private
+ * view it opens a private tab (INC-01). While tabs are being selected it is no card to pick and
  * takes no tap (§9.30, in its place). While a query stands it is off the grid with the cards
  * that do not match (§9.34), its face leaving as theirs do (`NewTabFace`, `Departures`).
  */
@@ -2874,7 +2872,11 @@ function NewTabCard({ pane, disabled }: { pane: OverviewPane; disabled?: boolean
   )
 }
 
-/** Ask for a new tab of the pane's mode: the phone's new tab page comes up over the overview. */
+/**
+ * Ask for a new tab of the view's mode – the New Tab card's tap, the menu's New Tab and New
+ * Private Tab (§4): the phone's new tab page comes up over the overview (`App.tsx`'s
+ * `useNewTabEvent`; the tablet runs the core's command).
+ */
 function newTabOn(pane: OverviewPane): void {
   window.dispatchEvent(
     new CustomEvent('zen-new-tab', {
@@ -2884,98 +2886,17 @@ function newTabOn(pane: OverviewPane): void {
 }
 
 /**
- * The overview's panes as a tab bar above the grid (TAB-02, TAB-16): "Tabs", "Groups" and –
- * where the host has private tabs – "Private" on the shared `.zen-v2-segment` primitive (design
- * language v2 §9.34): text tabs in the window family – the picked one in the window ink with the
- * 2 px accent line under it, the others at 69% – switching on a tap with a 120 ms state change
- * (§11.4); not a segmented pill (§9.14 has none). The class is the truth for its geometry and
- * inks (a row tall at the 16 gutter, each label a 44 target); the markup carries the roles.
- */
-function PaneSegment({
-  pane,
-  hasPrivate,
-  onPick
-}: {
-  pane: OverviewPane
-  hasPrivate: boolean
-  onPick: (pane: OverviewPane) => void
-}): JSX.Element {
-  const labels: Record<OverviewPane, string> = {
-    tabs: 'Tabs',
-    groups: 'Groups',
-    private: 'Private'
-  }
-  return (
-    <div
-      role="tablist"
-      // The list's name says what it holds: Private only where the host has it.
-      aria-label={hasPrivate ? 'Tabs, groups and private tabs' : 'Tabs and groups'}
-      // The overview's modifier beside the primitive: the swipe's line is laid out in its box.
-      className="zen-v2-segment zen-overview-segment"
-    >
-      {paneOrder(hasPrivate).map((id) => (
-        <button
-          key={id}
-          type="button"
-          role="tab"
-          aria-selected={pane === id}
-          data-pane={id}
-          data-testid={`overview-pane-${id}`}
-          onClick={() => {
-            if (pane !== id) onPick(id)
-          }}
-        >
-          {labels[id]}
-        </button>
-      ))}
-      {/* The indicator while a pane swipe is live (GN-19, `usePaneSwipe`): the primitive's own
-          lines hide under `data-swipe` and this one rides the finger from label to label. */}
-      <span className={SEGMENT_LINE_CLASS} aria-hidden data-testid="overview-segment-line" />
-    </div>
-  )
-}
-
-/** The switcher's panes in the order the segment shows them – the order a swipe reads too. */
-function paneOrder(hasPrivate: boolean): readonly OverviewPane[] {
-  return hasPrivate ? ['tabs', 'groups', 'private'] : ['tabs', 'groups']
-}
-
-/**
- * The private pane with nothing in it (TAB-03): a standing state, not a message – a list's
- * empty room as §9.34 writes it for this pane. §9.17's one sentence, "No private tabs", on the
- * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored),
- * its first line 48 under the segment as the Groups pane's is (`.zen-overview-private-empty` in
- * main.css, the same rule), with New private tab as its one follow-up – the note's secondary
- * button 16 beneath, 88 minimum at 40 – never a message card, no title-plus-description pair.
- * What private browsing keeps and does not keep is the private new tab page's to say (§9.29,
- * NTP-31), not the empty pane's. In the window family the private theme paints (§9.29): a
- * child of the pane's flow, so it stands under the segment whatever the pane's height.
- */
-function PrivateEmpty(): JSX.Element {
-  return (
-    <div
-      className="zen-overview-private-empty relative min-h-0 flex-1"
-      data-pane="private"
-      data-testid="overview-private-empty"
-    >
-      <PhoneEmptyNote action={{ label: 'New private tab', onSelect: () => newTabOn('private') }}>
-        No private tabs
-      </PhoneEmptyNote>
-    </div>
-  )
-}
-
-/**
- * The Tabs pane with nothing in it (TAB-34): the Private pane's chassis with this pane's words.
- * §9.17's one sentence, "No open tabs", on the same note in the window ink, its first line 48
- * under the segment (or under the space strip, which stands above the Space's slot as it does
- * above the grid), with New tab as its one follow-up – the note's secondary button – in place of
- * the grid and its lone New Tab card, as the Private pane at none has no card; no title, no
- * glyph, no message card. Chrome's grid at none says the same. It stands inside the Space's slot,
- * so a Space with no tabs slides in as a grid would (MOT-05) and the strip above it stays. It is
- * the pane's state, not the search's: while a query stands the grid keeps the room with its "No
- * tabs found" and the reach's rows (`.zen-overview-tabs-empty` in main.css: the two rules the
- * Private pane's note has). Its 120 ms fade (§11.4) is the replacement's alone: the note that
+ * The regular view with nothing in it (TAB-34): §9.17's one sentence, "No open tabs", on the
+ * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored)
+ * in the window ink, its first line 48 under the header, with New tab as its one follow-up –
+ * the note's secondary button 16 beneath, 88 minimum at 40 – in place of the grid and its lone
+ * New Tab card; no title, no glyph, no message card (a standing state, not a message, as §9.34
+ * writes a list's empty room). Chrome's grid at none says the same. It stands inside the
+ * Space's slot, so a Space with no tabs slides in as a grid would (MOT-05). It is the pane's
+ * state, not the search's: while a query stands the grid keeps the room with its "No tabs
+ * found" and the reach's rows (`.zen-overview-tabs-empty` in main.css). The private view has no
+ * empty room: it stands only while a private tab is open (§4, `overviewPane`). Its 120 ms fade
+ * (§11.4) is the replacement's alone: the note that
  * takes the grid's place in its own slot – the last card gone – is marked `data-in-place`, the
  * fade rule's key; one that comes up with its pane, its Space or the overview carries no mark
  * and rides their motion (§11.1: one object, one move). The mark is decided once, at the mount,
@@ -3005,151 +2926,6 @@ function TabsEmpty({
       <PhoneEmptyNote action={{ label: 'New tab', onSelect: () => newTabOn('tabs') }}>
         No open tabs
       </PhoneEmptyNote>
-    </div>
-  )
-}
-
-/** The indicator's `scaleX` this frame, for its ends to keep their radius under it (`main.css`). */
-const STRIP_SCALE_VAR = '--zen-strip-indicator-scale'
-
-/**
- * The spaces as chips: pills, the current one in the accent tint, edges fading into the gutter.
- * The tint is the strip's INDICATOR (MOT-05, v2 §11.4): one pill under the chips – the current
- * chip draws no fill of its own, the others their element fill, each fill a 120 ms state change
- * – that GLIDES from the chip that was current to the one that is on `SPRING_SNAPPY`: a FLIP on
- * `transform` alone (`indicatorFrame`: laid out at the new chip's box, drawn from the old one's
- * by a translation and a `scaleX`, its radius held round under the scale), the new chip
- * scrolled into the strip's view. Under reduced motion the indicator jumps and the strip scrolls
- * at once (§11.3).
- */
-function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string }): JSX.Element {
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 24 })
-  const stripRef = useRef<HTMLDivElement | null>(null)
-  const indicatorRef = useRef<HTMLDivElement>(null)
-  // Where the indicator rests: the current chip's box, as of the last commit.
-  const lastBox = useRef<StripBox | null>(null)
-  // The glide in flight: from the box it left to the one it rests on, over `travel` px (the
-  // spring runs in px, `travel` → 0, as the grid's FLIP does; the frame is its progress).
-  const glide = useRef<{ from: StripBox; to: StripBox; travel: number } | null>(null)
-  const spring = useRef<SpringAnimation | null>(null)
-  const paintIndicator = (p: number): void => {
-    const el = indicatorRef.current
-    const g = glide.current
-    if (!el) return
-    const { dx, scale } = g ? indicatorFrame(g.from, g.to, p) : { dx: 0, scale: 1 }
-    el.style.transform = `translate3d(${dx}px, 0, 0) scaleX(${scale})`
-    // The ends stay round under the horizontal scale: the sheet divides the radius' x by it
-    // (`--zen-strip-indicator-scale`, `main.css`).
-    if (scale === 1) el.style.removeProperty(STRIP_SCALE_VAR)
-    else el.style.setProperty(STRIP_SCALE_VAR, String(scale))
-  }
-  /** The box the indicator is drawn at this frame, when a glide is in flight. */
-  const drawnBox = (): StripBox | null => {
-    const g = glide.current
-    const s = spring.current
-    if (!g || !s?.running) return null
-    const { dx, scale } = indicatorFrame(g.from, g.to, 1 - s.current.x / g.travel)
-    return { left: g.to.left + dx, width: g.to.width * scale }
-  }
-  const chipsKey = spaces.map((s) => `${s.id}:${s.name}`).join('|')
-  useLayoutEffect(() => {
-    const strip = stripRef.current
-    const el = indicatorRef.current
-    const chip = strip?.querySelector<HTMLElement>('[aria-current="true"]') ?? null
-    if (!strip || !el) return
-    if (!chip) {
-      // No current chip in the strip: nothing to mark.
-      el.style.opacity = '0'
-      lastBox.current = null
-      return
-    }
-    const to: StripBox = { left: chip.offsetLeft, width: chip.offsetWidth }
-    el.style.opacity = ''
-    el.style.left = `${to.left}px`
-    el.style.width = `${to.width}px`
-    el.style.top = `${chip.offsetTop}px`
-    el.style.height = `${chip.offsetHeight}px`
-    // A glide in flight (a third Space picked before the indicator rested) goes on from where
-    // it is drawn; otherwise from the chip that was current.
-    const from = drawnBox() ?? lastBox.current
-    lastBox.current = to
-    const reduced = reducedMotion()
-    const travel = from
-      ? Math.max(Math.abs(from.left - to.left), Math.abs(from.width - to.width))
-      : 0
-    const still = !from || reduced || travel < 0.5
-    // The current chip in the strip's view: the strip opens on it (no motion on the mount), and
-    // scrolls to a picked one off its edge as the indicator glides there.
-    chip.scrollIntoView({
-      inline: 'nearest',
-      block: 'nearest',
-      behavior: still ? 'auto' : 'smooth'
-    })
-    spring.current?.stop()
-    if (still) {
-      // The strip's first chip, a chip re-laid out in place, or reduced motion: at rest at once.
-      glide.current = null
-      paintIndicator(1)
-      return
-    }
-    glide.current = { from, to, travel }
-    // Drawn at the old chip before this commit paints: the spring's first frame is the next one.
-    paintIndicator(0)
-    spring.current ??= new SpringAnimation(
-      SPRING_SNAPPY,
-      (x) => paintIndicator(glide.current ? 1 - x / glide.current.travel : 1),
-      () => {
-        glide.current = null
-        paintIndicator(1)
-      }
-    )
-    spring.current.start(travel, 0, 0)
-  }, [activeId, chipsKey])
-  useEffect(
-    () => () => {
-      spring.current?.stop()
-    },
-    []
-  )
-  // One ref for the strip's life: made anew each render it would be called again each render,
-  // the fades measuring the strip again each time (a forced layout; see `gridRef`).
-  const stripFade = useCallback(
-    (el: HTMLDivElement | null) => {
-      stripRef.current = el
-      return fade(el)
-    },
-    [fade]
-  )
-  return (
-    <div
-      ref={stripFade}
-      className="zen-overview-strip relative flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2 pt-0.5"
-    >
-      <div
-        ref={indicatorRef}
-        className="zen-overview-strip-indicator pointer-events-none absolute"
-        aria-hidden
-        data-testid="overview-strip-indicator"
-      />
-      {spaces.map((s) => {
-        const active = s.id === activeId
-        return (
-          <button
-            key={s.id}
-            type="button"
-            className={cn(
-              'zen-overview-strip-chip relative flex h-9 shrink-0 snap-start items-center gap-2 rounded-full px-3.5 text-[13px] font-medium active:scale-[0.98]',
-              !active && 'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]'
-            )}
-            aria-current={active || undefined}
-            data-space-id={s.id}
-            onClick={() => run('space.activate', { spaceId: s.id })}
-          >
-            <SpaceGlyph icon={s.icon} size={14} />
-            <span className="max-w-[140px] truncate">{s.name}</span>
-          </button>
-        )
-      })}
     </div>
   )
 }

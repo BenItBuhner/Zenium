@@ -59,6 +59,7 @@ import {
   type MenuItemDescriptor,
   type NavigationDirection,
   type NavigationSnapshotEntry,
+  type OverviewMenuRequest,
   type PhoneBarItemId,
   type Platform as PlatformOs,
   type Rect,
@@ -69,7 +70,8 @@ import {
   type ShortcutAction,
   type SuggestionKind,
   type SyncRemoteTab,
-  type Tab
+  type Tab,
+  type UndoableTabClose
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import {
@@ -91,6 +93,8 @@ import { languageName, sortedByName } from '../shared/languageNames'
 import { orderMediaEntries } from '../shared/mediaHub'
 import { toolbarPinned, withToolbarPin, type ToolbarControl } from '../shared/toolbarPins'
 import { serialiseMenu } from './rendererMenus'
+import { overviewMenuTemplate } from './overviewMenu'
+import { overviewMenuTitle, type OverviewMenuContext } from '../shared/overviewMenu'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
@@ -104,6 +108,7 @@ import {
   splitViewSubmenu,
   tabDirectionLabels
 } from './menuBar'
+import { S } from '../shared/strings'
 import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { isSendableUrl } from './sync/sendTab'
 import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
@@ -338,13 +343,34 @@ export class Menus {
     }, APPLICATION_MENU_DEBOUNCE_MS)
   }
 
+  /**
+   * A tab menu's close row (§9.23, OS-40 part B). On a touch host the row closes nothing itself:
+   * its click emits `tab.closeUndoable` with the tabs the close takes (`tabIds`, read as the row
+   * is picked) and the core command that closes them (`close`), and the chrome runs that command
+   * through its one close-with-undo (`lib/closeUndo.ts`): the pages are let go without "Leave
+   * site?", and the toast's Undo is the protection. On the desktop the row runs `direct` in the
+   * core, as it always did – its page may still ask.
+   */
+  private closeRow(
+    win: ZenWindow,
+    tabIds: () => string[],
+    close: UndoableTabClose,
+    direct: () => void
+  ): () => void {
+    return () => {
+      if (!touchLayout(win.formFactor)) return direct()
+      this.browser.emit('tab.closeUndoable', { tabIds: tabIds(), close }, win)
+    }
+  }
+
   private popup(
     template: Template,
     win: ZenWindow,
     source: MenuSource,
     anchor?: MenuAnchor,
     header?: MenuHeader,
-    defaultOrder?: string[]
+    defaultOrder?: string[],
+    title?: string
   ): void {
     const items = withAccelerators(
       tidySeparators(template),
@@ -357,7 +383,8 @@ export class Menus {
       win,
       ...anchor,
       ...(header ? { header } : {}),
-      ...(defaultOrder ? { defaultOrder } : {})
+      ...(defaultOrder ? { defaultOrder } : {}),
+      ...(title ? { title } : {})
     })
   }
 
@@ -714,8 +741,9 @@ export class Menus {
    * while the grid is shown – Chrome's second link on the removal toast, which v2 §9.33 gives
    * one action, so the restore lives here, greyed when the grid is a fresh profile's already,
    * with the page's Undo toast in place of a confirmation (§10.5); and "Customise New Tab
-   * Page…", the Customise button's route. A private page has neither section (its explainer
-   * stands where the grid would) and gets no rows.
+   * Page", the Customise button's route – a settings page, a destination with no ask (P-36). A
+   * private page has neither section (its explainer stands where the grid would) and gets no
+   * rows.
    */
   private newTabPageGroup(tab: Tab, win: ZenWindow): Template {
     if (tab.containerId === PRIVATE_CONTAINER_ID) return []
@@ -733,7 +761,7 @@ export class Menus {
       })
     }
     rows.push({
-      label: 'Customise New Tab Page…',
+      label: S.menu('newTab.customise'),
       click: () => this.browser.pages.open('settings', 'newtab', win, tab.id)
     })
     return rows
@@ -1202,7 +1230,7 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: 'Language Settings',
+          label: S.menu('languages.open'),
           click: () => void this.browser.pages.open('settings', 'languages', win)
         }
       ]
@@ -1581,8 +1609,9 @@ export class Menus {
         click: () => void view.executeJavaScript('document.exitFullscreen()').catch(() => null)
       })
     } else if (win.host.isFullScreen()) {
+      // The row knows the state: the pair's on side (P-22).
       items.push({
-        label: 'Exit Full Screen',
+        label: S.menu('page.fullscreen', { state: true }),
         action: 'page.fullscreen',
         click: () => this.browser.toggleFullscreen(win)
       })
@@ -1704,10 +1733,11 @@ export class Menus {
         action: 'page.readerMode',
         click: () => reader.toggle(tab.id, win)
       },
+      // The translate bar asks (P-33): the entry's ellipsis, as the app menu's row has it.
       ...(translate.available
         ? [
             {
-              label: 'Translate Page',
+              label: S.menu('translate.open'),
               enabled: translate.canTranslate(tab.id),
               click: () => void translate.open(tab.id, win)
             }
@@ -1812,8 +1842,9 @@ export class Menus {
       }
       groups.push([
         this.fullUrlsItem(win),
+        // Settings › Search, a destination (P-36): the palette's words, no ask.
         {
-          label: 'Manage Search Engines…',
+          label: S.menu('search.manageEngines'),
           click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
@@ -1866,10 +1897,11 @@ export class Menus {
    * folded away has no button to right-click, so Unpin is the row met; Pin stands for the
    * state all the same) – writing the control's key of `Settings.toolbarPins` as the Customise
    * toolbar dialog's row does, the control folding into the app menu; then "Customise
-   * Toolbar…", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
-   * on the row and opens its form) – the ellipsis because Zenium's surface is a dialog where
-   * Chrome's is a side panel (§9.1). Forward is not among them: its right-click is the stack's
-   * menu, as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
+   * Toolbar", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
+   * on the row and opens its form) – no ellipsis: a row that opens a settings page is a
+   * destination, not an ask (P-36, the Lead's ruling), though Zenium's surface is a dialog where
+   * Chrome's is a side panel. Forward is not among them: its right-click is the stack's menu,
+   * as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
    * Settings' "Show forward button" switch). The extension buttons keep their own menu (#104).
    */
   toolbarButtonItems(control: ToolbarControl, win: ZenWindow): Template {
@@ -1882,7 +1914,7 @@ export class Menus {
         click: () => this.browser.handleCommand(win, 'settings.update', patch)
       },
       {
-        label: 'Customise Toolbar…',
+        label: S.menu('toolbar.customise'),
         click: () =>
           void this.browser.pages.open('settings', 'look', win, undefined, {
             query: { row: CUSTOMIZE_TOOLBAR_ROW, open: CUSTOMIZE_TOOLBAR_ROW }
@@ -2065,8 +2097,10 @@ export class Menus {
       },
       { type: 'separator' },
       { label: 'Remove from Zenium', click: () => void extensions.remove(id) },
+      // The page's own name (the string table's `addons.open`, one label per act – the Lead's
+      // Q2 over Chrome's "Manage extensions" in this seat).
       {
-        label: 'Manage Extensions',
+        label: S.menu('addons.open'),
         click: () => this.browser.actions.run('addons.open', { sourceTabId: null, win })
       }
     )
@@ -2463,6 +2497,23 @@ export class Menus {
     // "Remove from Folder" beside it), the domain's route, and – Chrome's pair (tabs-23,
     // context-menus-93) – to a new window or to another, listed by their active tab, most
     // recently focused first and greyed with none to go to.
+    // The four folder rows' words by the window's layout (TABLET-22, parity-android.md; the
+    // overview cleanup spec §7): a touch host says GROUP, as Chrome for Android's tab menu does
+    // and as the phone's own sheets do; the desktop says Folder, its labels byte for byte as
+    // before. One block, so the string table absorbs it whole.
+    const folderRows = touchLayout(win.formFactor)
+      ? {
+          addToNew: 'Add Tab to New Group',
+          moveTo: 'Move to Group',
+          newOne: 'New Group…',
+          remove: 'Remove from Group'
+        }
+      : {
+          addToNew: 'Add Tab to New Folder',
+          moveTo: 'Move to Folder',
+          newOne: 'New Folder…',
+          remove: 'Remove from Folder'
+        }
     const moveTab: Template = joinGroups([
       [
         {
@@ -2486,16 +2537,16 @@ export class Menus {
           !local,
           folders.length === 0
             ? {
-                label: 'Add Tab to New Folder',
+                label: folderRows.addToNew,
                 enabled: !tab.essential && !tab.pinned,
                 click: () => this.browser.newFolderWithTab(space.id, tabId, win)
               }
             : {
-                label: 'Move to Folder',
+                label: folderRows.moveTo,
                 enabled: !tab.essential && !tab.pinned,
                 submenu: [
                   {
-                    label: 'New Folder…',
+                    label: folderRows.newOne,
                     click: () => this.browser.newFolderWithTab(space.id, tabId, win)
                   },
                   { type: 'separator' as const },
@@ -2508,7 +2559,7 @@ export class Menus {
                 ]
               },
           ...when(Boolean(tab.folderId), {
-            label: 'Remove from Folder',
+            label: folderRows.remove,
             click: () => tabs.moveToFolder(tabId, null)
           }),
           {
@@ -2617,31 +2668,58 @@ export class Menus {
         // nothing to close is greyed, not gone (§9.30).
         label: 'Close Multiple Tabs',
         submenu: [
+          // Every close row: with Undo on the toast on a touch host, the core's own close on the
+          // desktop (`closeRow`, §9.23).
           {
             label: direction.closeBefore,
             enabled: tabs.closeScope(tabId, 'above', win).length > 0,
-            click: () => tabs.closeAbove(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'above', win),
+              { command: 'tab.closeAbove', tabId },
+              () => tabs.closeAbove(tabId, win)
+            )
           },
           {
             label: direction.closeAfter,
             enabled: tabs.closeScope(tabId, 'below', win).length > 0,
-            click: () => tabs.closeBelow(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'below', win),
+              { command: 'tab.closeBelow', tabId },
+              () => tabs.closeBelow(tabId, win)
+            )
           },
           {
             label: 'Close Other Tabs',
             enabled: tabs.closeScope(tabId, 'others', win).length > 0,
-            click: () => tabs.closeOthers(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'others', win),
+              { command: 'tab.closeOthers', tabId },
+              () => tabs.closeOthers(tabId, win)
+            )
           }
         ]
       },
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
         ...key('tab.close'),
-        click: () => void tabs.requestClose(tabId, false, win)
+        click: this.closeRow(
+          win,
+          () => [tabId],
+          { command: 'tab.close', tabId, force: false },
+          () => void tabs.requestClose(tabId, false, win)
+        )
       },
       ...when(tab.pinned || tab.essential, {
         label: 'Remove Tab',
-        click: () => void tabs.requestClose(tabId, true, win)
+        click: this.closeRow(
+          win,
+          () => [tabId],
+          { command: 'tab.close', tabId, force: true },
+          () => void tabs.requestClose(tabId, true, win)
+        )
       })
     ]
 
@@ -2720,6 +2798,12 @@ export class Menus {
     const folders = Object.values(m.folders).filter(
       (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
     )
+    // The group rows' words by the window's layout, as the tab menu's (the overview cleanup
+    // spec §7; the Lead's fold on #731): a touch host says GROUP, the desktop says Folder, its
+    // labels byte for byte as before.
+    const groupRows = touchLayout(win.formFactor)
+      ? { addTo: `Add ${n} Tabs to Group`, newOne: 'New Group…' }
+      : { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
     this.popup(
       [
         {
@@ -2760,7 +2844,7 @@ export class Menus {
                 })
               },
               {
-                label: `Add ${n} Tabs to Folder`,
+                label: groupRows.addTo,
                 enabled: nonEssential.some((t) => !t.pinned),
                 submenu: [
                   ...folders.map((f) => ({
@@ -2771,7 +2855,7 @@ export class Menus {
                   })),
                   ...(folders.length ? [{ type: 'separator' as const }] : []),
                   {
-                    label: 'New Folder…',
+                    label: groupRows.newOne,
                     click: () => {
                       const folder = this.browser.createFolder(
                         space.id,
@@ -2803,11 +2887,18 @@ export class Menus {
         { type: 'separator' },
         {
           label: `Close ${n} Tabs`,
-          click: () =>
-            // One at a time, so a page that objects asks before the next one is touched.
-            void (async () => {
-              for (const t of selected) await tabs.requestClose(t.id, false, win)
-            })()
+          // With Undo on the toast on a touch host, through the core's `tab.closeMany` (`closeRow`,
+          // §9.23); the desktop's loop as it was.
+          click: this.closeRow(
+            win,
+            () => selected.map((t) => t.id),
+            { command: 'tab.closeMany', tabIds: selected.map((t) => t.id) },
+            () =>
+              // One at a time, so a page that objects asks before the next one is touched.
+              void (async () => {
+                for (const t of selected) await tabs.requestClose(t.id, false, win)
+              })()
+          )
         }
       ],
       win,
@@ -2820,16 +2911,16 @@ export class Menus {
    * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
    * it. Chrome's strip rows first – New tab, Reopen closed tab, Bookmark all tabs…, and on the
    * desktop Name window… (context-menus-108) – then Zenium's own: the space's folders and
-   * spaces, Clear Unpinned Tabs; last the window's own rows, as Chrome's frame menu
-   * (`SystemMenuModelBuilder`) ends: Task manager after a separator, then the window's Close.
-   * The window rows are a windowed host's alone (`capabilities.windows`): the phone has one
-   * window, no task manager window and no Close for it, so its sheet ends at Clear Unpinned
-   * Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's rows inside it, so
-   * the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize –
-   * and the OS's Close ends the menu; Move and Size stay out, Electron having no way into the
-   * OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's "Use system title bar
-   * and borders" stays out too: the browser window is frameless by design, the toggle would
-   * have nothing to switch.
+   * spaces, Close Unpinned Tabs (P-9: the key table's words); last the window's own rows, as
+   * Chrome's frame menu (`SystemMenuModelBuilder`) ends: Task manager after a separator, then
+   * the window's Close. The window rows are a windowed host's alone (`capabilities.windows`):
+   * the phone has one window, no task manager window and no Close for it, so its sheet ends at
+   * Close Unpinned Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's
+   * rows inside it, so the frameless window's system items lead in the OS's words – Restore,
+   * Minimize, Maximize – and the OS's Close ends the menu; Move and Size stay out, Electron
+   * having no way into the OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's
+   * "Use system title bar and borders" stays out too: the browser window is frameless by
+   * design, the toggle would have nothing to switch.
    */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
@@ -2901,24 +2992,26 @@ export class Menus {
         ...(local
           ? []
           : [
+              // The strip's group rows say GROUP on a touch host, as the tab menu's do (the
+              // overview cleanup spec §7; the Lead's fold on #731); the desktop's say Folder.
               {
-                label: 'New Folder',
+                label: touchLayout(win.formFactor) ? 'New Group' : 'New Folder',
                 click: () =>
                   this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
               },
               {
-                label: 'New Live Folder…',
+                label: touchLayout(win.formFactor) ? 'New Live Group…' : 'New Live Folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               {
-                label: 'New Space…',
+                label: S.menu('space.new'),
                 action: 'space.new' as const,
                 click: () => this.browser.emit('space.new', undefined, win)
               },
               { type: 'separator' as const }
             ]),
         {
-          label: 'Clear Unpinned Tabs',
+          label: S.menu('space.closeUnpinned'),
           ...(space.id === win.activeSpaceId ? { action: 'space.closeUnpinned' as const } : {}),
           enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
           click: () => tabs.closeUnpinned(space.id, win)
@@ -3043,7 +3136,7 @@ export class Menus {
           click: () => this.browser.unloadOtherSpaces(win)
         },
         { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
-        { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId, win) },
+        { label: S.menu('space.closeUnpinned'), click: () => tabs.closeUnpinned(spaceId, win) },
         { type: 'separator' },
         {
           label: 'Space Routing Settings…',
@@ -3980,13 +4073,19 @@ export class Menus {
 
   /**
    * "Open in <app>" inside an installed app's scope: the desktop launches the app's own window
-   * (Chrome), the phone goes to the app's start URL in this tab.
+   * (Chrome), the phone goes to the app's start URL in this tab. An app whose shortcut opens a
+   * tab ("Open as window" off, `openAsWindow` false) has no row: its launcher opens a tab like
+   * this one, and Chrome offers none for it (the Design Lead's ruling on #761's second seam).
+   * A shortcut to a page without a manifest (`PinnedWebApp.kind` `shortcut`) has none either,
+   * whichever way its box stood: it has no scope and claims no page, so `pinnedFor` never
+   * answers with it, and Create Shortcut… stays on offer instead (`installItems`). The phone's
+   * flat row and the sidebar layouts' More Tools row are both this one.
    */
   private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
     const pinned = webApps.pinnedFor(active.url)
-    if (!pinned) return []
+    if (!pinned || pinned.openAsWindow === false) return []
     return [
       {
         label: openAppMenuLabel(webApps.surface, pinned.name),
@@ -4010,6 +4109,86 @@ export class Menus {
         click: () => webApps.openInstall(active.id, win)
       }
     ]
+  }
+
+  /**
+   * The tab overview's ⋯ menu (tab overview cleanup spec §4, §5; `shared/overviewMenu.ts` has
+   * the rows and their rules, `core/overviewMenu.ts` the template): while the overview stands
+   * the bar's ⋯ opens this in place of the app menu, through the bar's own surface – the
+   * phone's sheet, the tablet's popover at the button. The counts are the core's: the view's
+   * tabs as the overview lists them (the regular view the active space's tabs less the private
+   * ones, Essentials with them in the count the "Tabs (N)" row names; the private view the
+   * private session's across the spaces), the cards a selection could take (a folded group's
+   * members and the essentials are no cards), the archive, the recently closed tabs and the
+   * window's spaces in their order. A space switch is the core's own (`Tabs.switchSpace`, the
+   * app menu's row); every other row is the chrome's to act on, handed back as one
+   * `overview.command` event to the mounted overview.
+   */
+  private showOverviewMenu(
+    win: ZenWindow,
+    request: OverviewMenuRequest,
+    options: { anchor?: Rect; keyboard: boolean }
+  ): void {
+    const { state, tabs } = this.browser
+    const m = state.model
+    const space = tabs.activeSpaceFor(win)
+    const isPrivate = (tab: Tab): boolean => tab.containerId === PRIVATE_CONTAINER_ID
+    const tabsOf = (s: { tabIds: string[] }): Tab[] =>
+      s.tabIds.map((id) => m.tabs[id]).filter((t): t is Tab => Boolean(t))
+    const essentials = m.essentialTabIds
+      .map((id) => m.tabs[id])
+      .filter((t): t is Tab => Boolean(t))
+      .filter(
+        (t) => !state.settings.containerSpecificEssentials || t.containerId === space.containerId
+      )
+      .filter((t) => !isPrivate(t))
+    const regularOf = (s: { tabIds: string[] }): Tab[] => tabsOf(s).filter((t) => !isPrivate(t))
+    const spaceTabs = regularOf(space)
+    const pinned = spaceTabs.filter((t) => t.pinned)
+    const loose = spaceTabs.filter((t) => !t.pinned)
+    const privateTabs = tabs.privateTabs()
+    const privateView = request.view === 'private'
+    // The cards a selection could pick: the pinned cards, the open groups' members, the loose
+    // cards (a folded group is one card and takes no check); the private view's are its tabs.
+    const foldedAway = (t: Tab): boolean => Boolean(t.folderId && m.folders[t.folderId]?.collapsed)
+    const selectable = privateView
+      ? privateTabs.length
+      : pinned.length + loose.filter((t) => !foldedAway(t)).length
+    const ctx: OverviewMenuContext = {
+      view: request.view,
+      privateTabs: state.capabilities.privateTabs,
+      counts: {
+        closable: privateView ? privateTabs.length : loose.length,
+        selectable,
+        regular: essentials.length + spaceTabs.length,
+        private: privateTabs.length,
+        inactive: state.archivedTabs.length,
+        recentlyClosed: state.recentlyClosed.filter((entry) => entry.kind === 'tab').length
+      },
+      spaces: m.spaces.map((s) => ({
+        id: s.id,
+        label: spaceLabel(s),
+        current: s.id === space.id
+      })),
+      selection: request.selection ?? null
+    }
+    const anchor = options.anchor
+      ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
+      : undefined
+    // The sheet is titled as the overview is – "Work · 10 tabs", "Private · 1 tab",
+    // "1 selected" – never "Zenium", the app menu's (§4).
+    this.popup(
+      overviewMenuTemplate(ctx, {
+        switchSpace: (spaceId) => tabs.switchSpace(spaceId, win),
+        chrome: (command) => this.browser.emit('overview.command', { command }, win)
+      }),
+      win,
+      'app',
+      { ...anchor, keyboard: options.keyboard },
+      undefined,
+      undefined,
+      overviewMenuTitle(ctx, space.name)
+    )
   }
 
   /**
@@ -4039,13 +4218,25 @@ export class Menus {
    */
   showAppMenu(
     win: ZenWindow,
-    options: { anchor?: Rect; keyboard: boolean; mediaHubFolded?: boolean }
+    options: {
+      anchor?: Rect
+      keyboard: boolean
+      mediaHubFolded?: boolean
+      overview?: OverviewMenuRequest
+    }
   ): void {
     const { state, tabs } = this.browser
     const caps = state.capabilities
     const active = tabs.activeTabFor(win)
     const local = Boolean(win.localSpace)
     const phone = win.formFactor === 'phone'
+    // The tab overview stands (tab overview cleanup spec §1, §4): the bar's ⋯ is the overview's
+    // menu – its rows in place of the app menu's, through the same surface – and the overview
+    // draws no ⋯ of its own. The chrome says which view and whether tabs are being selected.
+    if (options.overview) {
+      this.showOverviewMenu(win, options.overview, options)
+      return
+    }
     /** Items the host must be able to act on; left out rather than greyed where it cannot. */
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     /** Items of the sidebar layouts (desktop and tablet) only. */
@@ -4075,16 +4266,20 @@ export class Menus {
     this.markUpdateMenuOpened()
 
     // --- The items, each once; the two layouts below put them in their order. ----------------
+    // Every row's words are the string table's (§9 item 10, the D7 proposal's PR-2b): a row
+    // that names an act reads `S.menu(act)`, so the ⋯ menu, the key table, the palette and the
+    // mac menu bar say the same of it, and the ask's ellipsis is the entry's flag, never typed.
     const newTab: MenuItemTemplate = {
-      label: 'New Tab',
+      label: S.menu('tab.new'),
       action: 'tab.new',
       click: () => this.browser.openNewTab(win)
     }
     // Chrome's tab search (tabs-17): a popover of the sidebar layouts, and the desktop's one
     // pointer way into it (the chord and the macOS menu bar are the others), so it keeps a row
-    // in the tabs group; the phone's tab switcher searches on its own.
+    // in the tabs group; the phone's tab switcher searches on its own. No ellipsis (P-10): the
+    // popover is the act itself, not an ask.
     const searchTabs: MenuItemTemplate = {
-      label: 'Search Tabs…',
+      label: S.menu('tab.search'),
       action: 'tab.search',
       click: () => this.browser.emit('tabsearch.open', undefined, win)
     }
@@ -4095,29 +4290,29 @@ export class Menus {
     const privateTabs = when(
       caps.privateTabs,
       {
-        label: 'New Private Tab',
+        label: S.menu('tab.newPrivate'),
         key: 'row.newPrivateTab',
         click: () => tabs.newPrivateTab(undefined, win)
       },
       {
-        label: 'Close Private Tabs',
+        label: S.menu('tab.closePrivate'),
         key: 'row.closePrivateTabs',
         enabled: tabs.privateTabs().length > 0,
         click: () => tabs.closePrivateTabs(win)
       }
     )
     const newSpace = when(!local, {
-      label: 'New Space…',
+      label: S.menu('space.new'),
       action: 'space.new',
       click: () => this.browser.emit('space.new', undefined, win)
     })
     const newWindow = when(caps.windows, {
-      label: 'New Window',
+      label: S.menu('window.new'),
       action: 'window.new',
       click: () => this.browser.openWindow('synced', win)
     })
     const newBlankWindow = when(caps.windows, {
-      label: 'New Blank Window',
+      label: S.menu('window.newUnsynced'),
       action: 'window.newUnsynced',
       click: () => this.browser.openWindow('unsynced', win)
     })
@@ -4128,29 +4323,29 @@ export class Menus {
     // an app window has no tab strip to duplicate: the row is left out, as `when`'s rule has it
     // (an app window's menu is `showWebAppMenu`'s in any case).
     const duplicateWindow = when(caps.windows && win.chrome === 'full', {
-      label: 'Duplicate Window',
+      label: S.menu('window.duplicate'),
       action: 'window.duplicate',
       click: () => void this.browser.duplicateWindow(win)
     })
     // Chrome's More tools › Name window… (shortcuts-menus-121): the desktop's, whose OS title
     // bar and window switcher read the name; a tablet's one window has neither.
     const nameWindow = desktop({
-      label: 'Name Window…',
+      label: S.menu('window.name'),
       action: 'window.name',
       click: () => this.browser.emit('windowName.open', undefined, win)
     })
     const newPrivateWindow = when(caps.windows, {
-      label: 'New Private Window',
+      label: S.menu('window.newPrivate'),
       action: 'window.newPrivate',
       click: () => this.browser.openWindow('private', win)
     })
     // A private window's menu closes the window group with Chrome's "Close Incognito windows"
     // (profiles-25; design language v2 §6, §9.19): Firefox's counted verb – "Close Private
-    // Window" for one, "Close 2 Private Windows" for more – every private window, the private
-    // session ending with the last. A regular window's menu is as it was.
+    // Window" for one, "Close 2 Private Windows" for more (the entry's count) – every private
+    // window, the private session ending with the last. A regular window's menu is as it was.
     const count = this.browser.allWindows().filter((w) => w.isPrivate).length
     const closePrivateWindows = when(win.isPrivate, {
-      label: count > 1 ? `Close ${count} Private Windows` : 'Close Private Window',
+      label: S.menu('window.closePrivate', { n: count }),
       click: () => void this.browser.closePrivateWindows(win)
     })
     const bookmarks: MenuItemTemplate = {
@@ -4165,13 +4360,13 @@ export class Menus {
           click: () => active && this.browser.toggleBookmark(active.id, win)
         }),
         {
-          label: 'Bookmark All Tabs…',
+          label: S.menu('bookmark.allTabs'),
           action: 'bookmark.allTabs',
           click: () => this.browser.bookmarkTabs(win)
         },
         separator,
         {
-          label: 'Show Bookmarks',
+          label: S.menu('bookmark.sidebar'),
           action: 'bookmark.sidebar',
           click: () => this.browser.pages.open('bookmarks', undefined, win)
         },
@@ -4223,7 +4418,13 @@ export class Menus {
         )
       ]
     }
-    /** The History page (Ctrl+H): the phone's row, the head of the sidebar layouts' submenu. */
+    /**
+     * The History page (Ctrl+H): the phone's row, the head of the sidebar layouts' submenu. The
+     * two library rows keep Chrome's app-menu words ("Show Full History", "Downloads" – the mac
+     * bar's faces of `history.sidebar` and `downloads.open`) where the key table and the
+     * palette say "Show History" and "Show Downloads": no D7 pair names the two, so the rows
+     * wait on the history and downloads family (PR-8; the sweep's PENDING).
+     */
     const showHistory = (label: string): MenuItemTemplate => ({
       label,
       action: 'history.sidebar',
@@ -4283,8 +4484,10 @@ export class Menus {
       label: 'Extensions',
       click: () => this.browser.emit('extensions.open', undefined, win)
     })
+    // §9.10's page of the extensions and the mods (P-6): the row, the page title and the
+    // extension's own menu read the one entry.
     const addons = when(caps.extensions, {
-      label: 'Add-ons and Themes',
+      label: S.menu('addons.open'),
       action: 'addons.open',
       click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
     })
@@ -4292,25 +4495,27 @@ export class Menus {
     // of More tools: the library group's last row on the sidebar layouts, the dialog the History
     // page's button and Settings › Privacy open. The phone's form is the Settings sheet.
     const deleteBrowsingData = sidebar({
-      label: 'Delete Browsing Data…',
+      label: S.menu('privacy.clearBrowsingData'),
       action: 'privacy.clearBrowsingData',
       click: () => this.browser.actions.run('privacy.clearBrowsingData', { sourceTabId: null, win })
     })
     // The desktop's alone: Zen's compact mode is the hover-revealed sidebar, which a finger
     // cannot reveal; the tablet's sidebar collapses to its rail from the toolbar.
     const compactMode = desktop({
-      label: 'Compact Mode',
+      label: S.menu('compact.toggle'),
       type: 'checkbox',
       action: 'compact.toggle',
       checked: win.compactEnabled,
       click: () => this.browser.toggleCompactMode(win)
     })
     const changeTheme = when(!local, {
-      label: 'Change Theme…',
+      label: S.menu('theme.open'),
       click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
     })
+    // A checkbox row, as Compact Mode beside it: the noun (P-22, "Full Screen"), the check
+    // carrying the state where the page menu's row says "Exit Full Screen" outright.
     const fullscreen: MenuItemTemplate = {
-      label: 'Fullscreen',
+      label: S.menu('page.fullscreen'),
       type: 'checkbox',
       action: 'page.fullscreen',
       checked: win.host.isFullScreen(),
@@ -4335,7 +4540,7 @@ export class Menus {
       active?.splitGroupId ? state.model.splitGroups[active.splitGroupId] : undefined
     )
     const findInPage: MenuItemTemplate = {
-      label: 'Find in Page…',
+      label: S.menu('find.open'),
       action: 'find.open',
       enabled: Boolean(active),
       click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
@@ -4380,7 +4585,7 @@ export class Menus {
       ]
     }
     const readerView: MenuItemTemplate = {
-      label: 'Reader View',
+      label: S.menu('page.readerMode'),
       action: 'page.readerMode',
       enabled: Boolean(active) && this.browser.reader.canRead(active),
       click: () => active && this.browser.reader.toggle(active.id, win)
@@ -4390,7 +4595,7 @@ export class Menus {
     // the sheet (a phone): the one home of the reader's controls, the document carrying no
     // toolbar of its own (§10.1). On a phone, whose pill has no chip, this is the way in.
     const textPreferences = when(Boolean(active) && this.browser.reader.isReaderUrl(active!.url), {
-      label: 'Text Preferences…',
+      label: S.menu('reader.textPreferences'),
       click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
     })
     // Chrome's "Listen to this page" (A11Y-06; Title Case like the menu's other items): on
@@ -4399,15 +4604,18 @@ export class Menus {
     // document, which the core then reads as `source: 'reader'`). The player it docks is
     // the one component on both hosts, in the frame's shape on each (§9.32).
     const listen = when(this.browser.readAloud.available, {
-      label: 'Listen to This Page',
+      label: S.menu('readAloud.start'),
       enabled: Boolean(active) && this.browser.reader.canRead(active),
       click: () => active && void this.browser.readAloud.start({ tabId: active.id })
     })
+    // The translate bar asks (P-33): the entry's ellipsis, here as on the page's own menu.
     const translate = when(this.browser.translate.available, {
-      label: 'Translate Page…',
+      label: S.menu('translate.open'),
       enabled: Boolean(active) && this.browser.translate.canTranslate(active!.id),
       click: () => active && void this.browser.translate.open(active.id, win)
     })
+    // `share.open`'s entry is the copy and share family's (PR-3): the row keeps its words
+    // till then (the sweep's PENDING).
     const share = when(caps.share, {
       label: 'Share…',
       enabled: Boolean(active) && /^https?:/i.test(active!.url),
@@ -4433,7 +4641,7 @@ export class Menus {
     )
     const openInApp = sidebar(...this.openAppItems(active, win))
     const print = when(caps.print, {
-      label: 'Print…',
+      label: S.menu('page.printPreview'),
       action: 'page.printPreview',
       enabled: Boolean(active),
       click: () =>
@@ -4444,14 +4652,14 @@ export class Menus {
     // a host that has them (`savePageItem`).
     const savePageAs = this.savePageItem(active, win)
     const screenshot: MenuItemTemplate = {
-      label: 'Take Screenshot',
+      label: S.menu('page.screenshot'),
       action: 'page.screenshot',
       enabled: Boolean(active),
       click: () =>
         active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
     }
     const captureFullPage: MenuItemTemplate = {
-      label: 'Capture Full Page',
+      label: S.menu('page.captureFullPage'),
       action: 'page.captureFullPage',
       enabled: Boolean(active),
       click: () =>
@@ -4460,7 +4668,7 @@ export class Menus {
     // Edge's "Web capture" row of its page group (Print, Web capture, Share): the desktop's
     // overlay over the dimmed page; the tablet's menu keeps the two captures in More Tools.
     const webCapture = desktop({
-      label: 'Screenshot…',
+      label: S.menu('capture.start'),
       action: 'capture.start',
       enabled: Boolean(active),
       click: () =>
@@ -4480,12 +4688,17 @@ export class Menus {
           enabled: false
         },
         separator,
-        { label: 'Free Up Memory Now', click: () => void this.browser.governor.trim() },
-        { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
-        { label: 'Wake All Tabs', click: () => void this.browser.governor.wakeAll() },
+        // The memory rows keep today's words in the table till the memory family rules P-18
+        // (PR-5); the settings row is a destination, no ask (P-36).
+        { label: S.menu('resources.trim'), click: () => void this.browser.governor.trim() },
+        {
+          label: S.menu('tab.freezeOthers'),
+          click: () => void this.browser.governor.freezeOthers()
+        },
+        { label: S.menu('tab.wakeAll'), click: () => void this.browser.governor.wakeAll() },
         separator,
         {
-          label: 'Resource Settings…',
+          label: S.menu('resources.open'),
           click: () => void this.browser.pages.open('settings', 'resources', win)
         }
       ]
@@ -4508,7 +4721,7 @@ export class Menus {
       click: () => this.browser.updates.openWhatsNew(win)
     }
     const settings: MenuItemTemplate = {
-      label: 'Settings',
+      label: S.menu('settings.open'),
       action: 'settings.open',
       click: () => void this.browser.pages.open('settings', undefined, win)
     }
@@ -4516,12 +4729,12 @@ export class Menus {
     // in its own window (Shift+Esc; `Browser.openTaskManager`, W5-18), the row before Developer
     // tools as Chrome seats it.
     const taskManager = desktop({
-      label: 'Task Manager',
+      label: S.menu('tasks.open'),
       action: 'tasks.open',
       click: () => this.browser.actions.run('tasks.open', { sourceTabId: null, win })
     })
     const devtools = when(caps.devtools, {
-      label: 'Developer Tools',
+      label: S.menu('devtools.toggle'),
       action: 'devtools.toggle',
       enabled: Boolean(active),
       click: () => active && tabs.toggleDevtools(active.id)
@@ -4565,14 +4778,14 @@ export class Menus {
     // bar's does (§9.17; Chrome gates nothing on the scheme: its dialog lets the address be
     // typed). Its click reads the page again and opens nothing over one the form cannot take.
     const reportUnsafeSite: MenuItemTemplate = {
-      label: 'Report an Unsafe Site…',
+      label: S.menu('help.reportUnsafeSite'),
       enabled: reportUnsafeSiteUrl(active?.url) !== null,
       click: () => void openReportUnsafeSite(this.browser, win)
     }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
     const quit = when(caps.windows, {
-      label: 'Quit',
+      label: S.menu('app.quit'),
       action: 'app.quit',
       click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
     })
@@ -4817,7 +5030,7 @@ export class Menus {
             { label: 'Zenium Help', click: () => openHelp(this.browser, win) },
             keyboardShortcuts,
             {
-              label: 'Report an Issue…',
+              label: S.menu('help.reportIssue'),
               action: 'help.reportIssue',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
             },
@@ -5394,7 +5607,8 @@ export class Menus {
       },
       { type: 'separator' },
       {
-        label: 'Language Settings…',
+        // The settings page's row, a destination: no ellipsis (P-36).
+        label: S.menu('languages.open'),
         click: () => void this.browser.pages.open('settings', 'languages', win)
       }
     ]

@@ -81,7 +81,12 @@ export const TOAST_DURATION: number = TOAST_SHOW_MS
 
 /**
  * A toast with an action stands 5 000 ms, time to act on it: `lib/ui.ts`'s
- * `TOAST_ACTION_DURATION`, held to this value by its type.
+ * `TOAST_ACTION_DURATION`, held to this value by its type. This one stays a bare literal – no
+ * `number` annotation, no expression, no re-export – because that hold is
+ * `TOAST_ACTION_DURATION = 5000 satisfies typeof TOAST_ACTION_MS`: it needs the literal type
+ * `5000`, which only a bare `const` initialiser has. `lib/ui.ts` keeps its own digits in turn
+ * because Android's `V2TokensPinTest.kt` reads `export const TOAST_ACTION_DURATION = (\d+)`
+ * from that file's text.
  */
 export const TOAST_ACTION_MS = 5000
 

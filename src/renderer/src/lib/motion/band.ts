@@ -57,12 +57,17 @@ export type BandPhase =
  * before its first frame: the desktop, which can only clip the page by laying it out, seats the
  * band at the lesser of its seat and the destination there, so the page's bottom rides past the
  * frame's edge during a travel and never leaves it bare (§3.4). A finger's drag announces no
- * destination. `paint` arrives with the content's opacity whenever it changes.
+ * destination; `dragStart` arrives as one takes hold – a finger or a mouse: the frames that
+ * follow are a drag's until the release, whatever travel was announced – so a host that reads
+ * frames below its seat as a drag's unless a travel is under way (the desktop's, Android's)
+ * knows a band grabbed mid-travel is a drag's too, and unseats for it. `paint` arrives with the
+ * content's opacity whenever it changes.
  */
 export interface BandSeam {
   translate(offset: number): void
   rest(height: number): void
   depart?(to: number): void
+  dragStart?(): void
   paint(opacity: number): void
 }
 
@@ -188,12 +193,16 @@ export class BandMotion {
     this.seam.rest(height)
   }
 
-  /** A finger has the band: the motion stops where it is and the page follows the finger. */
+  /**
+   * A finger has the band: the motion stops where it is and the page follows the finger. The
+   * seam hears the take-hold (`BandSeam.dragStart`) once, before the drag's first frame.
+   */
   dragStart(): void {
     if (this.phase_ === 'closed' || this.phase_ === 'closing') return
     this.endFade()
     this.spring.stop()
     this.phase_ = 'dragging'
+    this.seam.dragStart?.()
   }
 
   /** The finger moved `dy` px (negative up) from where it took hold: the page follows 1:1. */

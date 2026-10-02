@@ -1,4 +1,5 @@
 import { useCallback, type RefCallback } from 'react'
+import { MOTION_POP_MS } from '../lib/motion/tokens'
 
 export type FadeAxis = 'x' | 'y' | 'auto'
 /** Which edges fade: both, or the end alone (a header marks the start with a hairline instead). */
@@ -22,6 +23,13 @@ export interface FadeEdgesOptions {
  * it eases in and out. A container under a sticky header that marks scrolled-under content with
  * a hairline (v2 §9.7) fades its end edge only (`edges: 'end'`). Attach the returned ref to the
  * element that scrolls; the styles live under `[data-fade-axis]` in main.css.
+ *
+ * The mask is there only while an edge fades. A container with nothing past either edge – a
+ * menu whose rows fit, a list scrolled to its only end – carries no `data-fade-axis` and so no
+ * mask at all: a mask that draws nothing still costs the compositor a render surface and a mask
+ * layer, and a lost mask layer blanks the content under it (the selection menu's rows, which fit,
+ * went empty when its sheet was flung – W6-S26-e). The mask arrives with the first fade and
+ * leaves once the last has eased out (`MOTION_POP_MS`, the transition under `[data-fade-axis]`).
  */
 export function useFadeEdges<T extends HTMLElement>({
   axis = 'auto',
@@ -45,6 +53,7 @@ export function attachFadeEdges(
   edges: FadeEdges = 'both'
 ): () => void {
   let frame: number | null = null
+  let unmask: ReturnType<typeof setTimeout> | null = null
   const update = (): void => {
     frame = null
     const vertical = axis === 'y' || (axis === 'auto' && !onlyHorizontalOverflow(el))
@@ -55,9 +64,23 @@ export function attachFadeEdges(
     const scroll = isReversed(el, vertical) ? extent + raw : raw
     const start = edges === 'both' && extent > 1 && scroll > 1 ? size : 0
     const end = extent > 1 && scroll < extent - 1 ? size : 0
-    el.dataset.fadeAxis = vertical ? 'y' : 'x'
     el.style.setProperty('--zen-fade-start', `${start}px`)
     el.style.setProperty('--zen-fade-end', `${end}px`)
+    if (start > 0 || end > 0) {
+      // An edge fades: the mask is on, its depth easing in from 0 under `[data-fade-axis]`'s
+      // transition (a transition starts on the after-change style's `transition`).
+      if (unmask !== null) {
+        clearTimeout(unmask)
+        unmask = null
+      }
+      el.dataset.fadeAxis = vertical ? 'y' : 'x'
+    } else if (el.dataset.fadeAxis !== undefined && unmask === null) {
+      // Nothing fades any more: the depths ease out to 0 under the mask, then the mask goes.
+      unmask = setTimeout(() => {
+        unmask = null
+        delete el.dataset.fadeAxis
+      }, MOTION_POP_MS)
+    }
   }
   const schedule = (): void => {
     if (frame === null) frame = requestAnimationFrame(update)
@@ -71,6 +94,7 @@ export function attachFadeEdges(
   mutations.observe(el, { childList: true, subtree: true, characterData: true })
   return () => {
     if (frame !== null) cancelAnimationFrame(frame)
+    if (unmask !== null) clearTimeout(unmask)
     el.removeEventListener('scroll', schedule)
     resize?.disconnect()
     mutations.disconnect()

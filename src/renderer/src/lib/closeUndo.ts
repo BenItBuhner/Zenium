@@ -6,14 +6,18 @@ import type {
   EventName,
   Events,
   Settings,
-  Tab
+  Tab,
+  UIState,
+  UndoableTabClose
 } from '@shared/types'
 import { isDefaultGroupName } from '@shared/groupNames'
 import { TOAST_UNDO_MS } from '@shared/toastCard'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { isEmptyTabUrl } from '@shared/url'
-import { cmd, onEvent } from './api'
-import { activeTab } from './selectors'
+import { cmd, onEvent, run } from './api'
+import { isTouchLayout } from './formFactor'
+import { tabsOnPane } from './privateTabs'
+import { activeTab, regularOf } from './selectors'
 import { browserStore, pushToast, type MessageAction } from './ui'
 
 /**
@@ -311,26 +315,125 @@ export function createCloseUndo({
   }
 }
 
+let appCloseUndo: CloseUndo | null = null
+
 /**
  * The app's undo, over the chrome's bridge to the core and the message cards. Its toast offers
  * Undo, so it stands §9.33's Undo clock (`TOAST_UNDO_MS`, 8 s) – the one shared constant, never
  * the action default by omission – for the whole close family: "Closed <title>", "N tabs closed",
  * "<Name> tab group closed and saved".
+ *
+ * Built on the first close, not at import: `lib/back.ts` brings this module into every surface's
+ * module graph, and the bridge is wanted only once a close goes through (the undo's own
+ * subscriptions start on that first close as well).
  */
-export const closeUndo: CloseUndo = createCloseUndo({
-  invoke: cmd,
-  on: onEvent,
-  toast: (message, action) => pushToast(message, 'info', { action, duration: TOAST_UNDO_MS }),
-  now: () => Date.now(),
-  activeTabId: () => {
-    const state = browserStore.get().state
-    return state ? (activeTab(state)?.id ?? null) : null
-  },
-  closingTabIds: () => browserStore.get().state?.closingTabIds ?? [],
-  onState: (listener) => browserStore.subscribe(listener)
-})
+function closeUndo(): CloseUndo {
+  appCloseUndo ??= createCloseUndo({
+    invoke: cmd,
+    on: onEvent,
+    toast: (message, action) => pushToast(message, 'info', { action, duration: TOAST_UNDO_MS }),
+    now: () => Date.now(),
+    activeTabId: () => {
+      const state = browserStore.get().state
+      return state ? (activeTab(state)?.id ?? null) : null
+    },
+    closingTabIds: () => browserStore.get().state?.closingTabIds ?? [],
+    onState: (listener) => browserStore.subscribe(listener)
+  })
+  return appCloseUndo
+}
 
 /** Close `request.tabs` through `request.close` with Undo on the toast (see the module note). */
 export function closeWithUndo(request: CloseRequest): void {
-  closeUndo.close(request)
+  closeUndo().close(request)
+}
+
+/**
+ * The chrome's own close of one tab – a row's ×, a middle-click, the strip's Delete, the tab
+ * search's × (`tab.close` with `args`). On a touch layout it comes with Undo on the toast, as the
+ * overview's cards' closes do (§9.23, OS-40 part B: on a touch host a page objecting under a
+ * close is let go, and the toast's Undo is the protection "Leave site?" was); on the desktop the
+ * close is as it was, its page free to ask. A tab the chrome's state does not hold (gone
+ * already) is closed plainly: there is nothing to count.
+ */
+export function closeTabFromChrome(
+  tabId: string,
+  args: Omit<CommandArgs<'tab.close'>, 'tabId'> = {}
+): void {
+  const close = (): void => run('tab.close', { tabId, ...args })
+  const state = browserStore.get().state
+  const tab = state?.tabs[tabId]
+  if (!isTouchLayout() || !state || !tab) {
+    close()
+    return
+  }
+  closeWithUndo({
+    tabs: [tab],
+    settings: args.force ? FORCED_CLOSE_SETTINGS : state.settings,
+    activeTabId: activeTab(state)?.id ?? null,
+    close
+  })
+}
+
+/**
+ * The core's close a touch host's menu row asked the chrome to run with Undo on the toast
+ * (`tab.closeUndoable`, §9.23): `tabIds` are the tabs the close takes, as the core's own rule
+ * read them, `close` the command that closes them (`UndoableTabClose`). Tabs the chrome's state
+ * no longer holds are not counted.
+ */
+export function closeUndoable(tabIds: readonly string[], close: UndoableTabClose): void {
+  const state = browserStore.get().state
+  if (!state) return
+  closeWithUndo({
+    tabs: tabIds.flatMap((id) => state.tabs[id] ?? []),
+    settings: close.command === 'tab.close' && close.force ? FORCED_CLOSE_SETTINGS : state.settings,
+    activeTabId: activeTab(state)?.id ?? null,
+    close: () => runUndoableClose(close)
+  })
+}
+
+/**
+ * A forced close (Remove Tab) closes a pinned or essential tab outright, whatever the
+ * pinned-close behaviour, so its entry is expected: the count reads it under "Close the tab".
+ */
+const FORCED_CLOSE_SETTINGS: Pick<Settings, 'pinnedCloseBehavior'> = {
+  pinnedCloseBehavior: 'close'
+}
+
+/** Run `close` as the core command it names, with the args that are its own. */
+function runUndoableClose(close: UndoableTabClose): void {
+  switch (close.command) {
+    case 'tab.close':
+      run('tab.close', { tabId: close.tabId, force: close.force })
+      return
+    case 'tab.closeMany':
+      run('tab.closeMany', { tabIds: close.tabIds })
+      return
+    default:
+      run(close.command, { tabId: close.tabId })
+  }
+}
+
+/**
+ * Close a group's tabs with Undo on the toast (TAB-16; the core's `folder.closeUndoable` event
+ * from the tablet's group row menu, the tablet's group editor bubble's Close row on the touch
+ * layout, TABLET-22): the group's live members as the phone's overview reads them for its own
+ * Close Group (the space's regular tabs in the group, a private one none of them), the close
+ * the core's `folder.close` – the group stays, saved with their pages – and the toast the
+ * group's words.
+ */
+export function closeGroupUndoable(folderId: string): void {
+  const state: UIState | null = browserStore.get().state
+  const folder = state?.folders[folderId]
+  if (!state || !folder) return
+  const space = state.spaces.find((s) => s.id === folder.spaceId)
+  if (!space) return
+  const tabs = tabsOnPane(regularOf(state, space), 'tabs').filter((t) => t.folderId === folderId)
+  closeWithUndo({
+    tabs,
+    settings: state.settings,
+    activeTabId: activeTab(state)?.id ?? null,
+    close: () => run('folder.close', { folderId }),
+    group: folder
+  })
 }

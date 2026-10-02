@@ -3,23 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ClosedEntrySummary, Folder, Space, Tab, UIState } from '@shared/types'
+import type { OverviewChromeCommand } from '@shared/overviewMenu'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import { BLANK_URL } from '@shared/url'
 
 /*
  * Closing tabs from the phone overview (matrix TAB-05, TAB-06, TAB-22, TAB-23; v2 draft §9.23, §9.33,
- * §11.4): a card's X closes at once and departs, and the toast that follows the core's filing
- * offers Undo; the header's menu carries "Recently Closed" and "Close All Tabs"; Close all asks
- * first on a prompt sheet with a "Don't ask again" row bound to `settings.confirmCloseAll`, and
- * then departs every unpinned card through `tab.closeMany` – the core closing them one after
- * the other, each page's `beforeunload` heard in its turn (PUI-28) – with one toast for the
- * lot; the recently closed sheet lists the contract's entries and a tap restores one. On a host
- * with private tabs each pane closes its own (TAB-02, TAB-03): the regular pane its cards
- * through the same `tab.closeMany`, the private pane through `tab.closePrivate` from a menu of
- * that one row. The Groups pane's row sheet closes a group with the one Undo and deletes one
- * after an ask, never both (TAB-16 / TAB-13, the Design Lead's option C). Rendered for real in
- * happy-dom with the sheets on the frame's dialog host, the frame loop cranked by hand.
+ * §11.4; tab overview cleanup spec §3, §4): a card's X closes at once and departs, and the toast
+ * that follows the core's filing offers Undo. The overview draws no ⋯ of its own (§1): the
+ * BAR's ⋯ opens the overview's menu through the core while the overview stands, its rows the
+ * core's template (`src/core/__tests__/overviewMenuTemplate.test.ts` pins them), and a picked
+ * row of the chrome's comes back as one `overview.command` – which is what this file drives.
+ * "Close All Tabs" asks nothing (§9.23: a close with Undo on its toast confirms nothing) and
+ * departs every unpinned card at once through `tab.closeMany` – the core closing them one after
+ * the other, each page's `beforeunload` heard in its turn (PUI-28) – with one toast for the lot,
+ * whose Undo brings them all back in order; "Recently Closed" lists the contract's entries and a
+ * tap restores one. On a host with private tabs each VIEW closes its own (TAB-02, TAB-03): the
+ * regular view its cards through the same `tab.closeMany`, the private view through
+ * `tab.closePrivate` – and that one still asks first on a prompt sheet with no "Don't ask
+ * again", since a private tab is never filed and there is no Undo to stand in for the question.
+ * No path writes a setting. A group's ⋯ sheet closes it with the one Undo and deletes it after an
+ * ask, never both (TAB-16 / TAB-13, the Design Lead's option C); the saved card's hold sheet
+ * deletes a saved group. Rendered for real in happy-dom with the sheets on the frame's dialog
+ * host, the frame loop cranked by hand.
  */
 
 const SPACE = 'space'
@@ -55,6 +62,10 @@ const { browserStore, claimMessageCards, pickToastAction, uiStore } =
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
 const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { dispatchOverviewCommand, overviewCommandListeners } =
+  await import('@renderer/lib/overviewCommands')
+const { overviewMenuRequest } = await import('@renderer/lib/overviewMenuRequest')
+const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 
 // --- a profile ---------------------------------------------------------------------------------
@@ -210,7 +221,9 @@ async function land(): Promise<void> {
   await settle()
 }
 
-function render(state: UIState): HTMLElement {
+const CLOSED = { phase: 'closed', progress: 0, heroTabId: null, target: 0 } as const
+
+function render(state: UIState, overview: typeof OPEN | typeof CLOSED = OPEN): HTMLElement {
   if (!root) {
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -221,7 +234,7 @@ function render(state: UIState): HTMLElement {
       createElement(
         FrameDialogHost,
         null,
-        createElement(TabOverview, { state, overview: OPEN, area: AREA, edge: 'bottom' })
+        createElement(TabOverview, { state, overview, area: AREA, edge: 'bottom' })
       )
     )
   )
@@ -327,9 +340,13 @@ const liveToast = (): { id: number; message: string } => {
   return { id: t.id, message: t.message }
 }
 
-/** Open the header's menu and let it read the list and come up. */
-async function openMenu(): Promise<void> {
-  act(() => byLabel('More').click())
+/**
+ * A row of the bar's ⋯ menu picked (§4): the core's `overview.command` reaches the overview
+ * (`useMainEvents` → `dispatchOverviewCommand`), which reads a list or opens a sheet, and the
+ * sheet comes up.
+ */
+async function command(name: OverviewChromeCommand): Promise<void> {
+  act(() => dispatchOverviewCommand(name))
   await settle()
   await land()
 }
@@ -342,76 +359,67 @@ async function pick(text: string): Promise<void> {
   await land()
 }
 
-// --- the header menu ---------------------------------------------------------------------------
+// --- the ⋯ menu is the bar's (§1, §4) ----------------------------------------------------------
 
-describe('the header menu', () => {
-  it('carries Recently Closed and Close All Tabs (Title Case, §9.1), counted; each is off with nothing to act on (§9.17)', async () => {
+describe("the ⋯ menu is the bar's", () => {
+  it('the overview draws no ⋯, no segment row and no search toggle; it tells the bar which view it shows and listens for the menu’s commands while it stands', async () => {
     show(three())
-    closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
-    // The button says it opens a menu, and whether that menu is up.
-    expect(byLabel('More').getAttribute('aria-haspopup')).toBe('menu')
-    expect(byLabel('More').getAttribute('aria-expanded')).toBe('false')
-    await openMenu()
-    expect(byLabel('More').getAttribute('aria-expanded')).toBe('true')
-    const rows = sheetRows()
-    expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Select Tabs', false],
-      ['Recently Closed (1)', false],
-      ['Close All Tabs (3)', false]
-    ])
-    // Close all is the destructive row (§10.4).
-    expect(rows[2].style.color).toContain('--zen-danger')
-    // The sheet is a menu of the overview: nothing was closed by opening it.
+    // One header row (§1): the title, nothing trailing it.
+    expect(document.querySelector('[aria-label="More"]')).toBeNull()
+    expect(document.querySelector('[aria-label="Search tabs"]')).toBeNull()
+    expect(document.querySelector('[data-testid="overview-pane-tabs"]')).toBeNull()
+    expect(
+      document.querySelector('[data-testid="overview-title"]')?.getAttribute('data-view')
+    ).toBe('tabs')
+    // The overview is one named landmark while it stands – "Tab overview", said once on entry
+    // and the harness's word for the overview's presence (`awaitOverview`) – and no other
+    // region of the chrome's shares the name.
+    const regions = [...document.querySelectorAll('[role="region"]')]
+    expect(regions.map((el) => el.getAttribute('aria-label'))).toEqual(['Tab overview'])
+    expect(regions[0]!.classList.contains('zen-overview')).toBe(true)
+    // The bar's ⋯ asks the core for the overview's menu with this view (the rows – Select Tabs,
+    // Recently Closed (N), Close All Tabs (N), … – are the core's template).
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
+    expect(overviewCommandListeners()).toBe(1)
+    // Nothing was closed by any of this.
     expect(commands()).toEqual([])
   })
 
-  it('with no closed tabs and only pinned tabs both rows are off, their counts kept at zero (§9.17); a pinned card is still one to select', async () => {
+  it('Select Tabs enters the selection mode, and the menu’s word on the selection counts every card – a pinned one too', async () => {
     show(stateOf([tab('p', 'https://pinned.example/', { pinned: true })]))
-    await openMenu()
-    expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Select Tabs', false],
-      ['Recently Closed (0)', true],
-      ['Close All Tabs (0)', true]
-    ])
+    await command('select-tabs')
+    expect(overviewMenuRequest()).toEqual({
+      overview: { view: 'tabs', selection: { selected: 0, total: 1 } }
+    })
+    expect(commands()).toEqual([])
+  })
+
+  it('once the overview has left nothing listens for a command, and the bar’s ⋯ is the app menu’s again', async () => {
+    show(three())
+    expect(overviewCommandListeners()).toBe(1)
+    act(() => stageStore.set({ ...stageStore.get(), overview: CLOSED }))
+    render(three(), CLOSED)
+    await settle()
+    expect(overviewCommandListeners()).toBe(0)
+    expect(overviewMenuRequest()).toEqual({})
   })
 })
 
 // --- Close all tabs (TAB-06) -------------------------------------------------------------------
 
 describe('Close all tabs', () => {
-  it('asks first on a prompt sheet; Cancel keeps every tab and the setting', async () => {
+  it('asks nothing: every unpinned card departs at once, the core closes them one after the other, and one toast offers to undo the lot', async () => {
     show(three())
-    await openMenu()
-    await pick('Close All Tabs (3)')
-    // The menu has gone and the question stands on the frame's dialog host (§9.23).
+    await command('close-all')
+    // No question on the frame's dialog host and no sheet of the overview's (§9.23: a close
+    // with Undo on its toast confirms nothing); the cards depart where they stand – the pinned
+    // one stays. The core closes the three in turn (`tab.closeMany`, PUI-28): a page that
+    // objects asks "Leave site?" on its own tab; `space.closeUnpinned` would ask no page.
+    expect(dialogTitle()).toBeUndefined()
     expect(sheetRows()).toEqual([])
-    expect(dialogTitle()).toBe('Close 3 tabs?')
-    const checkbox = document.querySelector<HTMLInputElement>(
-      '.zen-frame-dialogs input[type="checkbox"]'
-    )!
-    expect(checkbox.checked).toBe(false)
-    // The checkbox row takes the focus as the sheet opens (§9.22: a sheet whose first control
-    // is a checkbox opens on it; Cancel first is the named failure), so a stray Enter closes
-    // nothing.
-    expect(document.activeElement).toBe(checkbox)
-    await pick('Cancel')
-    expect(dialogTitle()).toBeUndefined()
-    expect(commands()).toEqual([])
-    expect(departStore.get().items).toEqual([])
-  })
-
-  it('Close all departs every unpinned card, closes them one after the other, and one toast offers to undo the lot', async () => {
-    show(three())
-    await openMenu()
-    await pick('Close All Tabs (3)')
-    await pick('Close all')
-    // The question is gone; the cards depart where they stand – the pinned one stays. The core
-    // closes the three in turn (`tab.closeMany`, PUI-28): a page that objects asks "Leave
-    // site?" on its own tab; `space.closeUnpinned` would ask no page.
-    expect(dialogTitle()).toBeUndefined()
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
     expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]])
-    // The setting is untouched: the row was not ticked.
+    // Nothing is written to the settings: the question has no "Don't ask again" to remember.
     expect(of('settings.update')).toEqual([])
     // The core closes the three in order and files each; the one toast counts them.
     const state = three()
@@ -428,32 +436,15 @@ describe('Close all tabs', () => {
       { id: 'closed:a' }
     ])
     expect(of('tab.activate')).toEqual([{ tabId: 'a' }])
+    expect(of('settings.update')).toEqual([])
   })
 
-  it("Don't ask again turns the setting off with the close; with it off the menu's row closes at once", async () => {
-    show(three())
-    await openMenu()
-    await pick('Close All Tabs (3)')
-    const checkbox = document.querySelector<HTMLInputElement>(
-      '.zen-frame-dialogs input[type="checkbox"]'
-    )!
-    act(() => checkbox.click())
-    expect(checkbox.checked).toBe(true)
-    await pick('Close all')
-    expect(commands()).toEqual([
-      ['settings.update', { confirmCloseAll: false }],
-      ['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]
-    ])
-
-    // The setting is off: the next Close all goes straight through, no question asked.
-    invoke.mockClear()
-    act(() => clearDepartures())
-    show(three({ confirmCloseAll: false }))
-    await openMenu()
-    await pick('Close All Tabs (3)')
+  it('with nothing to close the row does nothing: no close, no toast', async () => {
+    show(stateOf([tab('p', 'https://pinned.example/', { title: 'Pinned', pinned: true })]))
+    await command('close-all')
     expect(dialogTitle()).toBeUndefined()
-    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]])
-    expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
+    expect(commands()).toEqual([])
+    expect(departStore.get().items).toEqual([])
   })
 })
 
@@ -476,8 +467,7 @@ describe('Recently closed', () => {
         tabCount: 2
       }
     ]
-    await openMenu()
-    await pick('Recently Closed (2)')
+    await command('recently-closed')
     expect(dialogTitle()).toBe('Recently closed')
     const rows = [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-phone-row')]
     // Tab entries only, the list's order kept; a row is its title, then host and time (§9.13).
@@ -514,8 +504,7 @@ describe('Recently closed', () => {
     const x = tab('x', 'https://x.example/', { title: 'X' })
     const y = tab('y', 'https://y.example/', { title: 'Y' })
     closed = [entry(x, NOW), entry(y, NOW - 1000)]
-    await openMenu()
-    await pick('Recently Closed (2)')
+    await command('recently-closed')
     expect(document.querySelectorAll('.zen-frame-dialogs .zen-phone-row')).toHaveLength(2)
     closed = [entry(y, NOW - 1000)]
     act(() => {
@@ -609,7 +598,7 @@ describe('closing one card', () => {
   })
 })
 
-// --- the two panes of a host with private tabs (TAB-02, TAB-03) --------------------------------
+// --- the two views of a host with private tabs (TAB-02, TAB-03; §3) ----------------------------
 
 describe('on a host with private tabs', () => {
   const privateTab = (id: string, url: string, patch: Partial<Tab> = {}): Tab =>
@@ -634,30 +623,33 @@ describe('on a host with private tabs', () => {
         privateTab('p2', 'https://two.example/', { title: 'Two' })
       ])
     )
-  const segment = (pane: 'tabs' | 'private'): HTMLElement =>
-    document.querySelector<HTMLElement>(`[data-testid="overview-pane-${pane}"]`)!
-  const sheetTitle = (): string | undefined =>
-    document.querySelector<HTMLElement>('.zen-sheet .zen-sheet-title')?.textContent?.trim()
+  /** The view the header names (§3): the space's title, or the private view's mask heading. */
+  const view = (): string | null =>
+    document
+      .querySelector<HTMLElement>('[data-testid="overview-title"]')
+      ?.getAttribute('data-view') ?? null
+  /** The tab cards on the grid, in order (the group and New Tab cells left out). */
+  const cells = (): string[] =>
+    [...document.querySelectorAll<HTMLElement>('[data-cell]')]
+      .map((el) => el.dataset.cell!)
+      .filter((id) => !id.includes(':') && id !== 'new-tab')
 
   afterEach(() => {
     act(() => resetOverviewPane())
   })
 
-  it("the regular pane's Close All closes the space's regular tabs in turn and leaves the private session be", async () => {
+  it("the regular view's Close All closes the space's regular tabs in turn and leaves the private session be", async () => {
     show(mixed())
     closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
-    await openMenu()
-    expect(sheetTitle()).toBe('Work')
-    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
-      'Select Tabs',
-      'Recently Closed (1)',
-      'Close All Tabs (2)'
-    ])
-    await pick('Close All Tabs (2)')
-    expect(dialogTitle()).toBe('Close 2 tabs?')
-    await pick('Close all')
-    // The regular cards depart, named one by one; not `space.closeUnpinned`, which would take
-    // One and Two too.
+    // The regular view: the regular cards alone (private never mixes into the grid, §3), and
+    // the bar's ⋯ asks for the regular view's rows (Close All Tabs (2), the core's count).
+    expect(view()).toBe('tabs')
+    expect(cells()).toEqual(['pin', 'r1', 'r2'])
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
+    await command('close-all')
+    // No question (§9.23): the regular cards depart at once, named one by one; not
+    // `space.closeUnpinned`, which would take One and Two too.
+    expect(dialogTitle() ?? '').not.toMatch(/^Close /)
     expect(departStore.get().items.map((i) => i.key)).toEqual(['r1', 'r2'])
     expect(commands()).toEqual([['tab.closeMany', { tabIds: ['r1', 'r2'] }]])
     // One toast for the two once the core files them, with Undo.
@@ -667,28 +659,43 @@ describe('on a host with private tabs', () => {
     expect(toasts()).toEqual([['2 tabs closed', 'Undo', false]])
   })
 
-  it("the private pane's menu is Select Tabs and Close Private Tabs, its question names the private tabs and says there is no undo, and the close is the core's tab.closePrivate with no toast", async () => {
+  it("the ⋯ menu's Private Tabs (N) switches to the private view – the mask heading, the private cards alone – whose Close All asks in the private tabs' words, says there is no undo, and closes through the core's tab.closePrivate with no toast", async () => {
     show(mixed())
     closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
-    act(() => segment('private').click())
-    await openMenu()
-    expect(sheetTitle()).toBe('Private')
-    const rows = sheetRows()
-    expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Select Tabs', false],
-      ['Close Private Tabs (2)', false]
-    ])
-    expect(rows[1].style.color).toContain('--zen-danger')
-    // No recently closed row: none was read for it either.
+    await command('switch-view')
+    expect(view()).toBe('private')
+    expect(cells()).toEqual(['p1', 'p2'])
+    // The bar's ⋯ now asks for the private view's rows (Tabs (N) back, Close Private Tabs (2)).
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'private' } })
+    // Nothing read the recently closed list: the menu's counts are the core's own.
     expect(of('session.recentlyClosed')).toEqual([])
-    await pick('Close Private Tabs (2)')
+    await command('close-all')
+    // The private view alone still asks (§9.23: no Undo stands in for the question here); the
+    // prompt stands on the frame's dialog host with no "Don't ask again" row and no glyph, and
+    // the focus lands on the dialog itself (§9.22), never on Cancel.
+    expect(sheetRows()).toEqual([])
     expect(dialogTitle()).toBe('Close 2 private tabs?')
-    expect(document.querySelector('.zen-frame-dialogs')!.textContent).toContain(
-      'the private session ends; its history, cookies and site data go with it. There is no undo.'
+    const dialog = document.querySelector<HTMLElement>('.zen-frame-dialogs')!
+    expect(dialog.textContent).toContain(
+      'Every private tab closes and the private session ends; its history, cookies and site data go with it. There is no undo.'
     )
+    expect(dialog.querySelector('input[type="checkbox"]')).toBeNull()
+    expect(dialog.querySelector('.zen-sheet-title-block svg')).toBeNull()
+    expect(document.activeElement?.closest('.zen-frame-dialogs')).toBe(dialog)
+    expect(document.activeElement?.tagName).not.toBe('BUTTON')
+    // Cancel keeps the private tabs, and nothing is written to the settings.
+    await pick('Cancel')
+    expect(dialogTitle()).toBeUndefined()
+    expect(commands()).toEqual([])
+    expect(departStore.get().items).toEqual([])
+    // Asked again, Close all closes them through the core's one command.
+    await command('close-all')
+    expect(dialogTitle()).toBe('Close 2 private tabs?')
     await pick('Close all')
+    expect(dialogTitle()).toBeUndefined()
     expect(departStore.get().items.map((i) => i.key)).toEqual(['p1', 'p2'])
     expect(commands()).toEqual([['tab.closePrivate', undefined]])
+    expect(of('settings.update')).toEqual([])
     // A private tab is never filed: no toast, and no list read to look for one.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
@@ -697,20 +704,44 @@ describe('on a host with private tabs', () => {
     expect(of('session.recentlyClosed')).toEqual([])
   })
 
-  it('with no private tab open the rows stay, greyed, the count at zero (§9.17)', async () => {
+  it('with no private tab open there is no private view to pick (§4): the pick reads as the regular view, whose rows the ⋯ menu is asked for', async () => {
     show(withPrivate(stateOf([tab('a', 'https://a.example/')])))
-    act(() => segment('private').click())
-    await openMenu()
-    expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Select Tabs', true],
-      ['Close Private Tabs (0)', true]
-    ])
+    act(() => pickOverviewPane('private'))
+    await settle()
+    expect(view()).toBe('tabs')
+    expect(cells()).toEqual(['a'])
+    expect(document.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(buttonByText('New private tab')).toBeUndefined()
+    // The menu is the regular view's: no "Private Tabs (N)" row while none is open is the
+    // template's to grey or drop; the chrome's word is the view that stands.
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
+  })
+
+  it('from the private view the ⋯ menu’s Tabs (N) switches back, and the system back from a picked private view returns to the regular view (§3)', async () => {
+    show(mixed())
+    expect(topBackSurface()?.name).not.toBe('overview-private-view')
+    await command('switch-view')
+    expect(view()).toBe('private')
+    // The system back is the private view's while it stands (§3), above the overview's own.
+    expect(topBackSurface()?.name).toBe('overview-private-view')
+    act(() => {
+      dispatchBackEvent('commit')
+    })
+    await settle()
+    expect(view()).toBe('tabs')
+    expect(cells()).toEqual(['pin', 'r1', 'r2'])
+    expect(topBackSurface()?.name).not.toBe('overview-private-view')
+    // And the menu's row takes it back and forth.
+    await command('switch-view')
+    expect(view()).toBe('private')
+    await command('switch-view')
+    expect(view()).toBe('tabs')
   })
 })
 
-// --- the Groups pane's Close Group and Delete Group (TAB-16 / TAB-13) --------------------------
+// --- a group's Close Group and Delete Group (TAB-16 / TAB-13; §2) ------------------------------
 
-describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete Group, never both (TAB-16 / TAB-13, option C)', () => {
+describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo for Close Group, an ask for Delete Group, never both (TAB-16 / TAB-13, option C)', () => {
   const GROUP = 'folder_research'
   const research = (patch: Partial<Folder> = {}): Folder =>
     ({
@@ -755,9 +786,18 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
   })
   const dialogText = (): string =>
     document.querySelector<HTMLElement>('.zen-frame-dialogs')?.textContent ?? ''
-  /** Open the row's sheet from its "More options" button and let it come up. */
-  async function rowMenu(name: string): Promise<void> {
-    act(() => byLabel(`More options for ${name}`).click())
+  /** Open the group card's ⋯ sheet (`Group options`, the open card's header) and let it come up. */
+  async function groupMenu(): Promise<void> {
+    act(() => byLabel('Group options').click())
+    await settle()
+    await land()
+  }
+  /** Hold the saved card (a right click is the hold, for the mouse) and let its sheet come up. */
+  async function savedMenu(): Promise<void> {
+    const card = document.querySelector<HTMLElement>('[data-testid="saved-group-card"]')!
+    act(() => {
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
     await settle()
     await land()
   }
@@ -777,22 +817,21 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
     })
   }
 
-  beforeEach(() => {
-    act(() => pickOverviewPane('groups'))
-  })
-  afterEach(() => {
-    act(() => resetOverviewPane())
-  })
-
   it('Close Group (N Tabs) asks nothing: the core’s folder.close at once, then the one toast, "<Name> tab group closed and saved" with Undo, which brings the tabs back into the group', async () => {
     show(grouped())
-    await rowMenu('Research')
+    await groupMenu()
+    // The group's rows (§2): Rename, New Tab in Group, Ungroup, Close Group (N), Delete Group.
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
-      'Show in Tabs',
       'Rename',
+      'New Tab in Group',
+      'Ungroup',
       'Close Group (2 Tabs)',
       'Delete Group'
     ])
+    // Delete Group, the one danger row, stands last after the one hairline (the cleanup spec §4).
+    const seps = document.querySelectorAll('.zen-sheet .zen-sheet-sep')
+    expect(seps).toHaveLength(1)
+    expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Delete Group')
     await pick('Close Group (2 Tabs)')
     // No prompt (§9.23: the ask is Delete's alone); the group stays, saved with the pages.
     expect(dialogTitle()).toBeUndefined()
@@ -814,7 +853,7 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
 
   it('a group still wearing the default name closes to "Tab group closed and saved" – not called by it (the Lead’s addendum)', async () => {
     show(grouped(research({ name: TOUCH_GROUP_DEFAULT_NAME }), 'n'))
-    await rowMenu(TOUCH_GROUP_DEFAULT_NAME)
+    await groupMenu()
     await pick('Close Group (2 Tabs)')
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     fileMembers('n')
@@ -824,9 +863,9 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
 
   it('Delete Group asks first – "Its N tabs close with it; Recently Closed keeps their pages." – and Cancel keeps the group', async () => {
     show(grouped())
-    await rowMenu('Research')
+    await groupMenu()
     await pick('Delete Group')
-    // The row sheet has gone and the question stands on the frame's dialog host (§9.23), in the
+    // The ⋯ sheet has gone and the question stands on the frame's dialog host (§9.23), in the
     // one source's words (`folderDeleteWords`): no promise of an Undo.
     expect(sheetRows()).toEqual([])
     expect(dialogTitle()).toBe('Delete Research?')
@@ -841,7 +880,7 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
 
   it('Delete runs the core’s folder.delete at once, and no toast follows the closes it files – the ask was the guard, there is no Undo after it', async () => {
     show(grouped(research(), 'd'))
-    await rowMenu('Research')
+    await groupMenu()
     await pick('Delete Group')
     await confirmDelete()
     expect(dialogTitle()).toBeUndefined()
@@ -861,7 +900,13 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
 
   it('a saved group’s Delete asks in the pages’ words – "Its N saved pages are forgotten with it. There is no undo." – and Delete drops the record, no toast', async () => {
     show(savedResearch())
-    await rowMenu('Research')
+    // The saved card stands at the grid's end, before New Tab (§2); its hold sheet is Open,
+    // Rename, Delete Group.
+    const order = [...document.querySelectorAll<HTMLElement>('[data-cell]')].map(
+      (el) => el.dataset.cell
+    )
+    expect(order).toEqual(['loose', `saved:${GROUP}`, 'new-tab'])
+    await savedMenu()
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
       'Open (2 Tabs)',
       'Rename',

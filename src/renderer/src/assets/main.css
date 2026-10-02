@@ -95,8 +95,9 @@
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* The motion tokens' durations (motion spec §1; `lib/motion/tokens.ts` holds the same values,
-     pinned equal by `lib/__tests__/motionTokens.test.ts`) for a class string that cannot read a
-     TS token: Tailwind's `duration-[var(--zen-motion-state)]`. */
+     pinned equal by `lib/__tests__/motionTokens.test.ts`) for what cannot read a TS token: this
+     sheet's own rules (`components/__tests__/motionStylesheet.test.ts` holds them to the face,
+     never digits before `ms`) and Tailwind's `duration-[var(--zen-motion-state)]`. */
   --zen-motion-state: 120ms;
   --zen-motion-pop: 180ms;
   --zen-motion-message: 200ms;
@@ -656,10 +657,10 @@
   color: var(--v2-text);
   box-shadow: var(--v2-shadow-panel);
   font: var(--v2-weight-heading) var(--v2-font-heading) / var(--v2-line-heading) var(--font-sans);
-  animation: zen-quit-hold-in 180ms var(--zen-ease);
+  animation: zen-quit-hold-in var(--zen-motion-pop) var(--zen-ease);
 }
 .zen-quit-hold-panel[data-leaving] {
-  animation: zen-fade-out 120ms ease forwards;
+  animation: zen-fade-out var(--zen-motion-state) ease forwards;
 }
 .zen-quit-hold-ring {
   display: block;
@@ -708,10 +709,10 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-quit-hold-panel {
-    animation: zen-fade 120ms ease !important;
+    animation: zen-fade var(--zen-motion-state) ease !important;
   }
   .zen-quit-hold-panel[data-leaving] {
-    animation: zen-fade-out 120ms ease forwards !important;
+    animation: zen-fade-out var(--zen-motion-state) ease forwards !important;
   }
 }
 /*
@@ -1679,9 +1680,9 @@
     border-radius: 6px;
     color: var(--zen-fg);
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The glyph: the svg itself, or the slot that wraps one – the phone's two-glyph slot
@@ -1691,7 +1692,7 @@
    */
   .zen-toolbar-button > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
     opacity: 0.85;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-toolbar-button:hover:not(:disabled) {
     background: var(--v2-window-fill-hover);
@@ -1791,8 +1792,8 @@
     color: var(--zen-fg);
     font-size: var(--zen-sidebar-font);
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-tab:hover,
   .zen-tab[data-editing]:not([data-active='true']) {
@@ -2091,7 +2092,7 @@
     height: var(--zen-tab-row);
     padding: 2px;
     border-radius: 10px;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-split-row:hover {
     background: var(--v2-window-fill-hover);
@@ -2201,8 +2202,8 @@
     border-radius: 8px;
     background: var(--v2-window-fill);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-essential:hover {
     background: var(--v2-window-fill-hover);
@@ -2284,9 +2285,9 @@
     transform: scale(1.02);
     opacity: 0.9;
     transition:
-      transform 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease),
-      box-shadow 120ms var(--zen-ease);
+      transform var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
     /*
      * The lift (MOT-33): the row rises from its resting form to level 2 – the scale, the
      * shadow, the 90 % – over the state change's 120 ms as the ghost mounts, rather than
@@ -2513,7 +2514,7 @@
     z-index: -1;
     border-radius: 8px;
     pointer-events: none;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::before,
   .zen-rail-flyout[data-flyout-rows] .zen-space-header::before {
@@ -2723,7 +2724,7 @@
     height: 1px;
     background: var(--v2-border);
     opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-overlay-header[data-scrolled]::after {
     opacity: 1;
@@ -2797,10 +2798,10 @@
    * animation from here (v2 draft §11.1; the Android program's sheet-leave work).
    */
   .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
-    animation: zen-fade-out 180ms var(--zen-ease) forwards;
+    animation: zen-fade-out var(--zen-motion-pop) var(--zen-ease) forwards;
   }
   .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving] {
-    animation: zen-pop-out 180ms var(--zen-ease) forwards;
+    animation: zen-pop-out var(--zen-motion-pop) var(--zen-ease) forwards;
   }
   /*
    * Under reduced motion the way out stays a departure: the 120 ms fade in place of v2 §11.3,
@@ -2811,7 +2812,7 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving],
     .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
-      animation: zen-fade-out 120ms var(--zen-ease) forwards !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards !important;
     }
   }
   .zen-frame-dialogs-slot {
@@ -2921,7 +2922,7 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
     .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-chrome-layer {
@@ -2946,12 +2947,12 @@
     right: var(--zen-content-radius);
     height: 2px;
     opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   /* Its appearance and departure stay an opacity fade under reduced motion, at v2 §11.3's 120 ms. */
   @media (prefers-reduced-motion: reduce) {
     .zen-load-progress {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-load-progress[data-shown] {
@@ -2988,7 +2989,7 @@
   .zen-ptr-glyph {
     color: var(--v2-text-deemphasized);
     transform: rotate(var(--zen-ptr-turn, 0deg));
-    transition: color 120ms var(--zen-ease);
+    transition: color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-ptr-glyph svg {
     width: var(--v2-icon);
@@ -3045,7 +3046,7 @@
     will-change: transform, opacity;
   }
   .zen-histnav[data-reduced] .zen-histnav-disc {
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-histnav-glyph {
     display: flex;
@@ -3181,7 +3182,7 @@
 }
 @layer components {
   .zen-animate-in {
-    animation: zen-fade-in 160ms var(--zen-ease);
+    animation: zen-fade-in var(--zen-motion-pop) var(--zen-ease);
   }
   /*
    * The desktop panels' appearances (v2 §11.3: they drop the pop's scale and the drop's travel
@@ -3208,7 +3209,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-desktop-popover[data-collapsing] {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   /*
@@ -3234,9 +3235,9 @@
    * The tab row's throbber (tabs-41), Chrome's two phases on #125's 16 × 16, 2 px ring with the
    * top quarter open: the muted ink turning backwards while the load waits for the server's
    * first response, the accent turning forwards once the document is coming in (the colour
-   * eases over between them). The favicon that takes the ring's place fades back in over
-   * 150 ms from its insertion, landing on whatever opacity its own rules give it (the globe's
-   * 60 %, a sleeping row's 69 %). Reduced motion removes both (the global rule at the foot): a
+   * eases over between them). The favicon that takes the ring's place fades back in over the
+   * state length from its insertion, landing on whatever opacity its own rules give it (the
+   * globe's 60 %, a sleeping row's 69 %). Reduced motion removes both (the global rule at the foot): a
    * still ring, the favicon there at once. The ring draws in its surface's family (§9.29): the
    * deemphasised ink and the accent of the control roles – the theme's on the sidebar's rows,
    * the page's in tab search – and, where no surface root resolves them (the phone's overview
@@ -3253,21 +3254,21 @@
     border-color: var(--v2-control-accent, var(--zen-accent));
     border-top-color: transparent;
     animation-direction: normal;
-    transition: border-color 150ms var(--zen-ease);
+    transition: border-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-tab-favicon-in {
-    transition: opacity 150ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
     @starting-style {
       opacity: 0;
     }
   }
   .zen-toast {
-    animation: zen-toast-in 180ms var(--zen-ease);
+    animation: zen-toast-in var(--zen-motion-message) var(--zen-ease);
   }
   /* The sidebar's toast under reduced motion: the rise goes, a 120 ms fade in place stays (§11.3). */
   @media (prefers-reduced-motion: reduce) {
     .zen-toast {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
 
@@ -3367,8 +3368,8 @@
     font-weight: var(--v2-weight-button);
     white-space: nowrap;
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-message-button:hover:not(:disabled) {
     background: var(--v2-control-fill-hover);
@@ -3417,7 +3418,7 @@
    * corners round, the seams between rows keep one shared hairline.
    */
   .zen-message-stack > .zen-banner {
-    transition: border-radius 120ms var(--zen-ease);
+    transition: border-radius var(--zen-motion-state) var(--zen-ease);
   }
   .zen-message-stack > .zen-banner:not([data-stack-top]) {
     border-top-left-radius: 0;
@@ -3518,8 +3519,8 @@
     border-radius: calc(var(--v2-radius-control) + 2px);
     color: var(--v2-control-text-deemphasized);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-message-close:hover:not(:disabled) {
     background: var(--v2-control-fill);
@@ -3563,7 +3564,7 @@
     border: 1px solid var(--v2-border);
     border-radius: var(--v2-radius-control);
     background: var(--v2-panel);
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-screenshot-thumb:active {
     transform: scale(0.97);
@@ -3682,7 +3683,7 @@
     border-radius: 10px;
     background: var(--v2-panel);
     box-shadow: var(--v2-shadow-panel);
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-longshot-handle[data-dragging='true'] .zen-longshot-grip {
     transform: scale(1.08);
@@ -3723,11 +3724,12 @@
    * so the sentence sits on two lines inside its 288 (16 of padding a side, Chrome's own
    * `textbubble_text.xml` l.17–23); `--v2-accent` filled with `--v2-on-accent` ink and no
    * hairline – the fill is the edge, a tip reads as a tip and not a toast – under the panel
-   * shadow, the body 15/400 (`.zen-message`), the same tokens in dark. Motion is Chrome's:
-   * up over 200 ms as alpha 0 → 1 with 10 px of travel out of the bar's band
-   * (`textbubble_in.xml`; `--zen-hint-from` turns it round under a top-docked bar), out on a
-   * 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade §11.3
-   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down and
+   * shadow, the body 15/400 (`.zen-message`), the same tokens in dark. Motion is Chrome's shape
+   * on the house's tokens: up on the pop (motion spec §2, §10 (a): 180 ms on `--zen-ease`, where
+   * Chrome's `textbubble_in.xml` runs 200 ms linear) as alpha 0 → 1 with 10 px of travel out of
+   * the bar's band (`--zen-hint-from` turns it round under a top-docked bar), out on the
+   * message's 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade
+   * §11.3 keeps, declared below `!important`. No clock: the first touch anywhere takes it down and
    * passes through to what it touched (§9.33) – and a finger on the bubble touched the bubble:
    * it stays the touch's target through its fade (`.zen-message`'s `pointer-events: auto`,
    * kept under `[data-leaving]`), so the tap that took it down does not land on what the
@@ -3748,7 +3750,7 @@
     border: 0;
     background: var(--v2-accent);
     color: var(--v2-on-accent);
-    animation: zen-hint-bubble-in 200ms linear;
+    animation: zen-hint-bubble-in var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-hint-bubble[data-edge='bottom'] {
     bottom: 0;
@@ -3758,7 +3760,7 @@
     top: 0;
   }
   .zen-hint-bubble[data-leaving] {
-    animation: zen-fade-out 200ms linear forwards;
+    animation: zen-fade-out var(--zen-motion-message) linear forwards;
   }
   /*
    * The bubble on a tab card in the overview (the drag-to-group teaching, `useOverviewGroupsHint`;
@@ -3852,10 +3854,10 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-hint-bubble {
-      animation: zen-fade 120ms linear !important;
+      animation: zen-fade var(--zen-motion-state) linear !important;
     }
     .zen-hint-bubble[data-leaving] {
-      animation: zen-fade-out 120ms linear forwards !important;
+      animation: zen-fade-out var(--zen-motion-state) linear forwards !important;
     }
   }
 
@@ -3941,10 +3943,10 @@
 }
 @layer components {
   .zen-sheet-in {
-    animation: zen-sheet-in 220ms var(--zen-ease);
+    animation: zen-sheet-in var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-animate-fade {
-    animation: zen-fade 160ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-phone-bar {
     background: transparent;
@@ -3990,7 +3992,7 @@
   .zen-pill-ghost {
     background: var(--zen-bg-solid);
     box-shadow: var(--zen-shadow-1);
-    transition: box-shadow 200ms var(--zen-ease);
+    transition: box-shadow var(--zen-motion-state) var(--zen-ease);
     will-change: transform;
   }
   .zen-pill-ghost[data-lifted='true'] {
@@ -4046,11 +4048,11 @@
     background: var(--zen-panel-bg);
     box-shadow: var(--zen-shadow-1);
     transform-origin: 0 50%;
-    animation: zen-field-grow 220ms var(--zen-ease);
+    animation: zen-field-grow var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-omnibox-field > * {
     position: relative;
-    animation: zen-fade 220ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-pop) var(--zen-ease);
   }
   /* Rows sit 4 px inside the sheet: concentric with its corners whatever the frame radius is. */
   .zen-suggestion-sheet {
@@ -4063,9 +4065,9 @@
   .zen-segment {
     color: var(--zen-muted);
     transition:
-      background 120ms var(--zen-ease),
-      color 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      color var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-segment:active {
     transform: scale(0.98);
@@ -4093,7 +4095,7 @@
     border-radius: 12px;
     corner-shape: var(--zen-corner);
     color: var(--zen-muted);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   /* Hover only where the pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
   :where(:root[data-hover='hover']) .zen-app-icon:hover {
@@ -4105,7 +4107,7 @@
     /* The artwork's own corner, so the ring around the picked one runs concentric with it. */
     border-radius: 22.5%;
     corner-shape: var(--zen-corner);
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-app-icon:active svg {
     transform: scale(0.98);
@@ -4152,8 +4154,8 @@
   .zen-space-row {
     corner-shape: var(--zen-corner);
     transition:
-      background 120ms var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   .zen-space-row:active {
     background: var(--zen-element-bg);
@@ -4175,7 +4177,7 @@
     background: var(--zen-scrim);
   }
   .zen-group-swatch {
-    transition: transform 140ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group-swatch:active {
     transform: scale(0.92);
@@ -4242,7 +4244,7 @@
     border-radius: var(--zen-card-radius);
     background: var(--zen-bg-solid);
     box-shadow: var(--zen-shadow-1);
-    transition: transform 140ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-overview-card:active {
     transform: scale(0.975);
@@ -4296,21 +4298,29 @@
       0 0 0 2px rgb(var(--zen-accent-rgb) / 0.55);
   }
   /*
-   * The card in the hand is positioned per frame at 90% opacity (v2 §11.4); its elevation is a
-   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is
-   * §1's rise, not a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a
-   * target, 1 as it lands) and the transform transition eases each step over `MOTION_STATE_MS`;
-   * under reduced motion the rule at the foot makes the step a cut.
+   * The card in the hand is two elements (motion spec §0.4). The SEAT follows the finger by a
+   * per-frame `translate` on its own layer – never `left`/`top`, which laid the page out every
+   * frame. The CARD inside it is drawn at 90% opacity (v2 §11.4); its elevation is a level swap
+   * (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is §1's rise, not
+   * a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a target, 1 as it
+   * lands) and the transform transition eases each step over `MOTION_STATE_MS` – on the card
+   * alone, so it never smears the seat's follow; under reduced motion the rule at the foot makes
+   * the step a cut.
    */
+  .zen-overview-ghost-seat {
+    left: 0;
+    top: 0;
+    will-change: transform;
+  }
   .zen-overview-ghost {
     opacity: 0.9;
     box-shadow: var(--zen-shadow-2);
     transform-origin: center;
     transition:
-      opacity 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
-    will-change: transform, left, top;
+      opacity var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
+    will-change: transform;
   }
   .zen-overview-ghost[data-landing] {
     opacity: 1;
@@ -4329,7 +4339,7 @@
     isolation: isolate;
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
-    transition: box-shadow 200ms var(--zen-ease);
+    transition: box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The tint is a layer of its own, under the header and the cards, so that it can fade on its
@@ -4347,16 +4357,108 @@
     corner-shape: inherit;
     background: rgb(var(--zen-group-rgb) / 0.13);
     pointer-events: none;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group[data-collapsed],
   .zen-group[data-clip] {
     overflow: hidden;
   }
-  /* Collapsed at rest, the card is its header (the spring writes the height inline on the way
-     there and clears it once it has landed), so a text-size change while it stands reaches it. */
+  /*
+   * Folded (the cleanup spec §2), the group is ONE CARD in its place: a cell at the grid's card
+   * aspect among the tab cards, at the card's own radius (the +6 is the open card's, whose
+   * corners wrap the members' – a cut at the fold, as radii are, §11.4). At rest the stylesheet
+   * holds the height through the aspect (the spring writes it inline on the way and clears it
+   * once landed), so a width or text-size change while it stands reaches it; `min-height: 0`
+   * with the clip keeps the member cards drawn under the mosaic from stretching the cell.
+   */
   .zen-group[data-collapsed] {
-    height: var(--zen-overview-group-header);
+    min-height: 0;
+    aspect-ratio: var(--zen-overview-card-aspect, 3 / 4);
+    border-radius: var(--zen-card-radius);
+  }
+  .zen-group[data-collapsed] > .zen-group-header {
+    border-radius: var(--zen-card-radius);
+  }
+  /*
+   * The folded face and the open body cross-fade (120 ms, opacity alone – kept under reduced
+   * motion as the header's and tint's fades are, below) while the height runs on its spring:
+   * the mosaic sits under the header over the members' place, the members under it go
+   * weightless – no taps, nothing for the tree (`aria-hidden`) – and the whole folded card is
+   * one tap (`.zen-group-tap`).
+   */
+  .zen-group-mosaic {
+    position: absolute;
+    top: var(--zen-overview-group-header);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 0 6px 6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
+  }
+  .zen-group[data-collapsed] > .zen-group-mosaic {
+    opacity: 1;
+  }
+  .zen-group-members {
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
+  }
+  .zen-group[data-collapsed] > .zen-group-members {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .zen-group[data-chrome='off'] > .zen-group-mosaic {
+    opacity: 0;
+  }
+  /* A tile: a capture's frame in the surface tone, round at 8 inside the card's 14 (§9.20). */
+  .zen-group-tile {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--zen-bg-solid);
+  }
+  .zen-group-tile-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--zen-muted);
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: rgb(var(--zen-fg-rgb) / 0.06);
+  }
+  .zen-group-tile-empty {
+    background: rgb(var(--zen-fg-rgb) / 0.04);
+  }
+  /* A saved group's tile (`SavedGroupCard`): the kept page's favicon alone, centred on the
+     placeholder's fill, as an open group's uncaptured member draws (§2: no text at tile size). */
+  .zen-group-tile-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-group-tile-favicon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 4px;
+  }
+  .zen-group-tile-favicon-none {
+    background: rgb(var(--zen-fg-rgb) / 0.12);
+  }
+  .zen-group-options {
+    z-index: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-group-mosaic,
+    .zen-group-members {
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
+    }
   }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
@@ -4374,8 +4476,8 @@
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * A group's header and tint coming on at the end of the glide keep their 120 ms fade under
@@ -4385,14 +4487,14 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-group::before,
     .zen-group-header {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-group-header:active {
     background: rgb(var(--zen-group-rgb) / 0.12);
   }
   /* The header's mark is the one group glyph (`.zen-group-row-glyph`, §9.37), as the strip's
-     chip, the ribbon and the Groups pane's rows draw it: no dot or badge of the card's own. */
+     chip, the ribbon and the saved group's card draw it: no dot or badge of the card's own. */
   /* A card being swiped off the grid is positioned per frame; the press transition would lag it. */
   .zen-overview-card[data-swiping] {
     transition: none;
@@ -4408,7 +4510,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   /*
@@ -4530,8 +4632,8 @@
     height: 36px;
     border-radius: 18px;
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group-chip:active .zen-group-chip-face {
     background: var(--v2-window-fill-hover);
@@ -4586,33 +4688,6 @@
     letter-spacing: -0.012em;
     line-height: 1.25;
   }
-  /* Its edges fade through `useFadeEdges`, only where there is more to scroll to. */
-  .zen-overview-strip {
-    scrollbar-width: none;
-    scroll-snap-type: x proximity;
-  }
-  .zen-overview-strip::-webkit-scrollbar {
-    display: none;
-  }
-  /*
-   * The strip's INDICATOR (MOT-05, `SpaceStrip`): the current chip's accent tint is one pill
-   * under the chips that glides from the chip that was current to the one that is, on
-   * `SPRING_SNAPPY`, by a transform alone (`translate3d` and `scaleX` from the old chip's box;
-   * the ends stay round under the scale, the radius' x divided by the frame's
-   * `--zen-strip-indicator-scale`); the chips draw their own fills over it – the current one
-   * none, the others the element fill – as 120 ms state changes (v2 §11.4), so the tint reads
-   * as leaving one chip for the other. The chips are positioned to paint over the indicator.
-   * Under reduced motion the indicator jumps (`SpaceStrip`, §11.3) and the fills cut with the
-   * sheet's closing rule.
-   */
-  .zen-overview-strip-indicator {
-    border-radius: calc(18px / var(--zen-strip-indicator-scale, 1)) / 18px;
-    background: rgb(var(--zen-accent-rgb) / 0.16);
-    transform-origin: left center;
-  }
-  .zen-overview-strip-chip {
-    transition: background-color 120ms var(--zen-ease);
-  }
   /*
    * The overview's panes (TAB-02, TAB-03): a pane switch is a cross-fade – the one coming up
    * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
@@ -4625,11 +4700,11 @@
    * overview's `data-surface="window"`.
    */
   .zen-overview-pane {
-    animation: zen-fade 120ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease);
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-overview-pane {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
 
@@ -4682,7 +4757,7 @@
     border-radius: var(--zen-card-radius);
     background: var(--v2-window-fill);
     color: var(--zen-fg);
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * Under reduced motion the band comes and goes on that fade in place of the slide (§11.3;
@@ -4691,7 +4766,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview-actions-band {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-overview-action {
@@ -4709,8 +4784,8 @@
     font-weight: var(--v2-weight-button);
     line-height: var(--v2-line-small);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-overview-action:active:not(:disabled) {
     background: var(--v2-window-fill-hover);
@@ -4849,7 +4924,7 @@
     justify-content: center;
     border-radius: 8px;
     color: inherit;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-sheet-header-control:active {
     background: var(--v2-fill);
@@ -4894,7 +4969,7 @@
     padding: 12px 16px;
     color: var(--v2-text);
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-menu-link-header:active {
     background: var(--v2-fill);
@@ -5019,7 +5094,7 @@
     height: 4px;
     border-radius: 2px;
     background: rgb(var(--v2-text-rgb) / 0.25);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-sheet[data-dragging='true'] .zen-sheet-handle {
     background: rgb(var(--v2-text-rgb) / 0.4);
@@ -5048,7 +5123,7 @@
     font-size: var(--v2-font-body);
     font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The press fill is the row's one tone; a row that is not a target – the static form,
@@ -5533,8 +5608,8 @@
   /*
    * The menu-to-panel seam (§9.38's hand-off; `MenuSheet.tsx`, `lib/shareSeam.ts`): the app
    * menu's sheet becomes the share panel's – one chassis. The panel's rows and preview rise over
-   * §11's 250 ms as the menu's rows and title, drawn once more in absolute layers over them, fade
-   * out over §11's 120 ms; the chassis measures its new detents from the panel's rows alone (the
+   * the pop's 180 ms as the menu's rows and title, drawn once more in absolute layers over them,
+   * fade out over §11's 120 ms; the chassis measures its new detents from the panel's rows alone (the
    * layers take no height of their own) and re-detents on its spring. The rows' layer fills the
    * body while the sheet is still the menu's height, clipped to it and inert, its rows shifted
    * by the offset the list was scrolled to when Share was tapped (the chassis starts new
@@ -5554,7 +5629,7 @@
     inset: 0;
     overflow: hidden;
     pointer-events: none;
-    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+    animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards;
   }
   .zen-share-seam-out[data-title] {
     display: flex;
@@ -5566,7 +5641,7 @@
     animation: none;
   }
   .zen-share-seam-in {
-    animation: zen-fade 250ms var(--zen-ease) both;
+    animation: zen-fade var(--zen-motion-pop) var(--zen-ease) both;
   }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
@@ -5717,7 +5792,7 @@
     font-size: 13px;
     line-height: var(--v2-line-small);
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) button.zen-siteinfo-row:hover:not(:disabled),
   button.zen-siteinfo-row:focus-visible,
@@ -5858,8 +5933,8 @@
     white-space: nowrap;
     outline: none;
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-chip-icon {
     width: 16px;
@@ -5940,7 +6015,7 @@
     z-index: 100;
     pointer-events: none;
     will-change: transform;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   /* Resting on a folder chip, the chip in the hand thins out so the target's fill and outline read through it. */
   .zen-bm-ghost[data-into='true'] {
@@ -5977,7 +6052,7 @@
     pointer-events: none;
     background: var(--v2-control-accent);
     border-radius: 1px;
-    transition: opacity 100ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-insert[data-axis='x'] {
     width: 2px;
@@ -6142,8 +6217,8 @@
   .zen-tab-search-close {
     opacity: 0;
     transition:
-      opacity 120ms var(--zen-ease),
-      background 120ms var(--zen-ease);
+      opacity var(--zen-motion-state) var(--zen-ease),
+      background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-tab-search-row[aria-selected='true'] .zen-tab-search-close,
   .zen-tab-search-close:focus-visible {
@@ -6232,7 +6307,7 @@
     flex-shrink: 0;
     padding: 16px;
     border-bottom: 1px solid transparent;
-    transition: border-color 120ms var(--zen-ease);
+    transition: border-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-title-block[data-scrolled='true'] {
     border-color: var(--v2-border);
@@ -6313,13 +6388,13 @@
   .zen-bm-star {
     opacity: 0.7;
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-star svg {
     fill: currentColor;
     fill-opacity: 0;
-    transition: fill-opacity 120ms var(--zen-ease);
+    transition: fill-opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-star[data-filled='true'] svg {
     fill-opacity: 1;
@@ -6401,7 +6476,7 @@
     color: var(--v2-text-deemphasized);
   }
   .zen-bm-pick-twisty .lucide {
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-pick-twisty .lucide[data-open] {
     transform: rotate(90deg);
@@ -6655,7 +6730,7 @@
     color: var(--v2-text-deemphasized);
   }
   .zen-dl-pop-out {
-    animation: zen-dl-pop-out 180ms var(--zen-ease) forwards;
+    animation: zen-dl-pop-out var(--zen-motion-pop) var(--zen-ease) forwards;
   }
   /*
    * The bubble's list: flush with the popover's sides – the rows stand `--v2-ring-room` in from
@@ -6698,7 +6773,7 @@
     line-height: var(--v2-line-body);
     text-align: start;
     outline: none;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-dl-show-all:hover {
     background: var(--v2-fill-hover);
@@ -6799,7 +6874,7 @@
   }
   .zen-dl-actions {
     opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-dl-row:hover .zen-dl-actions,
   .zen-dl-row:focus-within .zen-dl-actions,
@@ -6859,7 +6934,7 @@
    */
   .zen-dl-button-toolbar {
     overflow: visible;
-    animation: zen-pop 180ms var(--zen-ease);
+    animation: zen-pop var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-dl-glyph-body {
     position: relative;
@@ -6914,7 +6989,7 @@
     font-weight: 600;
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    animation: zen-pop 180ms var(--zen-ease);
+    animation: zen-pop var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-dl-badge-failed {
     background: var(--zen-danger);
@@ -6994,7 +7069,7 @@
     height: 8px;
     border-radius: 9999px;
     background: rgb(var(--zen-fg-rgb) / 0.3);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-dot[data-active='true'] {
     background: var(--v2-control-text);
@@ -7095,7 +7170,7 @@
     font-size: var(--v2-font-body);
     font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-radio:active {
     background: var(--v2-control-fill);
@@ -7109,9 +7184,9 @@
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
     border-radius: 9999px;
     transition:
-      border-color 120ms var(--zen-ease),
-      background 120ms var(--zen-ease),
-      box-shadow 120ms var(--zen-ease);
+      border-color var(--zen-motion-state) var(--zen-ease),
+      background var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * Checked (§9.14): `.zen-v2-radio`'s accent ring round a 6 px dot – the ring an inset shadow
@@ -7150,8 +7225,8 @@
     border: 1px solid var(--v2-control-fill);
     border-radius: var(--v2-radius-card);
     transition:
-      transform 120ms var(--zen-ease),
-      outline-color 120ms var(--zen-ease);
+      transform var(--zen-motion-state) var(--zen-ease),
+      outline-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-tile:active .zen-firstrun-tile-image {
     transform: scale(0.96);
@@ -7213,7 +7288,7 @@
     border-radius: var(--v2-radius-card);
     color: inherit;
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-choice:active {
     background: var(--v2-control-fill);
@@ -7521,8 +7596,8 @@
 }
 [data-fade-axis] {
   transition:
-    --zen-fade-start 180ms var(--zen-ease),
-    --zen-fade-end 180ms var(--zen-ease);
+    --zen-fade-start var(--zen-motion-state) var(--zen-ease),
+    --zen-fade-end var(--zen-motion-state) var(--zen-ease);
 }
 [data-fade-axis='y'] {
   -webkit-mask-image: linear-gradient(
@@ -7682,7 +7757,8 @@
    * above is that gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls
    * should it outgrow the frame; the footer stays. Chrome's "Open as window" check row under the
    * name runs edge to edge as the confirm dialog's does (§9.25: the row's own 16 is the dialog's
-   * one gutter) – the rule waits for the row, withheld until `webapp.pin` carries its two states
+   * one gutter); unchecked, Chrome's default, the shortcut opens as a tab in Zenium, checked, in
+   * an app window of its own – the box travels with Create as `webapp.pin`'s `openAsWindow`
    * (W8-M3b). The install of an app is the pill's popover (`install/InstallPopover.tsx`), on the
    * popover chassis with the same `.zen-install-app` row.
    */
@@ -7809,7 +7885,7 @@
   }
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
-    transition: border-color 120ms var(--zen-ease);
+    transition: border-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-scpick-panes[data-scrolled='true'] {
     border-color: var(--v2-border);
@@ -8092,8 +8168,8 @@
     right: 0;
     margin: 0 auto;
     width: min(320px, 100% - 16px);
-    /* The toast's rise, the one number the sidebar's `.zen-toast` runs it at. */
-    animation: zen-toast-in 180ms var(--zen-ease);
+    /* The toast's rise on the message token, the one the sidebar's `.zen-toast` runs it on. */
+    animation: zen-toast-in var(--zen-motion-message) var(--zen-ease);
   }
   /* One line (§9.33): the line never breaks; a folder's long name ends in an ellipsis. */
   .zen-capture-toast .zen-message-text {
@@ -8115,7 +8191,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-capture-toast {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
 }
@@ -8208,7 +8284,7 @@
     border-radius: var(--v2-radius-inner);
     color: var(--v2-text);
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-mhub-text:active {
     background: var(--v2-fill);
@@ -8468,9 +8544,9 @@
     border-radius: var(--v2-radius-card);
     background: var(--v2-control-fill);
     transition:
-      background-color 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease),
-      box-shadow 200ms var(--zen-ease);
+      background-color var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   /* The one hover left on the media query: `newTabSharedCss` cuts this rule into the scriptless
      `zen://newtab` document, whose root never carries the chrome's live `data-hover`. */
@@ -8556,7 +8632,7 @@
     --zen-fg-rgb: var(--v2-text-rgb);
     --zen-element-bg: var(--v2-fill);
     --zen-element-bg-hover: var(--v2-fill-hover);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-ntp-field:has(.zen-ntp-field-main:active) {
     background: color-mix(in srgb, var(--v2-urlbar) 94%, var(--v2-text));
@@ -8570,7 +8646,7 @@
    * surface is still opaque over it (`data-grow='growing'`): it starts as the page shows through.
    */
   :root[data-form-factor='phone'] .zen-ntp-site {
-    animation: zen-fade 120ms var(--zen-ease) both;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) both;
     animation-delay: calc(var(--zen-ntp-i, 0) * 20ms);
   }
   :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-ntp-site,
@@ -8585,7 +8661,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     :root[data-form-factor='phone'] .zen-ntp-site {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-ntp-site,
     :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-ntp-site {
@@ -8620,7 +8696,7 @@
   /* A site's icon fades in once it has loaded; until then the tile is the fill alone. */
   :root[data-form-factor='phone'] .zen-ntp-icon {
     opacity: 0;
-    transition: opacity 160ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-ntp-icon-loaded {
     opacity: 1;
@@ -8736,7 +8812,7 @@
    * waits, as the tiles do, while the page is not painted or the grow surface is over it.
    */
   :root[data-form-factor='phone'] .zen-mstack {
-    animation: zen-fade 120ms var(--zen-ease) 160ms both;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) 160ms both;
   }
   :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-mstack,
   :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-mstack {
@@ -8744,7 +8820,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     :root[data-form-factor='phone'] .zen-mstack {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-mstack,
     :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-mstack {
@@ -8789,7 +8865,7 @@
     outline-offset: -1px;
     scroll-snap-align: start;
     scroll-snap-stop: always;
-    transition: flex-basis 120ms var(--zen-ease);
+    transition: flex-basis var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * A lone card has nothing to peek: it takes the strip's whole width, growing into it over the
@@ -8800,7 +8876,7 @@
     flex-basis: 100%;
   }
   :root[data-form-factor='phone'] .zen-mstack-card[data-leaving] {
-    animation: zen-mstack-leave 120ms var(--zen-ease) forwards;
+    animation: zen-mstack-leave var(--zen-motion-state) var(--zen-ease) forwards;
     pointer-events: none;
   }
   @keyframes zen-mstack-leave {
@@ -8810,7 +8886,7 @@
     }
   }
   :root[data-form-factor='phone'] .zen-mstack-card[data-arriving] {
-    animation: zen-mstack-arrive 120ms var(--zen-ease);
+    animation: zen-mstack-arrive var(--zen-motion-state) var(--zen-ease);
   }
   @keyframes zen-mstack-arrive {
     from {
@@ -9006,7 +9082,7 @@
     border-radius: 3px;
     background: var(--v2-control-text);
     opacity: 0.4;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-mstack-dot[data-current] {
     opacity: 1;
@@ -9137,7 +9213,7 @@
    * The pill's slot while the field is the page's: the well, filling in with the pill's tint and
    * words as the scroll hands the field over (`--zen-ntp-pill`), so that at the landing the pill
    * is whole and the double has nothing left to draw. The handover is the words' one source of
-   * opacity, hence the `!important`: the pill's content arrives on a 160 ms entrance fade
+   * opacity, hence the `!important`: the pill's content arrives on the pop's entrance fade
    * (`zen-animate-fade`), and the bar is mounted again as a closing or a pull begins (the shell
    * takes it down while the omnibox is open), so that fade replays under the field coming home
    * – and an animation's value outranks a plain declaration, so for its length the well's words
@@ -9156,7 +9232,7 @@
     pointer-events: none;
   }
   /*
-   * The omnibox under the morph: the sheet fades in on the value rather than its own 160 ms,
+   * The omnibox under the morph: the sheet fades in on the value rather than its own pop,
    * from four tenths of the way (FAKEBOX_SHEET_FROM: the page is nearly gone by then, so the
    * suggestions rise in under the arriving field rather than over the tiles); its field's
    * backdrop and content are the double's until the field lands – the field draws nothing of
@@ -9301,7 +9377,7 @@
    * the ride and their own 120 ms transitions are off while the value drives them, so no frame
    * lags the spring and the landing hands over without a step. The pill stays where it is: its
    * words go with the buttons – the one source of their opacity, hence the `!important`: the
-   * bar is mounted again as a closing begins and the words' 160 ms entrance fade would replay
+   * bar is mounted again as a closing begins and the words' entrance fade (the pop) would replay
    * over the ride (the field morph's `.zen-pill-away` lesson) – and its fill leaves over the
    * second half beneath the field's backdrop, which is opaque over it by then, so no frame
    * shows a seam at the pill's edge. Inert meanwhile: the omnibox's sheet is over the bar, and
@@ -9310,7 +9386,7 @@
   :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item],
   :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item],
   :root[data-omnibox-focus='closing'] .zen-phone-bar-row > [data-bar-item] {
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
     opacity: calc(0.85 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1));
   }
   :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item][data-disabled],
@@ -9362,10 +9438,10 @@
      * other animation and transition, and the sheet's own `zen-animate-fade` on specificity.
      */
     :root[data-fakebox='opening'] .zen-fakebox-layer {
-      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='closing'] .zen-fakebox-layer {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='opening'] .zen-fakebox-layer .zen-fakebox,
     :root[data-fakebox='closing'] .zen-fakebox-layer .zen-fakebox {
@@ -9375,17 +9451,17 @@
     :root[data-fakebox='opening'] .zen-omnibox-field::before,
     :root[data-fakebox='opening'] .zen-omnibox-field > *,
     :root[data-fakebox='closing'] .zen-phone-bar {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='closing'] .zen-omnibox-sheet,
     :root[data-fakebox='closing'] .zen-omnibox-field::before,
     :root[data-fakebox='closing'] .zen-omnibox-field > * {
-      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='opening'] .zen-phone-bar,
     :root[data-fakebox='opening'] .zen-ntp-fades,
     :root[data-fakebox='closing'] .zen-ntp-fades {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
     /*
      * What the scrub and the morph write per frame – the double's box and the layer's clip, the
@@ -9408,19 +9484,19 @@
     :root[data-omnibox-focus='opening'] .zen-omnibox-sheet,
     :root[data-omnibox-focus='opening'] .zen-omnibox-field::before,
     :root[data-omnibox-focus='opening'] .zen-omnibox-field > * {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-omnibox-focus='closing'] .zen-omnibox-sheet,
     :root[data-omnibox-focus='closing'] .zen-omnibox-field::before,
     :root[data-omnibox-focus='closing'] .zen-omnibox-field > * {
-      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-omnibox-focus] .zen-phone-bar-row > [data-bar-item],
     :root[data-omnibox-focus] .zen-omnibox-field > *,
     :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill,
     :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill > * {
       transform: none !important;
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
     :root[data-omnibox-focus] .zen-omnibox-field::before {
       transform: none !important;
@@ -10180,11 +10256,11 @@
  * the sidebar's entrance; reduced motion keeps it (the rule past the global one at the foot).
  */
 .zen-sidebar-pose[data-switching] {
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-sidebar-pose[data-switching] {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 /*
@@ -10219,11 +10295,11 @@
  * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
  * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
  * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, the 10 as a ring at a 2
- * stroke for a SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a
+ * stroke for a SAVED one, its tabs closed and its pages kept (the overview's two group cards); a
  * folder given its own icon on the desktop keeps it, as a glyph at 14 that holds while text
  * scales (§4). This is THE group glyph (§9.37; the lead on #360: one glyph everywhere), the
- * shared `GroupGlyph` component: the phone's card header and Departures ghost, the Groups
- * pane's rows, the strip's chip face, the swipe track's ribbon and the sheets' leading boxes
+ * shared `GroupGlyph` component: the phone's card header and Departures ghost, the saved
+ * group's card, the strip's chip face, the swipe track's ribbon and the sheets' leading boxes
  * draw these same rules – no 8 or 12 dot, no halo, no badge of a host's own.
  * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
  * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
@@ -10408,16 +10484,42 @@
   z-index: -1;
 }
 /*
- * The tablet header's tab search (TABLET-14): the phone's field (`.zen-overview-search-field`,
- * 40 tall in `--v2-urlbar` with the panel's shadow) standing in the header row itself, in the
- * magnifier's place, at a fixed span that gives way before the title does; no gutter padding of
- * its own – the header's gap places it. Its clear stands only over a query: an empty field in
- * the header has nothing to close.
+ * The overview's one header row's title (tab overview cleanup spec §1, `OverviewHeader.tsx`):
+ * the space's dot and name with the count, and THE SPACE SWITCHER – a tap opens the Spaces
+ * sheet. A control on the window backdrop (§9.29): no fill at rest, the window family's fill
+ * for the press, on the 120 ms the other window controls take. At a space switch (GN-19, the
+ * sheet, the menu's Switch Space) the words that were stand over the words that are as a still
+ * fading out over 120 ms (§6: the title cross-fades, opacity alone), the new words beneath from
+ * the first frame; the still takes no touch. Reduced motion keeps the fade (§11.3: a change in
+ * place on a window strip, §11.4).
+ *
+ * The title's one mark that it is a control (§1): a 16 chevron-down after the count, in the
+ * window's 69 % ink as the count is, turned over while the Spaces sheet stands – the button's
+ * `aria-expanded` – on the state change's 120 ms. The turn is a move, not a fade: under reduced
+ * motion the global remover at the foot of this sheet takes the transition and the chevron cuts
+ * (§11.3). The private view's heading, no control, draws none.
  */
-.zen-overview-search.zen-overview-search-inline {
-  flex: 0 1 360px;
-  min-width: 160px;
-  padding: 0;
+.zen-overview-title {
+  transition: background var(--zen-motion-state) var(--zen-ease);
+}
+.zen-overview-title:active {
+  background: var(--v2-control-fill);
+}
+.zen-overview-title-chevron {
+  color: var(--zen-muted);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
+}
+.zen-overview-title[aria-expanded='true'] > .zen-overview-title-chevron {
+  transform: rotate(180deg);
+}
+.zen-overview-title-still {
+  animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-overview-title-still {
+    animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards !important;
+  }
 }
 
 /*
@@ -10459,7 +10561,7 @@
   }
   /* Reload and Stop share one slot: the glyph that is not current is faded out, never removed. */
   .zen-glyph-swap > * {
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-glyph-swap > [data-shown='false'] {
     opacity: 0;
@@ -10491,7 +10593,7 @@
     text-align: left;
     font-size: 14px;
     font-weight: var(--v2-weight-body);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The pressed tone: a finger on the row, or the hold's finger standing over it (`data-hold-lit`,
@@ -10541,10 +10643,10 @@
     user-select: none;
     -webkit-user-select: none;
     transition:
-      background 120ms var(--zen-ease),
-      box-shadow 200ms var(--zen-ease),
-      opacity 120ms var(--zen-ease),
-      scale 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease),
+      scale var(--zen-motion-state) var(--zen-ease);
   }
   /* Row glyphs at the phone's stroke; the bar's own glyphs keep theirs. */
   .zen-bar-row svg {
@@ -10753,7 +10855,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * A one-line row holding a control (§9.21): the larger of the row's base and the control plus 8,
@@ -10924,7 +11026,7 @@
   justify-content: center;
   border-radius: var(--v2-radius-inner);
   color: var(--v2-text);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 :root[data-form-factor='phone'] .zen-v2-icon-button {
   border-radius: var(--v2-radius-card);
@@ -10955,14 +11057,6 @@
    padding). */
 .zen-v2-icon-button.zen-print-page-step {
   border-radius: 9999px;
-}
-/* The tab overview's Inactive tabs entry (TAB-20; §9.34 modifier): the icon button let grow past
-   its square for the §9.19 count badge trailing the glyph after 8, the pair inset 12 so the
-   glyph's edge stands at the segment row's 16 gutter. */
-.zen-v2-icon-button.zen-overview-inactive {
-  width: auto;
-  gap: 8px;
-  padding: 0 12px;
 }
 
 /*
@@ -11050,7 +11144,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-heading);
   line-height: var(--v2-line-body);
-  transition: color 120ms var(--zen-ease);
+  transition: color var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-segment > [role='tab'][aria-selected='true'] {
   color: var(--v2-control-text, var(--v2-text));
@@ -11065,7 +11159,7 @@
   border-radius: 1px;
   background: var(--v2-control-accent, var(--v2-accent));
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-segment > [role='tab'][aria-selected='true']::after {
   opacity: 1;
@@ -11077,56 +11171,14 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-v2-segment > [role='tab']::after {
-    transition: opacity 120ms var(--zen-ease) !important;
+    transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
-/*
- * The overview's pane swipe (GN-19, `components/phone/usePaneSwipe.ts`): the overview's
- * modifier beside the segment primitive, never a copy of it. While a swipe is live the tablist
- * carries `data-swipe`: the primitive's lines under the labels go out at once and one line of
- * the same make – 2 px, the accent, the 1 px radius, laid out in the tablist's box – rides the
- * finger from under the current label to under the neighbour's, on a transform per frame
- * (`translate3d` and `scaleX` from its box under the current label: the two are input while the
- * finger is down, v2 §11.3, and the spring's after). When the swipe is over the attribute goes:
- * this line fades out over the primitive's 120 ms as the picked label's own line fades in over
- * the same place, so the two read as one line. Nothing else moves; the labels' ink switches at
- * the pick as it does on a tap.
- */
-.zen-overview-segment {
-  position: relative;
-}
-.zen-overview-segment-line {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--v2-control-accent, var(--v2-accent));
-  opacity: 0;
-  transform-origin: left center;
-  transition: opacity 120ms var(--zen-ease);
-  pointer-events: none;
-}
-.zen-v2-segment[data-swipe] > .zen-overview-segment-line {
-  opacity: 1;
-  transition: none;
-  will-change: transform;
-}
-.zen-v2-segment[data-swipe] > [role='tab']::after {
-  opacity: 0;
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .zen-overview-segment-line {
-    transition: opacity 120ms var(--zen-ease) !important;
-  }
-}
-
 /*
  * The overview's tab search (TAB-21, `components/phone/OverviewSearch.tsx`): the phone panels'
  * §9.12 field (`.zen-phone-field`, 40 tall with its glyph and its clear, phonePanels.css)
- * pinned under the overview's header in the grid's 12 gutter, 8 to the segment. A field is a
+ * pinned under the overview's one header row in the grid's 12 gutter, 8 to the grid, while the
+ * ⋯ menu's "Search Tabs" has it standing (cleanup spec §4; on the tablet too, §7). A field is a
  * page surface; standing on the window backdrop (§9.29) it takes the new tab page's resting
  * field's treatment (`.zen-ntp-field`): the `--v2-urlbar` fill and the panel's shadow for its
  * edge in place of the hairline, the page's ink inside as the primitive gives it; the control's
@@ -11134,7 +11186,7 @@
  * The ring on focus is the primitive's, inside the edge. Under it, when a query drops every
  * card – the New Tab card leaves with them (§9.34) – the grid's one line (§9.17's sentence at
  * 15 and 69% in the window's ink, centred in the 32 gutter, its first line 48 below the
- * segment) stands where the grid was, over the reach's lists when they have rows.
+ * field) stands where the grid was, over the reach's lists when they have rows.
  */
 .zen-phone-field.zen-overview-search-field {
   background: var(--v2-urlbar);
@@ -11228,7 +11280,7 @@
   text-align: left;
   font: inherit;
   color: inherit;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-device-heading-button:active {
   background: var(--v2-fill);
@@ -11245,77 +11297,40 @@
 }
 
 /*
- * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
- * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
- * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
- * overview's window backdrop, so they draw in the window family (§9.29): the pane resolves the
- * page ink and fills the primitives read to the control roles the overview root's
- * `data-surface="window"` sets – the theme's ink, its 69% for the count and the time, the
- * window fill for the press – and the primitives' own rules draw them, gates and all (§9.34's
- * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
- * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
- * gutter's end; the first heading stands under the segment (or the space strip), which already
- * carries its air, at 4. The row's glyph in the 20 box is the one group glyph
- * (`.zen-group-row-glyph`, §9.37: the 10 dot for an open group, the 10 ring at a 2 stroke for a
- * saved one, whose tabs are closed; the §9.14 pair on the glyph, `--zen-group-rgb` the theme's
- * pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
- * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
- * own 40 is for a list whose field carries 8 under it, and the segment carries none. The Private
- * pane at none (TAB-03, `PrivateEmpty` in TabOverview.tsx; `.zen-overview-private-empty`) is the
- * same note under the same two rules – "No private tabs" in the window ink the private theme
- * paints, its New private tab follow-up the note's own secondary button (§9.17: 16 beneath, 88
- * minimum at 40), which `.zen-overview .zen-v2-button` above already reads to the window fill –
- * never a message card (§9.34). One rule for both panes, the Groups pane's selector last where
- * its test pins it. The Tabs pane at none (TAB-34, `TabsEmpty`; `.zen-overview-tabs-empty`) is
- * the same note under the same two rules – "No open tabs" with New tab as its follow-up – in
- * place of the grid inside the Space's slot. Its 120 ms fade is keyed to the replacement, not
- * the mount (`[data-in-place]`, the gate's ruling on #562; §11.1): the note that takes the
- * grid's place in its own slot fades in as a state change in place does (§11.4), which reduced
- * motion keeps (§11.3); the note that comes up with its pane, its Space or the overview carries
- * no mark and rides their motion – one object, one move.
+ * The overview's empty note (the cleanup spec's §3 and TAB-34): the regular view at none
+ * (`TabsEmpty` in TabOverview.tsx; `.zen-overview-tabs-empty`) is a list's §9.17 sentence – the
+ * phone panels' `.zen-phone-empty` note in the window ink, in the view's flow – its first line
+ * 48 under the header: the note's own 40 is for a list whose field carries 8 under it, and the
+ * header carries none. The note stands on the overview's window backdrop, so it draws in the
+ * window family (§9.29): it resolves the page ink and fills the primitives read to the control
+ * roles the overview root's `data-surface="window"` sets – the theme's ink, its 69% for the
+ * secondary line, the window fill for the press – and the primitives' own rules draw it. "No
+ * open tabs" with New tab as its follow-up, the note's own secondary button (§9.17: 16 beneath,
+ * 88 minimum at 40), which `.zen-overview .zen-v2-button` above already reads to the window
+ * fill – never a message card (§9.34) – in place of the grid inside the Space's slot. Its 120
+ * ms fade is keyed to the replacement, not the mount (`[data-in-place]`, the gate's ruling on
+ * #562; §11.1): the note that takes the grid's place in its own slot fades in as a state change
+ * in place does (§11.4), which reduced motion keeps (§11.3); the note that comes up with its
+ * view, its Space or the overview carries no mark and rides their motion – one object, one
+ * move. (The private view has no empty note: it stands only while a private tab is open, §4;
+ * and the Groups pane that once shared these rules is gone – §2 and §9: a group is one card in
+ * its place.)
  */
-.zen-overview-private-empty,
-.zen-overview-tabs-empty,
-.zen-overview-groups {
+.zen-overview-tabs-empty {
   --v2-text: var(--v2-control-text);
   --v2-text-deemphasized: var(--v2-control-text-deemphasized);
   --v2-fill: var(--v2-control-fill);
   --v2-fill-hover: var(--v2-control-fill-hover);
 }
-.zen-overview-groups .zen-v2-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.zen-overview-groups > :first-child > .zen-v2-heading {
-  margin-top: 4px;
-}
-.zen-overview-groups-aside {
-  flex-shrink: 0;
-  color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-small);
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-small);
-  font-variant-numeric: tabular-nums;
-}
-/* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
-.zen-overview-groups .zen-overview-group-rename {
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-body);
-}
-.zen-overview-private-empty > .zen-phone-empty,
-.zen-overview-tabs-empty > .zen-phone-empty,
-.zen-overview-groups > .zen-phone-empty {
+.zen-overview-tabs-empty > .zen-phone-empty {
   padding-top: 48px;
 }
 .zen-overview-tabs-empty[data-in-place] {
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-overview-tabs-empty[data-in-place] {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 
@@ -11323,8 +11338,8 @@
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);
   transition:
-    box-shadow 120ms var(--zen-ease),
-    background 120ms var(--zen-ease);
+    box-shadow var(--zen-motion-state) var(--zen-ease),
+    background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-card-radio:active {
   background: var(--v2-fill);
@@ -11365,7 +11380,7 @@
   height: 20px;
   border-radius: 50%;
   background: rgb(var(--zen-group-rgb));
-  transition: box-shadow 120ms var(--zen-ease);
+  transition: box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-group-editor-swatch[aria-checked='true'] > .zen-group-editor-swatch-disc {
   box-shadow:
@@ -11389,9 +11404,10 @@
 }
 
 /*
- * The shared switch (§9.34, §10.4): a 36 × 20 track, a 16 thumb inset 2, travel 16, 150 ms.
- * Its state is `aria-checked` – on the switch itself, or on the row that is the switch (§10.4:
- * the whole row toggles it), the thumb aria-hidden inside it.
+ * The shared switch (§9.34, §10.4): a 36 × 20 track, a 16 thumb inset 2, travel 16 on the state
+ * length (motion spec §10 (a); the draft's 150). Its state is `aria-checked` – on the switch
+ * itself, or on the row that is the switch (§10.4: the whole row toggles it), the thumb
+ * aria-hidden inside it.
  */
 .zen-v2-switch {
   position: relative;
@@ -11401,7 +11417,7 @@
   flex-shrink: 0;
   border-radius: 10px;
   background: rgb(var(--v2-text-rgb) / 0.25);
-  transition: background 150ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-switch::after {
   content: '';
@@ -11413,8 +11429,8 @@
   border-radius: 50%;
   background: var(--v2-page);
   transition:
-    transform 150ms var(--zen-ease),
-    background 150ms var(--zen-ease);
+    transform var(--zen-motion-state) var(--zen-ease),
+    background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-switch[aria-checked='true'],
 [aria-checked='true'] .zen-v2-switch {
@@ -11480,9 +11496,9 @@
   border-radius: 50%;
   background: var(--v2-page);
   transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease),
+    border-color var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-radio[aria-checked='true'],
 [aria-checked='true'] > .zen-v2-radio {
@@ -11534,7 +11550,7 @@
   border-radius: var(--v2-radius-card);
   color: inherit;
   text-align: left;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) .zen-search-choice-row:hover {
   background: var(--zen-element-bg);
@@ -11600,9 +11616,9 @@
   border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
   border-radius: 50%;
   transition:
-    border-color 120ms var(--zen-ease),
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease);
+    border-color var(--zen-motion-state) var(--zen-ease),
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-search-choice-row[aria-checked='true'] > .zen-search-choice-mark {
   border-color: var(--zen-accent);
@@ -11652,8 +11668,8 @@
   display: grid;
   place-items: center;
   transition:
-    background 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    border-color var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover'])
   .zen-v2-checkbox:hover:not(
@@ -11760,13 +11776,23 @@
   color: inherit;
   text-align: left;
   white-space: nowrap;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-menu-item .lucide {
   width: var(--v2-icon);
   height: var(--v2-icon);
   flex-shrink: 0;
   stroke-width: var(--v2-icon-stroke);
+}
+/*
+ * The row's trailing indicators – the submenu chevron, the managed mark – are 16 on every
+ * platform (§9.3): `--v2-icon` is the LEADING glyph's size, 20 on the tablet, and the rule above
+ * would otherwise hand it to the trailing slot too.
+ */
+.zen-v2-menu-item .zen-v2-menu-chevron,
+.zen-v2-menu-item .zen-v2-menu-mark {
+  width: 16px;
+  height: 16px;
 }
 /* The glyph slot: 16 wide whether or not this row has a glyph, so the labels share one edge. */
 .zen-v2-menu-glyph {
@@ -11895,7 +11921,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-button);
   line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * The print preview's option column (§9.13, §9.34: a modifier beside the primitives, not a copy
@@ -11980,7 +12006,7 @@
   color: inherit;
   text-align: left;
   white-space: nowrap;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * On a tablet the list is the same anchored popover with the coarse pointer's rows (§9.36 as
@@ -12162,10 +12188,10 @@
  * sit over that inline value for as long as the pane lives – the finger would move nothing.
  */
 .zen-settings-drill-in[data-from='right'] {
-  animation: zen-settings-enter-right 240ms var(--zen-ease);
+  animation: zen-settings-enter-right var(--zen-motion-pop) var(--zen-ease);
 }
 .zen-settings-drill-in[data-from='left'] {
-  animation: zen-settings-enter-left 240ms var(--zen-ease);
+  animation: zen-settings-enter-left var(--zen-motion-pop) var(--zen-ease);
 }
 @keyframes zen-settings-enter-right {
   from {
@@ -12190,7 +12216,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 6px;
-  transition: box-shadow 120ms var(--zen-ease);
+  transition: box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-settings-drill-in[data-scrolled] .zen-settings-bar {
   box-shadow: 0 1px 0 var(--v2-border);
@@ -13149,7 +13175,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) .zen-settings-nav-item:hover {
   background: var(--v2-fill);
@@ -13251,7 +13277,7 @@
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-settings-content[data-scrolled] > .zen-settings-find::after {
   opacity: 1;
@@ -13589,7 +13615,7 @@
 .zen-settings-add-language-filter {
   flex-shrink: 0;
   padding: 0 16px 8px;
-  transition: box-shadow 120ms var(--zen-ease);
+  transition: box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-settings-add-language[data-scrolled] > .zen-settings-add-language-filter {
   box-shadow: 0 1px 0 var(--v2-border);
@@ -13897,7 +13923,7 @@
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-scroll[data-scrolled] > .zen-page-header::after {
   opacity: 1;
@@ -14076,7 +14102,7 @@
 .zen-page-heading > .zen-page-heading-reveal {
   margin-inline-start: 4px;
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-heading:hover > .zen-page-heading-reveal,
 .zen-page-heading:focus-within > .zen-page-heading-reveal {
@@ -14109,7 +14135,7 @@
  * not a fade. The chevron then cuts from right to down, as the bookmarks tree's twisty does.
  */
 .zen-page-heading-twisty > svg {
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-heading-twisty > svg[data-open] {
   transform: rotate(90deg);
@@ -14234,7 +14260,7 @@
  */
 .zen-page-row .zen-page-row-reveal {
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-row:hover .zen-page-row-reveal,
 .zen-page-row:focus-within .zen-page-row-reveal,
@@ -14438,8 +14464,8 @@ ol.zen-page-prose-list {
   cursor: default;
   user-select: none;
   transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) .zen-bm-tree-row:hover {
   background: var(--v2-fill);
@@ -14481,7 +14507,7 @@ ol.zen-page-prose-list {
   width: var(--v2-icon);
   height: var(--v2-icon);
   stroke-width: var(--v2-icon-stroke);
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-bm-tree-twisty > svg[data-open] {
   transform: rotate(90deg);
@@ -14537,9 +14563,9 @@ ol.zen-page-prose-list {
   text-overflow: ellipsis;
   white-space: nowrap;
   transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease),
-    color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease),
+    color var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) button.zen-bm-crumb:hover {
   background: var(--v2-fill);
@@ -14742,7 +14768,7 @@ ol.zen-page-prose-list {
 }
 /* The turn is a transition the reduced-motion remover at the foot of this sheet takes (§11.3). */
 .zen-licences-twisty {
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-licences-twisty[data-open] {
   transform: rotate(90deg);
@@ -14817,7 +14843,7 @@ ol.zen-page-prose-list {
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-scroll[data-scrolled] .zen-tasks-header::after {
   opacity: 1;
@@ -14873,7 +14899,7 @@ ol.zen-page-prose-list {
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
-  transition: color 120ms var(--zen-ease);
+  transition: color var(--zen-motion-state) var(--zen-ease);
 }
 /* The glyph leads over a figure column: the label keeps the figures' trailing edge. */
 .zen-tasks-col[data-figure] .zen-tasks-col-button {
@@ -14940,7 +14966,7 @@ ol.zen-page-prose-list {
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-footer[data-more]::before {
   opacity: 1;
@@ -15308,8 +15334,8 @@ ol.zen-page-prose-list {
   color: var(--v2-control-text-deemphasized);
   font-variant-numeric: tabular-nums;
   transition:
-    background 120ms var(--zen-ease),
-    color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    color var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-blocked-chip > svg {
   width: var(--v2-icon);
@@ -15344,7 +15370,7 @@ ol.zen-page-prose-list {
   padding: 0 4px;
   border-radius: var(--v2-radius-inner);
   font-variant-numeric: tabular-nums;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-blocked-count[aria-expanded='true'],
 .zen-v2-blocked-count:active {
@@ -15593,10 +15619,10 @@ ol.zen-page-prose-list {
     padding: 0 12px 0 16px;
   }
   .zen-band-content[data-swap] {
-    animation: zen-fade 120ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease);
   }
   .zen-band-content[data-leaving] {
-    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+    animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards;
     pointer-events: none;
   }
   .zen-band-glyph {
@@ -15655,8 +15681,8 @@ ol.zen-page-prose-list {
     font-weight: var(--v2-weight-button);
     white-space: nowrap;
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-band-button:hover {
     background: var(--v2-control-fill-hover);
@@ -15674,8 +15700,8 @@ ol.zen-page-prose-list {
     border-radius: calc(var(--v2-radius-control) + 2px);
     color: var(--v2-control-text-deemphasized);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-band-close:hover {
     background: var(--v2-control-fill);
@@ -15695,6 +15721,53 @@ ol.zen-page-prose-list {
   .zen-band-close[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-ring);
     outline-offset: 0;
+  }
+  /*
+   * The two corner masks under the band (content/PageBandCorners.tsx; the Design Lead's seed D3
+   * on W8-M2): a strip the frame's radius tall at the page's top edge – translated to the band's
+   * offset per frame by the host, hidden at home – with a box the radius square at each end.
+   * Each box is the inverse of the frame's corner: a pseudo-element the box's size, rounded at
+   * the outer top corner alone, whose spread shadow in the frame's ground (`--zen-bg-solid`, the
+   * content frame's own background) fills the box outside that arc and is clipped to the box –
+   * the ground shows in the notch and the page through the arc, with the arc's own
+   * anti-aliasing rather than a gradient's. The frame's corners are plain arcs (no
+   * `corner-shape`), so these are too. Above the band's layer and the page's picture, under the
+   * band (its `z-index` 6) and the frame's layers over the page; no pointer of their own.
+   */
+  .zen-band-corners {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 5;
+    height: var(--zen-content-radius);
+    pointer-events: none;
+  }
+  .zen-band-corners[data-home] {
+    display: none;
+  }
+  .zen-band-corner {
+    position: absolute;
+    top: 0;
+    width: var(--zen-content-radius);
+    height: var(--zen-content-radius);
+    overflow: hidden;
+  }
+  .zen-band-corner[data-side='left'] {
+    left: 0;
+  }
+  .zen-band-corner[data-side='right'] {
+    right: 0;
+  }
+  .zen-band-corner::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    box-shadow: 0 0 0 var(--zen-content-radius) var(--zen-bg-solid);
+  }
+  .zen-band-corner[data-side='left']::before {
+    border-radius: var(--zen-content-radius) 0 0 0;
+  }
+  .zen-band-corner[data-side='right']::before {
+    border-radius: 0 var(--zen-content-radius) 0 0;
   }
 }
 
@@ -15843,12 +15916,13 @@ ol.zen-page-prose-list {
     color: var(--v2-text-deemphasized);
   }
   /*
-   * The keyword chip (omnibox-08, -26) slides in from the glyph's side over Chrome's ~150 ms;
-   * under reduced motion the global rule removes the slide and it is simply there. It is a pill
-   * chip (a button) in the badge look, so a click can leave keyword mode.
+   * The keyword chip (omnibox-08, -26) slides in from the glyph's side on the state length (a
+   * control arriving in place, motion spec §1; Chrome's runs ~150 ms); under reduced motion the
+   * global rule removes the slide and it is simply there. It is a pill chip (a button) in the
+   * badge look, so a click can leave keyword mode.
    */
   .zen-omnibox-keyword-chip {
-    animation: zen-omnibox-chip-in 150ms var(--zen-ease);
+    animation: zen-omnibox-chip-in var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) button.zen-omnibox-keyword-chip:hover {
     color: var(--v2-text);
@@ -15990,14 +16064,14 @@ ol.zen-page-prose-list {
   flex-shrink: 0;
   padding: 0 10px;
   color: var(--v2-control-text-deemphasized);
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-heading.zen-omnibox-sheet-heading[data-outer] {
   margin-top: 8px;
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-v2-heading.zen-omnibox-sheet-heading {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 /*
@@ -16022,11 +16096,11 @@ ol.zen-page-prose-list {
   object-fit: contain;
 }
 .zen-engine-field-favicon[data-arrived] {
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-engine-field-favicon[data-arrived] {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 
@@ -16184,8 +16258,8 @@ ol.zen-page-prose-list {
   color: var(--v2-text);
   font-weight: var(--v2-weight-button);
   transition:
-    background 120ms var(--zen-ease),
-    transform 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    transform var(--zen-motion-state) var(--zen-ease);
 }
 /* Only where a pointer can hover: on a phone the emulated hover would stay lit on the button after its tap. */
 :where(:root[data-hover='hover']) .zen-zoom-reset:hover:not(:disabled) {
@@ -16319,8 +16393,8 @@ ol.zen-page-prose-list {
   inset: 0;
   margin: auto;
   transition:
-    opacity 120ms var(--zen-ease),
-    transform 120ms var(--zen-ease);
+    opacity var(--zen-motion-state) var(--zen-ease),
+    transform var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * The play / pause swap is a change in place (v2 §11.4): under reduced motion its 120 ms fade
@@ -16328,7 +16402,7 @@ ol.zen-page-prose-list {
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-read-aloud-toggle > svg {
-    transition: opacity 120ms var(--zen-ease) !important;
+    transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 .zen-read-aloud-toggle > .zen-read-aloud-glyph-pause,
@@ -16383,8 +16457,9 @@ ol.zen-page-prose-list {
  * finger or a spring writes per frame lands on the frame it is written. One global rule may
  * remove; none may shorten.
  *
- * The fades that stay are declared where they live, each an explicit `transition: opacity 120ms`
- * or a 120 ms opacity-only keyframe animation under the same media query, `!important` so it
+ * The fades that stay are declared where they live, each an explicit `transition: opacity
+ * var(--zen-motion-state)` or a 120 ms opacity-only keyframe animation under the same media
+ * query, `!important` so it
  * beats this rule (an important declaration in a layer beats an unlayered important one; an
  * unlayered one beats `*` on specificity) – the sheet chassis' scrim and detents and the phone
  * frame-dialog host's sheet, the load bar, the overview's grid, panes and select-tabs action

@@ -169,7 +169,7 @@ describe('the one group glyph (§9.37)', () => {
       'phone/GroupCard.tsx',
       'phone/Departures.tsx',
       'phone/GroupStrip.tsx',
-      'phone/GroupsPane.tsx',
+      'phone/SavedGroupCard.tsx',
       'phone/TabOverview.tsx',
       'phone/TabSwitchStage.tsx'
     ]
@@ -201,6 +201,7 @@ describe('the count as the aside (§9.36)', () => {
           tabs: [tab('a'), tab('b'), tab('c')],
           card: (t: Tab) => createElement('div', { key: t.id }, t.title),
           onMenu: () => undefined,
+          onNewTab: () => undefined,
           onCloseGroup: () => undefined,
           onDelete: () => undefined,
           columns: 2

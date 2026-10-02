@@ -1,6 +1,7 @@
 import type { FocusEvent, KeyboardEvent } from 'react'
 import { useEffect } from 'react'
 import { run } from './api'
+import { closeTabFromChrome } from './closeUndo'
 import { releaseChromeFocus } from './panes'
 import { browserStore, uiStore } from './ui'
 
@@ -296,7 +297,8 @@ function perform(
         Boolean(tab && (tab.pinned || tab.essential)) &&
         state?.settings.pinnedCloseBehavior !== 'close'
       if (!stays) (entries[at + 1] ?? entries[at - 1])?.el.focus()
-      run('tab.close', { tabId: id, keepFocus: true })
+      // With Undo on the toast on a touch layout, as the row's × (§9.23).
+      closeTabFromChrome(id, { keepFocus: true })
       return
     }
     case 'leave':

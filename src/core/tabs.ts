@@ -1657,7 +1657,8 @@ export class TabManager {
       },
       onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action),
       onFileChooser: (request) => this.browser.agents.onFileChooser(tabId, request),
-      onPagePrompt: (prompt) => this.browser.agents.onPagePrompt(tabId, prompt)
+      onPagePrompt: (prompt) => this.browser.agents.onPagePrompt(tabId, prompt),
+      onPageDialogAnswered: (report) => this.browser.agents.onPageDialogAnswered(tabId, report)
     }
   }
 
@@ -2640,6 +2641,16 @@ export class TabManager {
    */
   closingTabIds(): string[] {
     return [...this.closeIntents.keys()]
+  }
+
+  /**
+   * Whether the page of `tabId` is under an unload check the USER started: a `requestClose`
+   * (the tab's ×, Ctrl+W, the overview's swipe) or the window's / the app's `confirmUnload`
+   * before a close or quit. A "Leave site?" the page raises meanwhile is the user's question –
+   * never an agent's dialog policy's to answer (`AgentService.takesLeave`), whoever's tab it is.
+   */
+  unloadingForUser(tabId: string): boolean {
+    return this.closeIntents.has(tabId) || this.unloadChecks.has(tabId)
   }
 
   /**

@@ -268,15 +268,94 @@ describe('reordering the Spaces drawer’s rows', () => {
     expect(names()).toEqual(['two', 'one', 'three'])
   })
 
-  it('a drop the browser’s order never shows is let go of after the grace', () => {
+  it('a drop the browser’s order never shows is let go of after the grace, and the rows glide home on the FLIP', () => {
+    render(stateOf(['one', 'two', 'three']))
+    const { row, x, y } = pickUp('one')
+    pointer('pointermove', row, x, y + ROW_HEIGHT)
+    act(() => settleSprings())
+    // Dropped on its slot exactly: nothing lands, nothing glides, the grace starts here.
+    pointer('pointerup', row, x, y + ROW_HEIGHT)
+    expect(names()).toEqual(['two', 'one', 'three'])
+    expect(frames.size).toBe(0)
+    for (const r of rows()) expect(r.style.transform).toBe('')
+    // The browser never shows the order (its store is not re-rendered): the grace runs out.
+    act(() => elapse(REORDER_GRACE_MS - 1))
+    expect(names()).toEqual(['two', 'one', 'three'])
+    act(() => elapse(1))
+    // The rows are laid out in the browser's order again – and measured: the two that changed
+    // slot are drawn where the drop left them, to glide the slot back on the list's spring (the
+    // same FLIP the rows stepping aside took), not set down in place. Both are cells of the set:
+    // the dropped row comes home on the FLIP too, not on a transform of its own.
+    expect(names()).toEqual(['one', 'two', 'three'])
+    const one = rowOf('one')
+    const two = rowOf('two')
+    expect(one.getAttribute('data-cell')).toBe('one')
+    expect(two.getAttribute('data-cell')).toBe('two')
+    expect(one.style.transform).toBe(`translate(0px, ${ROW_HEIGHT}px)`)
+    expect(two.style.transform).toBe(`translate(0px, ${-ROW_HEIGHT}px)`)
+    expect(one.style.transition).toBe('')
+    expect(rowOf('three').style.transform).toBe('')
+    expect(frames.size).toBeGreaterThan(0)
+    act(() => frame())
+    const mid = /translate\(0px, (-?[\d.]+)px\)/.exec(one.style.transform)
+    expect(mid).toBeTruthy()
+    expect(Number(mid![1])).toBeLessThan(ROW_HEIGHT)
+    expect(Number(mid![1])).toBeGreaterThan(0)
+    act(() => settleSprings())
+    for (const r of rows()) expect(r.style.transform).toBe('')
+    // One reorder was asked for; the refusal asks for nothing more, and the next hold is free.
+    expect(commands()).toEqual([['space.reorder', { spaceId: 'one', index: 1 }]])
+    const again = pickUp('two')
+    expect(again.row.hasAttribute('data-held')).toBe(true)
+  })
+
+  it('a drop the browser’s order has shown is forgotten at the grace with nothing measured or moved', () => {
     render(stateOf(['one', 'two', 'three']))
     const { row, x, y } = pickUp('one')
     pointer('pointermove', row, x, y + ROW_HEIGHT)
     pointer('pointerup', row, x, y + ROW_HEIGHT)
     act(() => settleSprings())
-    expect(names()).toEqual(['two', 'one', 'three'])
+    render(stateOf(['two', 'one', 'three']))
+    const layout = HTMLElement.prototype.getBoundingClientRect
+    const measuredRows: HTMLElement[] = []
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      if (this.classList.contains('zen-space-row')) measuredRows.push(this)
+      return layout.call(this)
+    })
     act(() => elapse(REORDER_GRACE_MS))
-    expect(names()).toEqual(['one', 'two', 'three'])
+    expect(names()).toEqual(['two', 'one', 'three'])
+    expect(measuredRows).toEqual([])
+    expect(frames.size).toBe(0)
+    for (const r of rows()) expect(r.style.transform).toBe('')
+  })
+
+  it('under reduced motion a refused drop is a cut: the rows are back in their slots at once, through the tracker’s fade, nothing glides', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }))
+    const faded: HTMLElement[] = []
+    const animate = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = function (this: HTMLElement) {
+      faded.push(this)
+      return { cancel: () => undefined, finished: Promise.resolve() } as unknown as Animation
+    } as unknown as HTMLElement['animate']
+    try {
+      render(stateOf(['one', 'two', 'three']))
+      const { row, x, y } = pickUp('one')
+      pointer('pointermove', row, x, y + ROW_HEIGHT)
+      pointer('pointerup', row, x, y + ROW_HEIGHT)
+      expect(names()).toEqual(['two', 'one', 'three'])
+      faded.length = 0
+      act(() => elapse(REORDER_GRACE_MS))
+      expect(names()).toEqual(['one', 'two', 'three'])
+      expect(frames.size).toBe(0)
+      for (const r of rows()) expect(r.style.transform).toBe('')
+      // The two rows that changed slot took the §11.3 fade at their slots (the FLIP's own cut).
+      expect(faded.map((r) => r.getAttribute('aria-label')).sort()).toEqual(['one', 'two'])
+    } finally {
+      if (animate) HTMLElement.prototype.animate = animate
+      else delete (HTMLElement.prototype as { animate?: unknown }).animate
+    }
   })
 
   it('a hold let go in place reorders nothing', () => {

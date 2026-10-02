@@ -205,9 +205,10 @@ describe('the palette', () => {
     for (const typed of ['web capture', 'capture', 'snip', 'clip']) {
       expect(searchCommands(typed, desktop).map((c) => c.action)).toContain('capture.start')
     }
+    // The palette carries the ask's ellipsis (P-32): the overlay wants a region before it captures.
     expect(searchCommands('web capture', desktop)[0]).toMatchObject({
       id: 'web-capture',
-      label: 'Screenshot',
+      label: 'Screenshot…',
       action: 'capture.start'
     })
   })

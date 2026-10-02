@@ -255,8 +255,13 @@ export function androidCapabilities({
     // The chrome lies under the page views: `Host.kt` answers `view.shown` from the view's own
     // drawn frame (Q1, `views.ts` `askShown`), and the chrome's stand-ins leave on that answer.
     placementAnswered: true,
-    // Kotlin's WebChromeClient answers page dialogs itself, so none reaches an agent yet.
+    // Kotlin's WebChromeClient answers page dialogs itself (the WebView's one renderer waits in
+    // the page's call for the chrome too, so none could be held for `browser_handle_dialog`)...
     agentDialogs: false,
+    // ...but it answers a hidden agent-driven tab's from the agent's policy
+    // (`TabView.setDialogPolicy`) and reports every answer (`onPageDialogAnswered`;
+    // `agentDialogs.ts`, `DialogPolicyAnswer.kt`). The tab in front of the user keeps its sheet.
+    agentDialogPolicy: true,
     // The prompts the core itself raises for the WebView (sign-in, site permissions, opening
     // another app) go to an agent's tab's agent, and so do the three Kotlin would otherwise
     // answer with system UI over the page: the file chooser (`onShowFileChooser`), the

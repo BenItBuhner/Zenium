@@ -7,6 +7,7 @@ import type {
   Settings
 } from '@shared/types'
 import { run } from './api'
+import { MOTION_MESSAGE_MS } from './motion/tokens'
 import { createStore } from './store'
 
 /**
@@ -356,8 +357,11 @@ export const hintBubbleStore = createStore<HintBubbleState>(
   'hint-bubble'
 )
 
-/** Chrome's `textbubble_out.xml`: an alpha fade over `config_shortAnimTime`, 200 ms. */
-export const HINT_BUBBLE_EXIT_MS = 200
+/**
+ * Chrome's `textbubble_out.xml`: an alpha fade over `config_shortAnimTime`, 200 ms – a bubble's
+ * leave, the message token (motion spec §2, §10).
+ */
+export const HINT_BUBBLE_EXIT_MS = MOTION_MESSAGE_MS
 
 let sweep: ReturnType<typeof setTimeout> | null = null
 

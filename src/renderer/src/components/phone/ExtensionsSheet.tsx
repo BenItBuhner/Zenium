@@ -140,7 +140,7 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
             title="Manage extensions"
             trailing={
               <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden>
-                <ChevronRight className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+                <ChevronRight className="h-4 w-4 opacity-60" strokeWidth={1.75} />
               </span>
             }
             onTap={() => leaveTo(() => openSettings('extensions'))}
@@ -319,11 +319,11 @@ function ActionMenuSheet({
                   >
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
                     {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                      <Check className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
                     )}
                     {item.submenu && (
                       <ChevronRight
-                        className={cn('zen-sheet-item-secondary h-5 w-5 shrink-0')}
+                        className={cn('zen-sheet-item-secondary h-4 w-4 shrink-0')}
                         strokeWidth={1.75}
                         aria-hidden
                       />

@@ -5,6 +5,7 @@ import { searchHost } from '@shared/tabSearch'
 import type { TabSearchCandidate, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { closeTabFromChrome } from '@renderer/lib/closeUndo'
 import { useBackSurface } from '@renderer/lib/back'
 import {
   ChromePortal,
@@ -36,7 +37,7 @@ import { cn } from '@renderer/lib/utils'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { useScrolled } from '../bookmarks/popover'
 import { Favicon, type FaviconSource } from '../sidebar/Favicon'
-import { V2_GLYPH } from '../v2/controls'
+import { V2_GLYPH, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
 
 /**
@@ -418,9 +419,9 @@ function TabRow({
       </span>
       {(tab.audible || tab.muted) &&
         (tab.muted ? (
-          <VolumeX className={cn(V2_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
+          <VolumeX className={cn(V2_TRAILING_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
         ) : (
-          <Volume2 className={cn(V2_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
+          <Volume2 className={cn(V2_TRAILING_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
         ))}
       {tab.windowLabel && (
         <span
@@ -428,7 +429,7 @@ function TabRow({
           data-tooltip={`In another window: ${tab.windowLabel}`}
           aria-hidden
         >
-          <AppWindow className={V2_GLYPH} />
+          <AppWindow className={V2_TRAILING_GLYPH} />
         </span>
       )}
       {closable && (
@@ -442,7 +443,8 @@ function TabRow({
           tabIndex={selected ? 0 : -1}
           onClick={(e) => {
             e.stopPropagation()
-            run('tab.close', { tabId: tab.id })
+            // With Undo on the toast on a touch layout, as a row's × (§9.23).
+            closeTabFromChrome(tab.id)
           }}
         >
           <CloseGlyph />

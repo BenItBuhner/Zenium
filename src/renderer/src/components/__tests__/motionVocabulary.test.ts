@@ -15,10 +15,10 @@ import {
  * curve a surface moves by is one of `lib/motion/tokens.ts`'s – `MOTION_STATE_MS` 120,
  * `MOTION_POP_MS` 180, `MOTION_MESSAGE_MS` 200, `MOTION_CAP_MS` 300, the three springs, the one
  * curve – never a number written in the component. Pinned the way the tooltip vocabulary is
- * (`tooltipVocabulary.test.tsx`): the chrome's sources under `components/**` and `lib/motion/**`
- * are walked as syntax trees for a literal in a motion's seat, and the ones left are listed here
- * by file with their count and their reason – the debt by name. A new literal anywhere fails
- * here; a migrated one fails here too until its line below is shrunk or struck.
+ * (`tooltipVocabulary.test.tsx`): the chrome's sources under `components/**` and `lib/**` are
+ * walked as syntax trees for a literal in a motion's seat, and the ones left are listed here by
+ * file with their count and their reason – the debt by name. A new literal anywhere fails here;
+ * a migrated one fails here too until its line below is shrunk or struck.
  *
  * What counts as a literal in a motion's seat (one finding each):
  *   css       a string holding a `<n>ms` time – a `transition` in a style object, an
@@ -39,10 +39,12 @@ import {
  *             is none of `SPRING_SNAPPY`, `SPRING_GENTLE`, `SPRING_FOLLOW`, nor spread from one.
  *
  * Out of the walk: `__tests__`, `lib/motion/tokens.ts` (the owner) and `lib/motion/spring.ts`
- * (`SPRING_STEP_CLAMP_MS`'s owner, re-exported by the tokens). The stylesheet's own `120ms` /
- * `180ms` (main.css) and the dock's own lift spring (`lib/gestures/dock.ts`'s `SPRING_LIFT`) are
- * outside `components/**` and `lib/motion/**`: the wave report's debt, not this pin's. A
- * Tailwind `duration-[…]` class in a component is in the walk, and reads the stylesheet's
+ * (`SPRING_STEP_CLAMP_MS`'s owner, re-exported by the tokens). The stylesheet's own
+ * declarations are the twin pin's (`motionStylesheet.test.ts`, main.css by rule). The walk grew
+ * to the whole of `lib/**` on W8-M1b (the lead's ruling (c), spec §10): the named 120s in `lib/*`
+ * read the tokens, the dock's lift spring went for a timed rise (`lib/gestures/dock.ts`,
+ * ruling (b)), and the waits there that are not motions are listed below. A Tailwind
+ * `duration-[…]` class in a component is in the walk, and reads the stylesheet's
  * `--zen-motion-state` (main.css, held equal to the token by `lib/__tests__/motionTokens.test.ts`),
  * never digits.
  *
@@ -73,7 +75,7 @@ interface Found {
 
 // `__dirname`, not `import.meta.url`, as the sibling pin does.
 const SRC = resolve(__dirname, '../..')
-const ROOTS = [resolve(SRC, 'components'), resolve(SRC, 'lib/motion')]
+const ROOTS = [resolve(SRC, 'components'), resolve(SRC, 'lib')]
 
 /** The owners of the numbers: the tokens module and the spring module it re-exports from. */
 const OWNERS = new Set(['lib/motion/tokens.ts', 'lib/motion/spring.ts'])
@@ -109,6 +111,31 @@ const LEFT: Record<string, { count: number; why: string }> = {
   'components/sidebar/useRailFlyout.ts': {
     count: 1,
     why: 'RAIL_FLYOUT_DWELL_MS: a pointer dwell, not a motion; the number coincides with the cap'
+  },
+  // lib/**, since W8-M1b: graces and dwells with a meaning of their own.
+  'lib/back.ts': {
+    count: 1,
+    why: 'VELOCITY_MEMORY_MS: how recent the last progress must be for its velocity to count as a fling (Android’s PredictiveBack.kt keeps the same figure) – a sampling window, not a motion; the number coincides with the state token'
+  },
+  'lib/gestures/dock.ts': {
+    count: 1,
+    why: 'an 800 ms grace for the browser state to carry the bar’s new edge before the carry hands back anyway: a wait on a reply, not a motion'
+  },
+  'lib/gestures/stage.ts': {
+    count: 1,
+    why: 'an 800 ms grace for the browser state to carry the new active tab before the stage hands back anyway: a wait on a reply, not a motion'
+  },
+  'lib/keyRelease.ts': {
+    count: 1,
+    why: 'KEY_RELEASE_TIMEOUT_MS: how long a key may stay down before what waits for its release runs anyway – a timeout, not a motion; the number coincides with the cap'
+  },
+  'lib/menuPath.ts': {
+    count: 1,
+    why: 'HOVER_TO_OPEN_MS: the pointer’s rest on a folder or submenu row before its panel opens (Chrome, Firefox) – a dwell, not a motion; the number coincides with the cap'
+  },
+  'lib/tabStripLayout.ts': {
+    count: 1,
+    why: 'STRIP_HOLD_MS: how long the strip’s widths hold after the pointer leaves the band before the re-layout – a grace, not a motion; the number coincides with the state token'
   }
 }
 
@@ -282,13 +309,16 @@ const all = files.flatMap(findings)
 const describeFound = (f: Found): string => `${f.file}:${f.line} [${f.kind}] ${f.text}`
 
 describe('the chrome’s sources: one motion vocabulary (motion spec §1)', () => {
-  it('the walk reaches the components and the motion library, and leaves the owners out', () => {
+  it('the walk reaches the components and the library, and leaves the owners out', () => {
     const rels = files.map(rel)
     expect(rels).toContain('components/content/PageBandHost.tsx')
     expect(rels).toContain('components/band/PageEdgeBand.tsx')
     expect(rels).toContain('components/messages/useMessageMotion.ts')
     expect(rels).toContain('lib/motion/fade.ts')
     expect(rels).toContain('lib/motion/flip.ts')
+    expect(rels).toContain('lib/drag.ts')
+    expect(rels).toContain('lib/gestures/dock.ts')
+    expect(rels).toContain('lib/iph.ts')
     expect(rels).not.toContain('lib/motion/tokens.ts')
     expect(rels).not.toContain('lib/motion/spring.ts')
     expect(rels.some((r) => r.includes('__tests__'))).toBe(false)

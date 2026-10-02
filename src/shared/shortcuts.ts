@@ -1,3 +1,4 @@
+import { S } from './strings'
 import type {
   FormFactor,
   KeyBinding,
@@ -307,16 +308,20 @@ interface Spec {
   extra?: Chord[]
 }
 
+/**
+ * One action of the table. Its words are the string table's (`strings/actions.ts`, §9 item 10):
+ * `label` is `S.menu(action)`, the Settings page's Title Case; the system helper's sentence form
+ * is `S.title(action)`, derived (§9.1) or the entry's own `sentence` where the helper says more
+ * than the menu's words ("Jump to the next Space"). No row types a label of its own.
+ */
 interface Def {
   id: string
   action: ShortcutAction
   group: ShortcutGroup
-  label: string
   /**
-   * The system helper's sentence-form words (`Shortcut.helperLabel`), where they differ from
-   * `label`; the rows Chrome has print Chrome's own words there and carry none. Chrome's register
-   * (§9.1): verb-first, no ellipsis, sentence case – a product's name keeps its capitals, 'Space'
-   * its capital in any position, 'split view' is a common noun written lower-case.
+   * The helper's words (`Shortcut.helperLabel`) where they are to differ from the table's
+   * sentence face. The table's `sentence` is where such words live, so no row sets this; the slot
+   * stays as the row shape Android's twin reads (`ShortcutHelperTest`).
    */
   helperLabel?: string
   unsupported?: boolean
@@ -373,7 +378,6 @@ const DEFS: Def[] = [
     id: 'zen-compact-mode-toggle',
     action: 'compact.toggle',
     group: 'zen-compact-mode',
-    label: 'Toggle Compact Mode',
     layouts: ['desktop'],
     zen: { key: 's', mods: ACCEL },
     chrome: zenFeature('s')
@@ -382,8 +386,6 @@ const DEFS: Def[] = [
     id: 'zen-compact-mode-show-sidebar',
     action: 'compact.toggleSidebar',
     group: 'zen-compact-mode',
-    label: 'Toggle Floating Sidebar',
-    helperLabel: 'Toggle floating sidebar',
     layouts: ['desktop'],
     zen: { key: 's', mods: ACCEL_ALT },
     chrome: zenFeature('s', true)
@@ -394,15 +396,12 @@ const DEFS: Def[] = [
     id: `zen-workspace-switch-${n}`,
     action: `space.switch${n}` as ShortcutAction,
     group: 'zen-workspace',
-    label: `Switch to Space ${n}`,
     ...both({ key: n === 10 ? '0' : String(n), mods: CTRL, platforms: MAC })
   })),
   {
     id: 'zen-workspace-forward',
     action: 'space.next',
     group: 'zen-workspace',
-    label: 'Next Space',
-    helperLabel: 'Jump to the next Space',
     zen: { key: 'ArrowRight', mods: ACCEL_ALT },
     chrome: zenFeature('ArrowRight')
   },
@@ -410,8 +409,6 @@ const DEFS: Def[] = [
     id: 'zen-workspace-backward',
     action: 'space.prev',
     group: 'zen-workspace',
-    label: 'Previous Space',
-    helperLabel: 'Jump to the previous Space',
     zen: { key: 'ArrowLeft', mods: ACCEL_ALT },
     chrome: zenFeature('ArrowLeft')
   },
@@ -421,8 +418,6 @@ const DEFS: Def[] = [
     id: 'zen-close-all-unpinned-tabs',
     action: 'space.closeUnpinned',
     group: 'zen-workspace',
-    label: 'Close All Unpinned Tabs',
-    helperLabel: 'Close all unpinned tabs',
     destructive: true,
     zen: { key: 'k', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('k', true)
@@ -432,8 +427,6 @@ const DEFS: Def[] = [
     id: 'zen-workspace-create',
     action: 'space.new',
     group: 'zen-workspace',
-    label: 'Create New Space',
-    helperLabel: 'Create new Space',
     ...both(UNBOUND)
   },
 
@@ -442,8 +435,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-grid',
     action: 'split.grid',
     group: 'zen-split-view',
-    label: 'Toggle Split View Grid',
-    helperLabel: 'Toggle split view grid',
     zen: { key: 'g', mods: ACCEL_ALT },
     chrome: zenFeature('g')
   },
@@ -451,8 +442,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-vertical',
     action: 'split.vertical',
     group: 'zen-split-view',
-    label: 'Toggle Split View Vertical',
-    helperLabel: 'Toggle split view vertical',
     zen: { key: 'v', mods: ACCEL_ALT },
     chrome: zenFeature('v')
   },
@@ -460,8 +449,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-horizontal',
     action: 'split.horizontal',
     group: 'zen-split-view',
-    label: 'Toggle Split View Horizontal',
-    helperLabel: 'Toggle split view horizontal',
     zen: { key: 'h', mods: ACCEL_ALT },
     chrome: zenFeature('h')
   },
@@ -469,8 +456,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-unsplit',
     action: 'split.unsplit',
     group: 'zen-split-view',
-    label: 'Unsplit View',
-    helperLabel: 'Unsplit view',
     zen: { key: 'u', mods: ACCEL_ALT },
     chrome: zenFeature('u')
   },
@@ -478,8 +463,6 @@ const DEFS: Def[] = [
     id: 'zen-new-empty-split-view',
     action: 'split.newEmpty',
     group: 'zen-split-view',
-    label: 'New Empty Split View',
-    helperLabel: 'Open a new empty split view',
     ...both({ key: '*', mods: ACCEL_SHIFT })
   },
   {
@@ -489,8 +472,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-next-pane',
     action: 'split.nextPane',
     group: 'zen-split-view',
-    label: 'Next Split Pane',
-    helperLabel: 'Jump to the next split pane',
     zen: { key: 'ArrowRight', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('ArrowRight', true)
   },
@@ -498,8 +479,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-previous-pane',
     action: 'split.prevPane',
     group: 'zen-split-view',
-    label: 'Previous Split Pane',
-    helperLabel: 'Jump to the previous split pane',
     zen: { key: 'ArrowLeft', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('ArrowLeft', true)
   },
@@ -509,8 +488,6 @@ const DEFS: Def[] = [
     id: 'zen-split-view-swap',
     action: 'split.swap',
     group: 'zen-split-view',
-    label: 'Swap Split Panes',
-    helperLabel: 'Swap split panes',
     ...both(UNBOUND)
   },
 
@@ -519,8 +496,6 @@ const DEFS: Def[] = [
     id: 'zen-copy-url',
     action: 'tab.copyUrl',
     group: 'zen-other',
-    label: 'Copy Current URL',
-    helperLabel: 'Copy current URL',
     zen: { key: 'c', mods: ACCEL_SHIFT },
     chrome: zenFeature('c')
   },
@@ -528,8 +503,6 @@ const DEFS: Def[] = [
     id: 'zen-copy-url-markdown',
     action: 'tab.copyUrlMarkdown',
     group: 'zen-other',
-    label: 'Copy Current URL as Markdown',
-    helperLabel: 'Copy current URL as Markdown',
     zen: { key: 'c', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('c', true)
   },
@@ -537,8 +510,6 @@ const DEFS: Def[] = [
     id: 'zen-toggle-pin-tab',
     action: 'tab.togglePin',
     group: 'zen-other',
-    label: 'Pin / Unpin Tab',
-    helperLabel: 'Pin or unpin tab',
     zen: { key: 'd', mods: ACCEL_SHIFT },
     chrome: zenFeature('p')
   },
@@ -546,8 +517,6 @@ const DEFS: Def[] = [
     id: 'zen-pinned-tab-reset-shortcut',
     action: 'tab.resetPinned',
     group: 'zen-other',
-    label: 'Reset Pinned Tab',
-    helperLabel: 'Reset pinned tab',
     destructive: true,
     ...both(UNBOUND)
   },
@@ -555,15 +524,12 @@ const DEFS: Def[] = [
     id: 'zen-toggle-sidebar',
     action: 'sidebar.toggle',
     group: 'zen-other',
-    label: 'Toggle Sidebar',
-    helperLabel: 'Toggle sidebar',
     ...both(UNBOUND)
   },
   {
     id: 'zen-glance-expand',
     action: 'glance.expand',
     group: 'zen-other',
-    label: 'Expand Glance',
     zen: { key: 'o', mods: ACCEL },
     chrome: zenFeature('o')
   },
@@ -571,8 +537,6 @@ const DEFS: Def[] = [
     id: 'zen-new-unsynced-window',
     action: 'window.newUnsynced',
     group: 'zen-other',
-    label: 'New Blank Window',
-    helperLabel: 'Open a new blank window',
     zen: { key: 'n', mods: ACCEL_SHIFT },
     chrome: zenFeature('n')
   },
@@ -582,14 +546,12 @@ const DEFS: Def[] = [
     id: 'key_newNavigatorTab',
     action: 'tab.new',
     group: 'windowAndTabManagement',
-    label: 'New Tab',
     ...both({ key: 't', mods: ACCEL })
   },
   {
     id: 'key_close',
     action: 'tab.close',
     group: 'windowAndTabManagement',
-    label: 'Close Tab',
     destructive: true,
     zen: { key: 'w', mods: ACCEL, extra: [{ key: 'F4', mods: ACCEL }] },
     chrome: { key: 'w', mods: ACCEL, extra: [{ key: 'F4', mods: CTRL, platforms: WINLIN }] }
@@ -598,7 +560,6 @@ const DEFS: Def[] = [
     id: 'key_undoCloseTab',
     action: 'tab.reopenClosed',
     group: 'windowAndTabManagement',
-    label: 'Reopen Closed Tab',
     ...both({ key: 't', mods: ACCEL_SHIFT })
   },
   {
@@ -606,8 +567,6 @@ const DEFS: Def[] = [
     id: 'zen-duplicate-tab',
     action: 'tab.duplicate',
     group: 'windowAndTabManagement',
-    label: 'Duplicate Tab',
-    helperLabel: 'Duplicate tab',
     zen: UNBOUND,
     chrome: { key: 'k', mods: ACCEL_SHIFT }
   },
@@ -616,7 +575,6 @@ const DEFS: Def[] = [
     id: 'key_tabSearch',
     action: 'tab.search',
     group: 'windowAndTabManagement',
-    label: 'Search Tabs',
     zen: UNBOUND,
     chrome: { key: 'a', mods: ACCEL_SHIFT }
   },
@@ -624,14 +582,12 @@ const DEFS: Def[] = [
     id: 'key_newNavigator',
     action: 'window.new',
     group: 'windowAndTabManagement',
-    label: 'New Window',
     ...both({ key: 'n', mods: ACCEL })
   },
   {
     id: 'key_privatebrowsing',
     action: 'window.newPrivate',
     group: 'windowAndTabManagement',
-    label: 'New Private Window',
     zen: { key: 'p', mods: ACCEL_SHIFT },
     chrome: { key: 'n', mods: ACCEL_SHIFT }
   },
@@ -639,7 +595,6 @@ const DEFS: Def[] = [
     id: 'key_closeWindow',
     action: 'window.close',
     group: 'windowAndTabManagement',
-    label: 'Close Window',
     destructive: true,
     ...both({ key: 'w', mods: ACCEL_SHIFT })
   },
@@ -647,8 +602,6 @@ const DEFS: Def[] = [
     id: 'key_minimizeWindow',
     action: 'window.minimize',
     group: 'windowAndTabManagement',
-    label: 'Minimise Window',
-    helperLabel: 'Minimise window',
     zen: UNBOUND,
     chrome: { key: 'm', mods: META, platforms: MAC }
   },
@@ -660,8 +613,6 @@ const DEFS: Def[] = [
     id: 'key_nameWindow',
     action: 'window.name',
     group: 'windowAndTabManagement',
-    label: 'Name Window…',
-    helperLabel: 'Name window',
     layouts: ['desktop'],
     ...both(UNBOUND)
   },
@@ -671,8 +622,6 @@ const DEFS: Def[] = [
     id: 'zen-duplicate-window',
     action: 'window.duplicate',
     group: 'windowAndTabManagement',
-    label: 'Duplicate Window',
-    helperLabel: 'Duplicate window',
     ...both(UNBOUND)
   },
   {
@@ -680,7 +629,6 @@ const DEFS: Def[] = [
     id: 'key_quitApplication',
     action: 'app.quit',
     group: 'windowAndTabManagement',
-    label: 'Quit',
     destructive: true,
     zen: { key: 'q', mods: ACCEL },
     chrome: { key: 'q', mods: ACCEL_SHIFT, perPlatform: { darwin: { key: 'q', mods: META } } }
@@ -689,8 +637,6 @@ const DEFS: Def[] = [
     id: 'key_appMenu',
     action: 'menu.app',
     group: 'windowAndTabManagement',
-    label: 'Open Application Menu',
-    helperLabel: 'Open application menu',
     zen: { key: 'F10', platforms: WINLIN, extra: [{ key: 'f', mods: ALT }] },
     chrome: {
       key: 'f',
@@ -703,7 +649,6 @@ const DEFS: Def[] = [
     id: 'key_nextTab',
     action: 'tab.next',
     group: 'windowAndTabManagement',
-    label: 'Next Tab',
     zen: { key: 'Tab', mods: CTRL, extra: [{ key: 'PageDown', mods: ACCEL }] },
     chrome: {
       key: 'Tab',
@@ -718,7 +663,6 @@ const DEFS: Def[] = [
     id: 'key_prevTab',
     action: 'tab.prev',
     group: 'windowAndTabManagement',
-    label: 'Previous Tab',
     zen: { key: 'Tab', mods: CTRL_SHIFT, extra: [{ key: 'PageUp', mods: ACCEL }] },
     chrome: {
       key: 'Tab',
@@ -733,7 +677,6 @@ const DEFS: Def[] = [
     id: `key_selectTab${n}`,
     action: `tab.select${n}` as ShortcutAction,
     group: 'windowAndTabManagement',
-    label: `Select Tab ${n}`,
     zen: {
       key: String(n),
       mods: ALT,
@@ -748,7 +691,6 @@ const DEFS: Def[] = [
     id: 'key_selectLastTab',
     action: 'tab.selectLast',
     group: 'windowAndTabManagement',
-    label: 'Select Last Tab',
     zen: {
       key: '9',
       mods: ALT,
@@ -760,8 +702,6 @@ const DEFS: Def[] = [
     id: 'key_moveTabBackward',
     action: 'tab.moveBackward',
     group: 'windowAndTabManagement',
-    label: 'Move Tab Up',
-    helperLabel: 'Move tab up',
     zen: { key: 'PageUp', mods: ACCEL_SHIFT },
     chrome: {
       key: 'PageUp',
@@ -773,8 +713,6 @@ const DEFS: Def[] = [
     id: 'key_moveTabForward',
     action: 'tab.moveForward',
     group: 'windowAndTabManagement',
-    label: 'Move Tab Down',
-    helperLabel: 'Move tab down',
     zen: { key: 'PageDown', mods: ACCEL_SHIFT },
     chrome: {
       key: 'PageDown',
@@ -786,16 +724,12 @@ const DEFS: Def[] = [
     id: 'key_moveTabToStart',
     action: 'tab.moveToStart',
     group: 'windowAndTabManagement',
-    label: 'Move Tab to Start',
-    helperLabel: 'Move tab to start',
     ...both({ key: 'Home', mods: ACCEL_SHIFT })
   },
   {
     id: 'key_moveTabToEnd',
     action: 'tab.moveToEnd',
     group: 'windowAndTabManagement',
-    label: 'Move Tab to End',
-    helperLabel: 'Move tab to end',
     ...both({ key: 'End', mods: ACCEL_SHIFT })
   },
 
@@ -807,7 +741,6 @@ const DEFS: Def[] = [
     id: 'goBackKb',
     action: 'nav.back',
     group: 'navigation',
-    label: 'Back',
     zen: { key: 'ArrowLeft', mods: ALT, perPlatform: { darwin: { key: '[', mods: META } } },
     chrome: {
       key: 'ArrowLeft',
@@ -820,7 +753,6 @@ const DEFS: Def[] = [
     id: 'goForwardKb',
     action: 'nav.forward',
     group: 'navigation',
-    label: 'Forward',
     zen: { key: 'ArrowRight', mods: ALT, perPlatform: { darwin: { key: ']', mods: META } } },
     chrome: {
       key: 'ArrowRight',
@@ -833,14 +765,12 @@ const DEFS: Def[] = [
     id: 'key_reload',
     action: 'nav.reload',
     group: 'navigation',
-    label: 'Reload',
     ...both({ key: 'r', mods: ACCEL, extra: [{ key: 'F5' }] })
   },
   {
     id: 'key_reload_skip_cache',
     action: 'nav.reloadSkipCache',
     group: 'navigation',
-    label: 'Reload (Override Cache)',
     zen: { key: 'r', mods: ACCEL_SHIFT, extra: [{ key: 'F5', mods: ACCEL }] },
     chrome: {
       key: 'r',
@@ -855,7 +785,6 @@ const DEFS: Def[] = [
     id: 'goHome',
     action: 'nav.home',
     group: 'navigation',
-    label: 'Home',
     zen: { key: 'Home', mods: ALT },
     chrome: { key: 'Home', mods: ALT, perPlatform: { darwin: { key: 'h', mods: META_SHIFT } } }
   },
@@ -866,7 +795,6 @@ const DEFS: Def[] = [
     id: 'key_stop',
     action: 'nav.stop',
     group: 'navigation',
-    label: 'Stop',
     ...both({ perPlatform: { darwin: { key: '.', mods: META } } })
   },
   {
@@ -875,16 +803,12 @@ const DEFS: Def[] = [
     id: 'key_focusNextPane',
     action: 'focus.nextPane',
     group: 'navigation',
-    label: 'Focus Next Pane',
-    helperLabel: 'Focus next pane',
     ...both({ key: 'F6' })
   },
   {
     id: 'key_focusPreviousPane',
     action: 'focus.prevPane',
     group: 'navigation',
-    label: 'Focus Previous Pane',
-    helperLabel: 'Focus previous pane',
     ...both({ key: 'F6', mods: SHIFT })
   },
   {
@@ -892,16 +816,12 @@ const DEFS: Def[] = [
     id: 'key_focusToolbar',
     action: 'focus.toolbar',
     group: 'navigation',
-    label: 'Focus Toolbar',
-    helperLabel: 'Focus toolbar',
     ...both({ key: 't', mods: ALT_SHIFT, platforms: WINLIN })
   },
   {
     id: 'key_focusBookmarksBar',
     action: 'focus.bookmarksBar',
     group: 'navigation',
-    label: 'Focus Bookmarks Bar',
-    helperLabel: 'Focus Bookmarks bar',
     ...both({ key: 'b', mods: ALT_SHIFT, platforms: WINLIN })
   },
 
@@ -911,7 +831,6 @@ const DEFS: Def[] = [
     id: 'focusURLBar',
     action: 'urlbar.focus',
     group: 'searchAndFind',
-    label: 'Focus Address Bar',
     ...both({
       key: 'l',
       mods: ACCEL,
@@ -925,7 +844,6 @@ const DEFS: Def[] = [
     id: 'key_search',
     action: 'urlbar.search',
     group: 'searchAndFind',
-    label: 'Web Search',
     zen: { key: 'k', mods: ACCEL, extra: [{ key: 'e', mods: ACCEL }] },
     chrome: {
       key: 'k',
@@ -941,31 +859,24 @@ const DEFS: Def[] = [
     id: 'key_find',
     action: 'find.open',
     group: 'searchAndFind',
-    label: 'Find in Page',
     ...both({ key: 'f', mods: ACCEL })
   },
   {
     id: 'key_findAgain',
     action: 'find.next',
     group: 'searchAndFind',
-    label: 'Find Next',
-    helperLabel: 'Find next',
     ...both({ key: 'g', mods: ACCEL, extra: [{ key: 'F3' }] })
   },
   {
     id: 'key_findPrevious',
     action: 'find.prev',
     group: 'searchAndFind',
-    label: 'Find Previous',
-    helperLabel: 'Find previous',
     ...both({ key: 'g', mods: ACCEL_SHIFT, extra: [{ key: 'F3', mods: SHIFT }] })
   },
   {
     id: 'key_findSelection',
     action: 'find.useSelection',
     group: 'searchAndFind',
-    label: 'Use Selection for Find',
-    helperLabel: 'Use selection for find',
     zen: UNBOUND,
     chrome: { key: 'e', mods: META, platforms: MAC }
   },
@@ -975,7 +886,6 @@ const DEFS: Def[] = [
     id: 'key_savePage',
     action: 'page.savePage',
     group: 'pageOperations',
-    label: 'Save Page As…',
     zen: { key: 's', mods: ACCEL_ALT_SHIFT },
     chrome: { key: 's', mods: ACCEL }
   },
@@ -983,8 +893,6 @@ const DEFS: Def[] = [
     id: 'openFileKb',
     action: 'page.openFile',
     group: 'pageOperations',
-    label: 'Open File…',
-    helperLabel: 'Open file',
     zen: UNBOUND,
     chrome: { key: 'o', mods: ACCEL }
   },
@@ -993,7 +901,6 @@ const DEFS: Def[] = [
     id: 'printKb',
     action: 'page.printPreview',
     group: 'pageOperations',
-    label: 'Print…',
     ...both({ key: 'p', mods: ACCEL })
   },
   {
@@ -1002,8 +909,6 @@ const DEFS: Def[] = [
     id: 'printSystemKb',
     action: 'page.print',
     group: 'pageOperations',
-    label: 'Print Using System Dialog…',
-    helperLabel: 'Print using system dialog',
     zen: UNBOUND,
     chrome: { key: 'p', mods: ACCEL_SHIFT, perPlatform: { darwin: { key: 'p', mods: META_ALT } } }
   },
@@ -1014,7 +919,6 @@ const DEFS: Def[] = [
     id: 'key_viewSource',
     action: 'page.viewSource',
     group: 'pageOperations',
-    label: 'View Page Source',
     unsupportedOn: ['android'],
     zen: { key: 'u', mods: ACCEL },
     chrome: { key: 'u', mods: ACCEL, perPlatform: { darwin: { key: 'u', mods: META_ALT } } }
@@ -1023,15 +927,12 @@ const DEFS: Def[] = [
     id: 'key_fullScreen',
     action: 'page.fullscreen',
     group: 'pageOperations',
-    label: 'Toggle Fullscreen',
-    helperLabel: 'Toggle fullscreen',
     ...both({ key: 'F11', perPlatform: { darwin: { key: 'f', mods: META_CTRL } } })
   },
   {
     id: 'key_toggleReaderMode',
     action: 'page.readerMode',
     group: 'pageOperations',
-    label: 'Toggle Reader View',
     zen: { key: 'r', mods: ACCEL_ALT },
     chrome: { key: 'r', mods: ACCEL_ALT, extra: [{ key: 'F9', platforms: WINLIN }] }
   },
@@ -1039,8 +940,6 @@ const DEFS: Def[] = [
     id: 'key_togglePictureInPicture',
     action: 'page.pip',
     group: 'pageOperations',
-    label: 'Toggle Picture-in-Picture',
-    helperLabel: 'Toggle picture-in-picture',
     ...both({ key: ']', mods: ACCEL_SHIFT })
   },
   // Chrome's and Edge's F7 (CT-34): the one key in both presets, so a switcher's habit holds.
@@ -1048,7 +947,6 @@ const DEFS: Def[] = [
     id: 'key_caretBrowsing',
     action: 'page.caretBrowsing',
     group: 'pageOperations',
-    label: 'Toggle Caret Browsing',
     ...both({ key: 'F7' })
   },
   // Ctrl+Shift+S is Firefox's Take Screenshot and Edge's Web capture; Chrome has no chord for
@@ -1058,8 +956,6 @@ const DEFS: Def[] = [
     id: 'key_screenshot',
     action: 'page.screenshot',
     group: 'pageOperations',
-    label: 'Take Screenshot',
-    helperLabel: 'Take screenshot',
     zen: { key: 's', mods: ACCEL_SHIFT },
     chrome: UNBOUND
   },
@@ -1067,8 +963,6 @@ const DEFS: Def[] = [
     id: 'key_webCapture',
     action: 'capture.start',
     group: 'pageOperations',
-    label: 'Screenshot…',
-    helperLabel: 'Open the screenshot overlay',
     // The desktop's overlay; the touch shells' Ctrl+Shift+S takes their screenshot instead
     // (`capture.start` falls through to `page.screenshot` there), so their listings leave the
     // row out rather than name a surface the chord does not open.
@@ -1080,8 +974,6 @@ const DEFS: Def[] = [
     id: 'key_toggleMute',
     action: 'page.toggleMute',
     group: 'pageOperations',
-    label: 'Mute / Unmute Tab',
-    helperLabel: 'Mute or unmute tab',
     zen: { key: 'm', mods: ACCEL },
     chrome: { key: 'm', mods: ACCEL, perPlatform: { darwin: { key: 'm', mods: META_CTRL } } }
   },
@@ -1089,8 +981,6 @@ const DEFS: Def[] = [
     id: 'key_emailLink',
     action: 'page.emailLink',
     group: 'pageOperations',
-    label: 'Email Page Link…',
-    helperLabel: 'Email page link',
     zen: UNBOUND,
     chrome: { key: 'i', mods: META_SHIFT, platforms: MAC }
   },
@@ -1098,7 +988,6 @@ const DEFS: Def[] = [
     id: 'key_preferencesCmdMac',
     action: 'settings.open',
     group: 'pageOperations',
-    label: 'Settings',
     ...both({ key: ',', mods: META, platforms: MAC })
   },
 
@@ -1107,7 +996,6 @@ const DEFS: Def[] = [
     id: 'key_fullZoomEnlarge',
     action: 'zoom.in',
     group: 'mediaAndDisplay',
-    label: 'Zoom In',
     ...both({
       key: '=',
       mods: ACCEL,
@@ -1121,14 +1009,12 @@ const DEFS: Def[] = [
     id: 'key_fullZoomReduce',
     action: 'zoom.out',
     group: 'mediaAndDisplay',
-    label: 'Zoom Out',
     ...both({ key: '-', mods: ACCEL })
   },
   {
     id: 'key_fullZoomReset',
     action: 'zoom.reset',
     group: 'mediaAndDisplay',
-    label: 'Reset Zoom',
     ...both({ key: '0', mods: ACCEL })
   },
 
@@ -1137,7 +1023,6 @@ const DEFS: Def[] = [
     id: 'addBookmarkAsKb',
     action: 'bookmark.add',
     group: 'historyAndBookmarks',
-    label: 'Bookmark This Page',
     ...both({ key: 'd', mods: ACCEL })
   },
   {
@@ -1145,8 +1030,6 @@ const DEFS: Def[] = [
     id: 'bookmarkAllTabsKb',
     action: 'bookmark.allTabs',
     group: 'historyAndBookmarks',
-    label: 'Bookmark All Tabs',
-    helperLabel: 'Bookmark all tabs',
     zen: UNBOUND,
     chrome: { key: 'd', mods: ACCEL_SHIFT }
   },
@@ -1154,8 +1037,6 @@ const DEFS: Def[] = [
     id: 'viewBookmarksSidebarKb',
     action: 'bookmark.sidebar',
     group: 'historyAndBookmarks',
-    label: 'Show Bookmarks',
-    helperLabel: 'Show bookmarks',
     ...both({ key: 'b', mods: ACCEL })
   },
   {
@@ -1166,7 +1047,6 @@ const DEFS: Def[] = [
     id: 'viewBookmarksToolbarKb',
     action: 'bookmark.toggleBar',
     group: 'historyAndBookmarks',
-    label: 'Show / Hide Bookmarks Bar',
     layouts: ['desktop', 'tablet'],
     ...both({ key: 'b', mods: ACCEL_SHIFT })
   },
@@ -1174,7 +1054,6 @@ const DEFS: Def[] = [
     id: 'manBookmarkKb',
     action: 'bookmark.library',
     group: 'historyAndBookmarks',
-    label: 'Manage Bookmarks',
     zen: { key: 'o', mods: ACCEL_SHIFT },
     chrome: {
       key: 'o',
@@ -1187,7 +1066,6 @@ const DEFS: Def[] = [
     id: 'key_gotoHistory',
     action: 'history.sidebar',
     group: 'historyAndBookmarks',
-    label: 'Show History',
     ...both({ key: 'h', mods: ACCEL, perPlatform: { darwin: { key: 'y', mods: META } } })
   },
   {
@@ -1195,14 +1073,12 @@ const DEFS: Def[] = [
     id: 'key_clearBrowsingData',
     action: 'privacy.clearBrowsingData',
     group: 'historyAndBookmarks',
-    label: 'Delete Browsing Data…',
     ...both({ key: 'Delete', mods: ACCEL_SHIFT })
   },
   {
     id: 'key_openDownloads',
     action: 'downloads.open',
     group: 'historyAndBookmarks',
-    label: 'Show Downloads',
     zen: {
       key: 'y',
       mods: ACCEL_SHIFT,
@@ -1216,12 +1092,11 @@ const DEFS: Def[] = [
   // WebView's inspector is the desktop Chrome's remote one): the group's rows are unsupported
   // there until it has one – the chords route and say so, the Settings rows are disabled, the
   // system's shortcut helper leaves them out. Task Manager below is the desktop layout's by
-  // `layouts` already; Add-ons and Themes opens a page the tablet has.
+  // `layouts` already; Extensions and Mods opens a page the tablet has.
   {
     id: 'key_toggleToolbox',
     action: 'devtools.toggle',
     group: 'devTools',
-    label: 'Toggle Developer Tools',
     unsupportedOn: ['android'],
     zen: { key: 'i', mods: ACCEL_SHIFT, extra: [{ key: 'F12' }] },
     chrome: {
@@ -1235,7 +1110,6 @@ const DEFS: Def[] = [
     id: 'key_inspector',
     action: 'devtools.inspector',
     group: 'devTools',
-    label: 'Inspector',
     unsupportedOn: ['android'],
     zen: { key: 'l', mods: ACCEL_SHIFT },
     chrome: {
@@ -1249,8 +1123,6 @@ const DEFS: Def[] = [
     id: 'key_webconsole',
     action: 'devtools.console',
     group: 'devTools',
-    label: 'Web Console',
-    helperLabel: 'Web console',
     unsupportedOn: ['android'],
     zen: UNBOUND,
     chrome: { key: 'j', mods: ACCEL_SHIFT, perPlatform: { darwin: { key: 'j', mods: META_ALT } } }
@@ -1259,8 +1131,6 @@ const DEFS: Def[] = [
     id: 'key_browserConsole',
     action: 'devtools.browserConsole',
     group: 'devTools',
-    label: 'Browser Console',
-    helperLabel: 'Browser console',
     unsupportedOn: ['android'],
     zen: { key: 'j', mods: ACCEL_SHIFT },
     chrome: UNBOUND
@@ -1269,7 +1139,6 @@ const DEFS: Def[] = [
     id: 'key_taskManager',
     action: 'tasks.open',
     group: 'devTools',
-    label: 'Task Manager',
     // Chrome's chord in both presets (`shortcutReference.ts` resolves the row to this action);
     // the page is desktop-only, so the touch shells' listings leave the row out.
     layouts: ['desktop'],
@@ -1279,8 +1148,6 @@ const DEFS: Def[] = [
     id: 'key_openAddons',
     action: 'addons.open',
     group: 'devTools',
-    label: 'Add-ons and Themes',
-    helperLabel: 'Add-ons and themes',
     zen: { key: 'a', mods: ACCEL_SHIFT },
     chrome: UNBOUND
   },
@@ -1293,11 +1160,9 @@ const DEFS: Def[] = [
     id: 'key_reportIssue',
     action: 'help.reportIssue',
     group: 'devTools',
-    label: 'Report an Issue…',
     // The helper's register (TABLET-20): Chrome's own words for the row (`shortcutReference.ts`),
     // no ellipsis; desktop-only, so the phone's and tablet's helper never print it – the field
     // keeps the table's one-register audit whole.
-    helperLabel: 'Report an issue',
     layouts: ['desktop'],
     zen: UNBOUND,
     chrome: {
@@ -1335,22 +1200,79 @@ function resolveSpec(
   return { binding: primary, extraBindings }
 }
 
-/** The bindings of a preset on a platform, in display order. */
+/**
+ * The rows Chrome's keyboard-shortcuts helper has too. Android's helper prints Chrome's own words
+ * for them from its table (`ShortcutHelper.CHROME_ROWS`, with the Select Tab rows Chrome folds
+ * into one), so the core sends it none: the set mirrors that table, and `shortcutHelper.test.ts`
+ * reads the Kotlin to hold the two equal.
+ */
+export const CHROMES_HELPER_ROWS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
+  'window.new',
+  'window.close',
+  'tab.new',
+  'tab.reopenClosed',
+  'window.newPrivate',
+  'nav.reload',
+  'nav.reloadSkipCache',
+  'tab.close',
+  'tab.search',
+  'tab.next',
+  'tab.prev',
+  'tab.select1',
+  'tab.select2',
+  'tab.select3',
+  'tab.select4',
+  'tab.select5',
+  'tab.select6',
+  'tab.select7',
+  'tab.select8',
+  'tab.selectLast',
+  'urlbar.focus',
+  'urlbar.search',
+  'find.open',
+  'downloads.open',
+  'page.caretBrowsing',
+  'history.sidebar',
+  'nav.back',
+  'nav.forward',
+  'privacy.clearBrowsingData',
+  'bookmark.add',
+  'bookmark.library',
+  'bookmark.toggleBar',
+  'page.printPreview',
+  'page.savePage',
+  'zoom.in',
+  'zoom.out',
+  'zoom.reset',
+  'page.viewSource',
+  'devtools.toggle',
+  'tasks.open'
+])
+
+/**
+ * The bindings of a preset on a platform, in display order. Every row's words are the string
+ * table's: `label` is the act's menu face, the same on every platform (the shortcut reference
+ * keeps "Minimise Window" where the mac bar says "Minimize"); `helperLabel` is the sentence face
+ * Android's helper prints for Zenium's own rows, carried only where it differs from the label
+ * ("Switch to Space 3" and "Expand Glance" read the same in both registers).
+ */
 export function defaultShortcuts(
   platform: Platform,
   preset: ShortcutPreset = 'chrome'
 ): Shortcut[] {
   return DEFS.map((def) => {
     const resolved = resolveSpec(def[preset], platform)
+    const label = S.menu(def.action)
     const shortcut: Shortcut = {
       id: def.id,
       action: def.action,
       group: def.group,
-      label: def.label,
+      label,
       binding: resolved.binding,
       extraBindings: resolved.extraBindings
     }
-    if (def.helperLabel) shortcut.helperLabel = def.helperLabel
+    const helper = def.helperLabel ?? S.title(def.action)
+    if (!CHROMES_HELPER_ROWS.has(def.action) && helper !== label) shortcut.helperLabel = helper
     if (def.unsupported || def.unsupportedOn?.includes(platform)) shortcut.unsupported = true
     if (def.hidden) shortcut.hidden = true
     if (def.layouts) shortcut.layouts = [...def.layouts]

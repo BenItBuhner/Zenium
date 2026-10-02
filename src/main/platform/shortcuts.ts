@@ -69,9 +69,11 @@ export interface LauncherPaths {
 /**
  * Installed web apps on the desktop (MW-22): the launcher each OS understands – a Start menu and
  * desktop `.lnk` on Windows, a `.desktop` entry (applications menu and Desktop) on Linux, an
- * `.app` bundle under ~/Applications on macOS – running `zenium --app=<url>`, with the app's
- * icon rendered once from its manifest icon (or a letter tile) and written as PNG plus the ICO
- * or ICNS the shell wants. The icon and a manifest of what was written live under
+ * `.app` bundle under ~/Applications on macOS – running `zenium --app=<url>` (a window of the
+ * app's own) or, for a shortcut made with "Open as window" off (`request.openAsWindow` false),
+ * `zenium <url>` (a tab in the running Zenium, the second-instance path), with the app's icon
+ * rendered once from its manifest icon (or a letter tile) and written as PNG plus the ICO or
+ * ICNS the shell wants. The icon and a manifest of what was written live under
  * `<profile>/webapps/<slug>/`, so `unpin` can take it all away again. `pin` confirms to the core
  * as soon as the files are on disk, with the icon's `file:` URL for the app window's frame.
  */
@@ -110,12 +112,18 @@ export class ElectronShortcuts implements ShortcutHost {
         files: [pngPath],
         directories: []
       }
-      const command = launchCommand(request.url, {
-        execPath: this.deps.execPath ?? process.execPath,
-        isPackaged: this.deps.isPackaged ?? app.isPackaged,
-        appPath: this.deps.appPath ?? app.getAppPath(),
-        appImage: this.deps.appImage ?? process.env['APPIMAGE'] ?? null
-      })
+      // A request without the box (the phone sheet never reaches this host; the pill's popover
+      // installs an app) keeps the desktop's rule: a window.
+      const command = launchCommand(
+        request.url,
+        {
+          execPath: this.deps.execPath ?? process.execPath,
+          isPackaged: this.deps.isPackaged ?? app.isPackaged,
+          appPath: this.deps.appPath ?? app.getAppPath(),
+          appImage: this.deps.appImage ?? process.env['APPIMAGE'] ?? null
+        },
+        request.openAsWindow !== false
+      )
       switch (this.platform) {
         case 'win32':
           await this.writeWindows(request, appDir, icon, command, manifest)
@@ -234,7 +242,12 @@ export class ElectronShortcuts implements ShortcutHost {
       icon: icoPath,
       iconIndex: 0,
       description: request.url,
-      appUserModelId: ElectronShortcuts.appUserModelId(request.id)
+      // The taskbar group the launch lands in: the app's own for its window (`window.ts` sets
+      // the same id on it), the browser's for a shortcut that opens a tab in a browser window.
+      appUserModelId:
+        request.openAsWindow !== false
+          ? ElectronShortcuts.appUserModelId(request.id)
+          : APP_USER_MODEL_ID
     }
     const startMenuDir = join(this.paths.startMenuPrograms, LAUNCHER_FOLDER)
     await mkdir(startMenuDir, { recursive: true })

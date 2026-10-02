@@ -30,7 +30,9 @@ import { InstallPopoverLayer } from '../InstallPopover'
  * the popover leaves once it has settled; Cancel, Escape and a press outside report a cancelled
  * install and fold the popover back into the chip; the popover goes with its tab, cancelling an
  * install not yet taken. A page without an installable manifest keeps the "Create shortcut"
- * frame dialog (install/ShortcutDialog.tsx): a name field armed with the page's title, "Create".
+ * frame dialog (install/ShortcutDialog.tsx): a name field armed with the page's title, Chrome's
+ * "Open as window" box unchecked, "Create" – which carries the box as `webapp.pin`'s
+ * `openAsWindow` (W8-M3b).
  *
  * The same popover is the desktop's card for the core's install banner (`lib/installOffer.ts`;
  * Services' seed #42, the cooldown through the core): the layer claims the banner surface while
@@ -760,7 +762,7 @@ describe('the offer’s clock (motion spec §3.2, §10: the band’s offer clock
 })
 
 describe('the "Create shortcut" dialog for a page without an installable manifest', () => {
-  it('is the §9.5 frame dialog in Chrome’s wording (the Lead’s gate on #754): "Create shortcut?", the name field with the page title, no "Open as window" row until it has its two states, then Cancel | Create – with the field focused', () => {
+  it('is the §9.5 frame dialog in Chrome’s wording (the Lead’s gate on #754): "Create shortcut?", the name field with the page title, "Open as window" unchecked, then Cancel | Create – with the field focused', () => {
     uiStore.set({ install: PAGE_PROMPT })
     const el = render(layer(stateWith('t1')))
     expect(popover()).toBeNull()
@@ -773,17 +775,21 @@ describe('the "Create shortcut" dialog for a page without an installable manifes
     expect(field.value).toBe('A plain page')
     expect(dialog.querySelector('label')!.textContent).toBe('Name')
     expect(dialog.querySelector('.zen-v2-field-message')!.textContent).toBe('app.example')
-    // Chrome's "Open as window" check row is withheld (the Lead's ruling on the #754 seams):
-    // every shortcut opens as a window until `webapp.pin` carries the box's two states
-    // (W8-M3b), so the dialog shows no checkbox and no row under the name.
-    expect(dialog.querySelector('.zen-v2-check-row')).toBeNull()
-    expect(dialog.querySelector('input[type="checkbox"]')).toBeNull()
-    expect(dialog.textContent).not.toContain('Open as window')
-    // The order: the name row, then the footer.
+    // Chrome's "Open as window", a §9.23 check row under the name, unchecked as Chrome leaves
+    // it: the shortcut opens as a tab unless the user asks for a window (W8-M3b).
+    const row = dialog.querySelector<HTMLLabelElement>('.zen-v2-check-row')!
+    expect(row).not.toBeNull()
+    expect(row.textContent).toBe('Open as window')
+    const box = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(box.checked).toBe(false)
+    expect(box.disabled).toBe(false)
+    // The order: the name row, the check row, then the footer.
     const body = dialog.querySelector('.zen-install-dialog-body')!
     expect(body.contains(field)).toBe(true)
+    expect(body.contains(row)).toBe(true)
+    expect(field.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const footer = dialog.querySelector('.zen-install-dialog-footer')!
-    expect(body.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(row.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(buttons(dialog)).toEqual(['Cancel', 'Create'])
     const create = dialog.querySelector('[data-accept]')!
     expect(create.textContent).toBe('Create')
@@ -791,9 +797,14 @@ describe('the "Create shortcut" dialog for a page without an installable manifes
     // A form, not a confirm: the keyboard starts in the name field (Chrome's too), not on the
     // container (§5.7 is the destructive confirms').
     expect(document.activeElement).toBe(field)
+    // The box toggles with the user.
+    click(box)
+    expect(box.checked).toBe(true)
+    click(box)
+    expect(box.checked).toBe(false)
   })
 
-  it('"Create" pins through the core with the edited name, busy meanwhile, and the dialog leaves once it settled', async () => {
+  it('"Create" pins through the core with the edited name and the box as it stands – unchecked, a tab (`openAsWindow` false) – busy meanwhile, the box too, and the dialog leaves once it settled', async () => {
     let settlePin: (() => void) | null = null
     vi.mocked(cmd).mockImplementationOnce(
       () =>
@@ -809,10 +820,16 @@ describe('the "Create shortcut" dialog for a page without an installable manifes
       nativeValue.call(field, '  My   shortcut ')
       field.dispatchEvent(new Event('input', { bubbles: true }))
     })
+    const box = el.querySelector<HTMLInputElement>('input[type="checkbox"]')!
     const primary = el.querySelector<HTMLButtonElement>('[data-accept]')!
     click(primary)
-    expect(cmd).toHaveBeenCalledWith('webapp.pin', { tabId: 't1', title: 'My   shortcut' })
+    expect(cmd).toHaveBeenCalledWith('webapp.pin', {
+      tabId: 't1',
+      title: 'My   shortcut',
+      openAsWindow: false
+    })
     expect(primary.getAttribute('aria-busy')).toBe('true')
+    expect(box.disabled).toBe(true)
     click(primary)
     expect(cmd).toHaveBeenCalledTimes(1)
     expect(uiStore.get().install).not.toBeNull()
@@ -820,6 +837,33 @@ describe('the "Create shortcut" dialog for a page without an installable manifes
     await settle()
     expect(uiStore.get().install).toBeNull()
     expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+  })
+
+  it('"Open as window" checked, "Create" asks for a window of the shortcut’s own (`openAsWindow` true) – from the button and from Enter in the name field alike', async () => {
+    uiStore.set({ install: PAGE_PROMPT })
+    const el = render(layer(stateWith('t1')))
+    click(el.querySelector<HTMLInputElement>('input[type="checkbox"]')!)
+    click(el.querySelector<HTMLButtonElement>('[data-accept]')!)
+    expect(cmd).toHaveBeenCalledWith('webapp.pin', {
+      tabId: 't1',
+      title: 'A plain page',
+      openAsWindow: true
+    })
+    await settle()
+    expect(uiStore.get().install).toBeNull()
+
+    vi.mocked(cmd).mockClear()
+    uiStore.set({ install: PAGE_PROMPT })
+    rerender(layer(stateWith('t1')))
+    click(el.querySelector<HTMLInputElement>('input[type="checkbox"]')!)
+    keydown(el.querySelector('input:not([type="checkbox"])'), 'Enter')
+    expect(cmd).toHaveBeenCalledWith('webapp.pin', {
+      tabId: 't1',
+      title: 'A plain page',
+      openAsWindow: true
+    })
+    await settle()
+    expect(uiStore.get().install).toBeNull()
   })
 
   it('Cancel and Escape report a cancelled install and close the dialog', () => {

@@ -209,6 +209,7 @@ import { sanitizeFontSettings } from '../shared/fonts'
 import { sanitizeLanguages } from '../shared/languages'
 import { sanitizeToolbarPins } from '../shared/toolbarPins'
 import { formatWindowTitle } from '../shared/windowTitle'
+import { isShortcutRecord } from '../shared/webApp'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -252,6 +253,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.app',
   'tabsearch.open',
   'overview.open',
+  'overview.command',
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
@@ -921,30 +923,41 @@ export class Browser {
    * A web app in a standalone window of its own – `zenium --app=<url>`, what an installed app's
    * launcher runs (MW-23, Chrome's app window): no browser chrome, the app's name and icon on the
    * frame, one page that stays inside the app's scope (a navigation out of it opens in a browser
-   * tab, `TabManager.onWillNavigate`). The installed app whose scope holds `url` lends its name,
-   * icon and remembered bounds; a URL no app claims opens under its host's name with its origin
-   * as the scope. Hosts with one window open the URL as a tab instead. Returns the window, or
-   * null when the URL cannot be a page.
+   * tab, `TabManager.onWillNavigate`). The record lends its name, icon, id and remembered bounds:
+   * the one `appId` names (the core's own launches – `WebAppService.launch`, a share, the move
+   * into the window at install), else the one a launcher's `--app=<url>` is of
+   * (`WebAppService.appForLaunch`: the shortcut made for exactly `url`, else the installed app
+   * whose scope holds it). A shortcut has no scope, so its window is bounded as the window of a
+   * URL no app claims is, by the URL's origin; a URL no app claims opens under its host's name
+   * with its origin as the scope. Hosts with one window open the URL as a tab instead. Returns
+   * the window, or null when the URL cannot be a page.
    */
-  openAppWindow(url: string, opts: { from?: ZenWindow; post?: ImagePost } = {}): ZenWindow | null {
+  openAppWindow(
+    url: string,
+    opts: { from?: ZenWindow; post?: ImagePost; appId?: string } = {}
+  ): ZenWindow | null {
     if (!/^https?:\/\//i.test(url)) return null
     if (!this.state.capabilities.windows) {
       this.openExternalUrl(url)
       return null
     }
-    const record = this.webApps.pinnedFor(url)
+    const record =
+      opts.appId === undefined
+        ? this.webApps.appForLaunch(url)
+        : this.webApps.pinnedById(opts.appId)
+    const origin = new URL(url).origin + '/'
     const app: AppWindowInfo = record
       ? {
           name: record.name,
           icon: record.icon ?? null,
-          scope: record.scope,
+          scope: isShortcutRecord(record) ? origin : record.scope,
           appId: record.id,
           startUrl: record.startUrl
         }
       : {
           name: displayHost(url) || url,
           icon: null,
-          scope: new URL(url).origin + '/',
+          scope: origin,
           appId: null,
           startUrl: url
         }
@@ -3818,12 +3831,13 @@ export class Browser {
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title, tabId }, win) =>
         this.menus.showTopSiteContextMenu(url, title, tabId ?? null, win),
-      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) => {
+      'app.menu': ({ anchor, keyboard, mediaHubFolded, overview }, win) => {
         const show = (): void =>
           this.menus.showAppMenu(win, {
             anchor,
             keyboard: Boolean(keyboard),
-            mediaHubFolded: Boolean(mediaHubFolded)
+            mediaHubFolded: Boolean(mediaHubFolded),
+            overview
           })
         // The first build reads the host's app-restrictions bundle (the "Managed Browser" row,
         // TB-13) and no later one does; hosts without a bundle never wait. The one wait is
@@ -4502,9 +4516,10 @@ export class Browser {
       'spellcheck.removeWord': ({ word }) => this.spellcheck.removeWord(word),
       'spellcheck.openKeyboardSettings': () => this.spellcheck.openKeyboardSettings(),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
-      'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
+      'webapp.pin': ({ tabId, title, openAsWindow }, win) =>
+        this.webApps.pin(tabId, title, win, openAsWindow),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
-      'webapp.bannerShown': ({ tabId }) => this.webApps.bannerShown(tabId),
+      'webapp.bannerShown': ({ tabId, visible }) => this.webApps.bannerShown(tabId, visible),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
       'webapp.launch': ({ appId }, win) => this.webApps.launch(appId, win),
       'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),

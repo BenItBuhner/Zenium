@@ -111,6 +111,11 @@ class TabWebView(
         private set
     /** How far the page sits below the top of its frame during a pull-to-refresh (device px). */
     private var pullOffsetPx = 0f
+    /**
+     * How much of [pullOffsetPx] the layout carries under a standing page-edge band – the view
+     * placed that much lower and shorter (`TabHost.place`) – rather than the translation ([PageSeat]).
+     */
+    private var seatPx = 0
     /** The bar that hides on scroll: what of the touches and the scroll it hears (see `BarHideGesture`). */
     val barHide = BarHideGesture(this) { phase, payload -> host.barScroll(tabId, phase, payload) }
     /**
@@ -316,10 +321,25 @@ class TabWebView(
      * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
      * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
      *
-     * TODO(OS-40 part B): route `alert` / `confirm` / `prompt` of an agent-driven page to the
-     * agent (a `view.pageDialog` host event) once PR #742's `PageDialogService` is on main.
+     * The page's `alert` / `confirm` / `prompt` and its "Leave site?" on such a page are the
+     * agent's dialog policy's ([dialogPolicy], [DialogPolicyAnswer]): they cannot be
+     * round-tripped to the core while the page waits in the call – the chrome WebView's
+     * JavaScript shares the one renderer with the pages and is frozen for as long as the call
+     * lasts (`PageDialogsDemo` scenario 9) – so they are answered here at once from the policy
+     * the agent set ahead of the call, and reported to it after.
      */
     var agentDriven = false
+    /**
+     * The agent's dialog policy for this tab as the core resolved it (`view.setDialogPolicy`,
+     * said beside [agentDriven] at each of the agent's actions and whenever the policy changes;
+     * null when no rule covers the tab). A dialog of the page while an agent drives it hidden
+     * is answered from it at once, the default for a kind it leaves out, and reported to the
+     * core (`pageDialogAnswered`; [DialogPolicyAnswer.decide]); the tab in front of the user
+     * keeps its sheet. Never spent here: the core spends a `once` rule on the report and sends
+     * what is left. Cleared when the view is bound to another tab ([TabHost.bind],
+     * [TabHost.adopt]): the policy is the core's word on that tab, and comes with it.
+     */
+    var dialogPolicy: DialogPolicyAnswer.Policy? = null
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
@@ -732,6 +752,22 @@ class TabWebView(
         invalidateOutline()
     }
 
+    /**
+     * The page-edge band's seat (device px; `TabHost.place` has laid the view out a seat lower
+     * and shorter for it): that much of the pull channel's offset leaves the translation, so the
+     * page stays where it is on screen and sits in its frame at rest ([PageSeat]).
+     */
+    fun setBandSeat(px: Int) {
+        val seat = px.coerceAtLeast(0)
+        if (seat == seatPx) return
+        seatPx = seat
+        applyTranslation()
+        invalidateOutline()
+    }
+
+    /** The band's seat the view is laid out under right now, device px (diagnostics, the band demo). */
+    val bandSeatPx: Int get() = seatPx
+
     // --- the bar that hides on scroll ---------------------------------------------------------------
 
     /**
@@ -747,9 +783,12 @@ class TabWebView(
         invalidateOutline()
     }
 
-    /** The page sits below its frame's top during a pull and above it behind a hiding top bar. */
+    /**
+     * The page sits below its frame's top during a pull and above it behind a hiding top bar;
+     * the part of a band's offset the layout carries ([seatPx]) is not translated ([PageSeat]).
+     */
     private fun applyTranslation() {
-        translationY = pullOffsetPx + barShiftPx
+        translationY = PageSeat.translation(pullOffsetPx, seatPx, barShiftPx)
     }
 
     /**
@@ -852,27 +891,30 @@ class TabWebView(
 
     /**
      * Where the page's visible part starts and ends (device px): inside the covered strips,
-     * above the frame's bottom edge while the page sits lower during a pull, and above the strip
-     * the bar that hides on scroll still holds (see [setBarHideShift]).
+     * above the frame's bottom edge while the page hangs lower during a pull (or under a band's
+     * travel – a band seated at rest hangs nothing, [PageSeat.hangPx]), and above the strip the
+     * bar that hides on scroll still holds (see [setBarHideShift]).
      */
     private fun visibleTop(): Int = cover.topPx.coerceAtMost(height)
     private fun visibleBottom(): Int =
-        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx, barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
+        (height - maxOf(cover.bottomPx.toFloat(), PageSeat.hangPx(pullOffsetPx, seatPx), barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
 
     /**
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
      * The card's whole gesture (down, moves, up) is handed to the view under the page (the chrome
      * WebView, [PageHost.underlay]) in its own coordinates; the page never sees it. A host with
      * nothing under the page (a custom tab) covers nothing, so its pages keep every touch. The
-     * strip the page's own displacement opens is the chrome's too: held down by a band or a pull
-     * ([setPullOffset]) the page hangs over a bottom-docked bar – the parent hit-tests it by its
-     * translated rect – and the clipped strip there is the bar's row, not the page's; the copy
-     * carries the translation so the chrome sees the touch where the bar is ([StripTouchRule]).
+     * strip the page's own displacement opens is the chrome's too: held down by a pull or a
+     * band's travel ([setPullOffset]) the page hangs over a bottom-docked bar – the parent
+     * hit-tests it by its translated rect – and the clipped strip there is the bar's row, not the
+     * page's; the copy carries the translation so the chrome sees the touch where the bar is
+     * ([StripTouchRule]). A band seated at rest ([setBandSeat]) hangs nothing: the view ends at
+     * its frame's bottom edge and the bar's row is never its to receive.
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val chrome = host.underlay
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            coverTouch = StripTouchRule.chromesTouch(chrome != null, cover.active, pullOffsetPx > 0f, event.y, visibleTop(), visibleBottom())
+            coverTouch = StripTouchRule.chromesTouch(chrome != null, cover.active, PageSeat.hangPx(pullOffsetPx, seatPx) > 0f, event.y, visibleTop(), visibleBottom())
         }
         if (!coverTouch || chrome == null) return super.dispatchTouchEvent(event)
         val copy = MotionEvent.obtain(event)
@@ -1990,8 +2032,33 @@ class TabWebView(
      * tab forward for the dialog to wait on, as Chrome's would (`PageDialogSpec`). So is a
      * dialog of a page told to open no more this visit ([PageDialogVisit]); the checkbox that
      * tells it so is offered from its second dialog on.
+     *
+     * A page an agent drives hidden is the agent's dialog policy's first ([dialogPolicy],
+     * [DialogPolicyAnswer]): its dialog is answered from the policy at once – the default,
+     * Cancel, for a kind the policy leaves out, OK for an alert – and reported to the core for
+     * the agent's next result; the visit's count is not the agent's. The tab in front of the
+     * user is not the policy's, and takes the path above.
      */
     private fun pageDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
+        val policyAnswer = DialogPolicyAnswer.decide(
+            kind = kind,
+            policy = dialogPolicy,
+            agentDriven = agentDriven,
+            shown = isShown,
+            userUnload = unloadCheck != null,
+            url = frameUrl,
+            message = message,
+            defaultValue = defaultValue
+        )
+        if (policyAnswer is DialogPolicyAnswer.Decision.Answer) {
+            when {
+                !policyAnswer.accepted -> result.cancel()
+                result is JsPromptResult -> result.confirm(policyAnswer.text ?: "")
+                else -> result.confirm()
+            }
+            host.viewEvent(tabId, "pageDialogAnswered", policyAnswer.report.toJson())
+            return
+        }
         if (!isShown) {
             result.cancel()
             return
@@ -2024,16 +2091,21 @@ class TabWebView(
 
     /**
      * Whether the page may be unloaded (the core's `TabView.confirmUnload`, ahead of a tab close,
-     * the app's exit): its `beforeunload` handlers run, and one that objects has the core ask
-     * "Leave site?". `reply` hears true once the page may go – no objection, the user chose to
-     * leave, the page gone or silent for [UNLOAD_CHECK_TIMEOUT_MS] (a hung renderer holds no
-     * close up, as in Chrome) – and false when the user chose to stay, the page intact.
+     * the app's exit): its `beforeunload` handlers run. `reply` hears true once the page may go
+     * – no objection, an objection overruled, the page gone or silent for
+     * [UNLOAD_CHECK_TIMEOUT_MS] (a hung renderer holds no close up, as in Chrome). On a touch
+     * host it never hears false: a close path never asks "Leave site?" (§9.23,
+     * [UnloadObjection.SettleCheck]). The chrome's close paths run with Undo on the toast
+     * (`lib/closeUndo.ts`: the overview's cards, the strip's rows and tiles, the tab search's
+     * rows, the tablet menu's close rows, Back), and that Undo is the protection; the app's
+     * exit keeps the tab with its stack. A close that comes to the core past the chrome – a
+     * hardware keyboard's shortcut – has neither (named for the Lead in #759's gate addendum).
      *
      * The WebView runs the handlers for a navigation only, so the check is one: a load of
      * `about:blank` the page may object to, started past this view's own [loadUrl] (nothing of
      * it is the page's news: the callbacks it raises are dropped while the check is up, its
      * navigation report too). An objection comes as `onJsBeforeUnload` with the navigation held,
-     * and the answer either lets it go on or cancels it, the page as it was. A page that does
+     * and is let go on, the check settled as leave. A page that does
      * not object commits the blank document, and the view is destroyed at once (Electron's
      * `close({ waitForBeforeUnload })` does the same): the core hears `destroyed` and closes
      * the tab, or keeps it unloaded with its stack when the check was the app's exit. Its card
@@ -2061,13 +2133,12 @@ class TabWebView(
     }
 
     /**
-     * A `beforeunload` check in flight (see [confirmUnload]): what it answers to, the id of the
-     * objection the page raised under it (if it did), and whether its blank document started.
+     * A `beforeunload` check in flight (see [confirmUnload]): what it answers to, and whether
+     * its blank document started. A page that objects under it is not asked on a touch host
+     * ([UnloadObjection.SettleCheck]): the objection is overruled and the check settles as leave.
      */
     private inner class UnloadCheck(reply: (Boolean) -> Unit) {
         val replies = arrayListOf(reply)
-        /** The page objected under the check: its "Leave site?" is up (its answer settles the check). */
-        var asked = false
         /** The check's blank document has started: the page did not object, and is on its way out. */
         var navigated = false
         val timeout = Runnable { settle(leave = true, destroyView = false) }
@@ -2075,17 +2146,10 @@ class TabWebView(
         /**
          * The check is over: every asker hears `leave`, and with `destroyView` the view goes
          * (posted: never from inside the WebView's own callback), the core hearing `destroyed`.
-         * A "Leave site?" still up (the page went another way) goes with the check, its
-         * navigation let go or held as `leave` says.
          */
         fun settle(leave: Boolean, destroyView: Boolean) {
             if (unloadCheck !== this) return
             removeCallbacks(timeout)
-            if (asked) dialog?.let { up ->
-                dialog = null
-                up.sheet.dismiss()
-                if (leave) up.result.confirm() else up.result.cancel()
-            }
             val askers = replies.toList()
             replies.clear()
             if (destroyView) {
@@ -3429,11 +3493,25 @@ class TabWebView(
          * cancels it, the page as it was ([stayedOnPage]). A check waits as long as the question
          * is up: its silence timer stops here, and the answer settles it.
          *
-         * A page an agent drives is not asked ([UnloadObjection], OS-40): the WebView raises
-         * the question only after a user gesture, but an agent's input is trusted input, so a
-         * page it works on may object, and the question is the agent's, not the user's. For
-         * such a page the navigation goes on, with the bookkeeping a Leave runs, and a check in
-         * flight settles as leave, the view destroyed. A page the user drives asks as it always has.
+         * A page the user is not looking at never puts the sheet in front of them
+         * ([UnloadObjection], §9.23 on touch hosts): under a check – every touch close path –
+         * the leave is confirmed at once and the check settles as leave, the view destroyed
+         * (the chrome's close paths run with Undo on the toast, and that Undo is the
+         * protection; [confirmUnload] names the one that comes without it); a page an agent drives (OS-40:
+         * the WebView raises the question only after a user gesture, but an agent's input is
+         * trusted input, so a page it works on may object, and the question is the agent's,
+         * not the user's) is answered by the agent's dialog policy while hidden – leave by
+         * default, or stay – and reported to the agent ([DialogPolicyAnswer]), and leaves
+         * silently, with the bookkeeping a Leave runs, where the policy does not reach (its
+         * view drawn: a split's second pane, the frame of a show); a user page that
+         * is not in front – behind another tab, or under the tab overview – objecting to its
+         * own navigation, or to the reload the chrome asked of it, stays, the navigation
+         * cancelled as a Stay cancels it ([stayedOnPage]). The tab the user is on asks as it
+         * always has – its view drawn or not: the shown tab's view is GONE under the URL field
+         * and the app menu, and the typed address's load runs before the field closes, so the
+         * word is the tab's ([UnloadObjection.inFront]: `isShown`, or not [backgroundTab] – the
+         * host's own line between a cover's hide and a switch's, [BackgroundTabRule]), never
+         * the view's alone, which would cancel a typed URL or a menu Reload with no sheet.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3447,10 +3525,38 @@ class TabWebView(
                 result.confirm()
                 return true
             }
+            val reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+            // A page an agent drives hidden is its dialog policy's first ([DialogPolicyAnswer]):
+            // leave – the default – or stay, answered at once and reported to the core. Never
+            // under a check (the user's close is the user's: the table below settles it), never
+            // for the tab in front (its sheet is the user's). The bookkeeping is a Leave's or a
+            // Stay's, as at the sheet.
+            val policyAnswer = DialogPolicyAnswer.decide(
+                kind = if (reloadAsked) PageDialogKind.RELOAD else PageDialogKind.LEAVE,
+                policy = dialogPolicy,
+                agentDriven = agentDriven,
+                shown = isShown,
+                userUnload = check != null,
+                url = url,
+                message = message,
+                defaultValue = null
+            )
+            if (policyAnswer is DialogPolicyAnswer.Decision.Answer) {
+                if (policyAnswer.accepted) {
+                    result.confirm()
+                    leaveChosen(askedAt = now, chosenAt = now, reload = reloadAsked)
+                } else {
+                    result.cancel()
+                    stayedOnPage()
+                }
+                host.viewEvent(tabId, "pageDialogAnswered", policyAnswer.report.toJson())
+                return true
+            }
             val decision = UnloadObjection.decide(
+                inFront = UnloadObjection.inFront(shown = isShown, behind = backgroundTab),
                 agentDriven = agentDriven,
                 checkInFlight = check != null,
-                reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+                reloadAsked = reloadAsked
             )
             when (decision) {
                 is UnloadObjection.SettleCheck -> {
@@ -3462,15 +3568,16 @@ class TabWebView(
                     result.confirm()
                     leaveChosen(askedAt = now, chosenAt = now, reload = decision.reload)
                 }
+                is UnloadObjection.StayHidden -> {
+                    // A page behind another tab or under the overview: the page stays, as a Stay would leave it.
+                    result.cancel()
+                    stayedOnPage()
+                }
                 is UnloadObjection.Sheet -> {
-                    if (check != null) {
-                        removeCallbacks(check.timeout)
-                        check.asked = true
-                    }
+                    // Never under a check (a check settles above): the question is the tab in front's own navigation's.
                     val reload = decision.reload
                     showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
-                        if (check != null) check.settle(leave = leave, destroyView = leave)
-                        else if (!leave) stayedOnPage()
+                        if (!leave) stayedOnPage()
                         else leaveChosen(askedAt = now, chosenAt = SystemClock.uptimeMillis(), reload = reload)
                     }
                 }

@@ -21,6 +21,12 @@ interface Props {
   /** Whether the card heads or ends the stack: stacked banners touch, so only those corners round. */
   stackTop: boolean
   stackBottom: boolean
+  /**
+   * The stack is under the open tab overview (a touch host, §9.33): the card folds back up under
+   * the toolbar – or waits there, if it arrives now – and comes down when the overview closes.
+   * Out of reach meanwhile (`inert`): no focus, no touch, nothing read.
+   */
+  hidden?: boolean
   onMeasure: (id: number, height: number) => void
   /** How far out of the stack the card is on its way off (0 to 1), per frame while it travels. */
   onTravel: (progress: number) => void
@@ -37,6 +43,7 @@ export function BannerCard({
   slot,
   stackTop,
   stackBottom,
+  hidden = false,
   onMeasure,
   onTravel
 }: Props): JSX.Element {
@@ -45,6 +52,7 @@ export function BannerCard({
     slot,
     dirs: BANNER_DIRS,
     leaving: Boolean(banner.leaving),
+    hidden,
     onHold: (held) => holdBanner(banner.id, held),
     onSwipe: () => dismissBanner(banner.id, 'swipe'),
     onGone: () => forgetBanner(banner.id),
@@ -88,6 +96,7 @@ export function BannerCard({
       data-stack-top={stackTop || undefined}
       data-stack-bottom={stackBottom || undefined}
       role="status"
+      inert={hidden || undefined}
       {...handlers}
     >
       <div className="zen-message-text">
