@@ -101,12 +101,21 @@ export type UpdatePhase =
  */
 export type UpdateMode = 'in-place' | 'installer' | 'manual'
 
-/** How the running app was installed; decides the mode and the asset to fetch. */
+/**
+ * How the running app was installed; decides the mode and the asset to fetch.
+ * - `mac-signed`: a Developer ID build Squirrel.Mac can swap (none is published yet).
+ * - `mac-adhoc`: the published ad-hoc signed bundle, in a folder the user can write; the app
+ *   swaps it in place itself from the release's zip (`main/platform/updates.ts`).
+ * - `mac-unsigned`: a macOS bundle that cannot be swapped where it stands – running
+ *   translocated from a disk image, or from a folder the user cannot write; the disk image is
+ *   downloaded and opened instead.
+ */
 export type UpdateInstallKind =
   | 'nsis'
   | 'appimage'
   | 'deb'
   | 'mac-signed'
+  | 'mac-adhoc'
   | 'mac-unsigned'
   | 'apk'
   | 'portable'
@@ -254,6 +263,46 @@ export function releaseDownloadBase(repository: string, tag: string): string {
 }
 
 /**
+ * A release folder standing in for GitHub: the manifest, its signature, the packages and the
+ * electron-updater feeds are all read from under `baseUrl` (no trailing slash). Only the
+ * desktop update proof sets one (the main process reads `ZEN_UPDATE_BASE_URL`, nothing else
+ * does); every published build runs without, and `releaseUrl` / `notesUrl` stay on GitHub.
+ */
+export interface UpdateSourceOverride {
+  baseUrl: string
+}
+
+/**
+ * The override `ZEN_UPDATE_BASE_URL` names, or null for anything but a loopback http URL or an
+ * https URL: a stray or malformed value leaves the app on GitHub rather than somewhere else.
+ */
+export function parseUpdateBaseUrl(value: string | undefined | null): UpdateSourceOverride | null {
+  const text = (value ?? '').trim()
+  if (!text) return null
+  let url: URL
+  try {
+    url = new URL(text)
+  } catch {
+    return null
+  }
+  if (url.search || url.hash || url.username || url.password) return null
+  const loopback =
+    url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]'
+  if (url.protocol === 'http:' && !loopback) return null
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  return { baseUrl: url.toString().replace(/\/+$/, '') }
+}
+
+/** Where the packages (and feeds) of release `tag` are downloaded from, with a trailing slash. */
+export function downloadPrefixFor(
+  repository: string,
+  tag: string,
+  override?: UpdateSourceOverride | null
+): string {
+  return `${override ? override.baseUrl : releaseDownloadBase(repository, tag)}/`
+}
+
+/**
  * The release page of a version (`releases/tag/v<version>`): where the What's new page sends
  * the reader for the whole of a release's notes, and its stand-in while a check has brought
  * none (SET-54).
@@ -269,8 +318,17 @@ export function releasePageUrl(version: string, repository: string = UPDATE_REPO
  */
 export function manifestSource(
   channel: UpdateChannel,
-  repository: string = UPDATE_REPOSITORY
+  repository: string = UPDATE_REPOSITORY,
+  override?: UpdateSourceOverride | null
 ): { kind: 'latest'; manifestUrl: string; signatureUrl: string } | { kind: 'list'; url: string } {
+  if (override) {
+    // A folder has no release list: whatever manifest it serves is "latest" on either channel.
+    return {
+      kind: 'latest',
+      manifestUrl: `${override.baseUrl}/${UPDATE_MANIFEST_FILE}`,
+      signatureUrl: `${override.baseUrl}/${UPDATE_SIGNATURE_FILE}`
+    }
+  }
   if (channel === 'stable') {
     const base = `https://github.com/${repository}/releases/latest/download`
     return {
@@ -411,7 +469,7 @@ function expectString(value: unknown, field: string): string {
   return value
 }
 
-function expectHttpsUrl(value: unknown, field: string): string {
+function expectHttpsUrl(value: unknown, field: string, plainPrefix?: string): string {
   const text = expectString(value, field)
   let url: URL
   try {
@@ -419,7 +477,8 @@ function expectHttpsUrl(value: unknown, field: string): string {
   } catch {
     throw new UpdateManifestError(`manifest field "${field}" is not a URL`)
   }
-  if (url.protocol !== 'https:')
+  // Only a loopback override (`parseUpdateBaseUrl`) can hand out a plain-http prefix.
+  if (url.protocol !== 'https:' && !(plainPrefix && text.startsWith(plainPrefix)))
     throw new UpdateManifestError(`manifest field "${field}" must use https`)
   return text
 }
@@ -427,11 +486,12 @@ function expectHttpsUrl(value: unknown, field: string): string {
 /**
  * Validate a manifest document. Asset URLs must point at this repository's own release
  * downloads, so a tampered or mis-generated manifest can never make the app fetch a package
- * from somewhere else.
+ * from somewhere else – or, under a source override, at the folder the override names.
  */
 export function parseUpdateManifest(
   input: unknown,
-  repository: string = UPDATE_REPOSITORY
+  repository: string = UPDATE_REPOSITORY,
+  override?: UpdateSourceOverride | null
 ): UpdateManifest {
   let raw: unknown = input
   if (typeof raw === 'string') {
@@ -453,7 +513,8 @@ export function parseUpdateManifest(
   const tag = expectString(m.tag, 'tag')
   if (tag !== `v${version}`)
     throw new UpdateManifestError(`manifest tag "${tag}" does not match version ${version}`)
-  const downloadPrefix = `${releaseDownloadBase(repository, tag)}/`
+  const downloadPrefix = downloadPrefixFor(repository, tag, override)
+  const plainPrefix = override ? downloadPrefix : undefined
   const repoPrefix = `https://github.com/${repository}/`
   const releaseUrl = expectHttpsUrl(m.releaseUrl, 'releaseUrl')
   if (!releaseUrl.startsWith(repoPrefix))
@@ -476,7 +537,7 @@ export function parseUpdateManifest(
     const name = expectString(a.name, field('name'))
     if (name.includes('/') || name.includes('\\') || name.startsWith('.'))
       throw new UpdateManifestError(`${field('name')} "${name}" is not a plain file name`)
-    const url = expectHttpsUrl(a.url, field('url'))
+    const url = expectHttpsUrl(a.url, field('url'), plainPrefix)
     if (!url.startsWith(downloadPrefix))
       throw new UpdateManifestError(`${field('url')} is not a download of release ${tag}`)
     const size = a.size
@@ -569,6 +630,7 @@ export function updateModeFor(kind: UpdateInstallKind): UpdateMode {
     case 'appimage':
     case 'deb':
     case 'mac-signed':
+    case 'mac-adhoc':
       return 'in-place'
     case 'mac-unsigned':
     case 'apk':
@@ -588,6 +650,7 @@ export function assetKindFor(target: UpdateTarget): UpdateAssetKind | null {
     case 'deb':
       return 'deb'
     case 'mac-signed':
+    case 'mac-adhoc':
       return 'zip'
     case 'mac-unsigned':
       return 'dmg'
@@ -640,9 +703,10 @@ export function describeUpdateTarget(target: UpdateTarget): string {
     case 'deb':
       return 'Updates download in the background; installing asks for your password once (dpkg).'
     case 'mac-signed':
+    case 'mac-adhoc':
       return 'Updates download in the background and install when Zenium restarts.'
     case 'mac-unsigned':
-      return 'This build is not signed by Apple, so macOS cannot swap it in place: Zenium downloads and opens the disk image and you drag the new Zenium over the old one.'
+      return 'Zenium cannot replace this copy where it runs – it is on a disk image or in a folder you cannot change. It downloads and opens the disk image instead, and you drag the new Zenium over the old one.'
     case 'apk':
       return 'Zenium downloads the APK and hands it to Android, which asks you to confirm the install.'
     case 'portable':
