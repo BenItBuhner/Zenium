@@ -1,6 +1,6 @@
 - menu "Zenium":
   - menuitem "New Tab"
-  - menuitem "Search Tabs…"
+  - menuitem "Search Tabs"
   - menuitem "New Window"
   - menuitem "New Private Window"
   - separator
@@ -8,7 +8,7 @@
   - menuitem "History"
   - menuitem "Downloads"
   - menuitem "Passwords and Autofill"
-  - menuitem "Add-ons and Themes"
+  - menuitem "Extensions and Mods"
   - menuitem "Delete Browsing Data…"
   - separator
   - menuitem "Find and Edit"
