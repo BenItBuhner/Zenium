@@ -3,15 +3,17 @@ name: Desktop update proof
 # Proves that updating Zenium from inside the app works – Settings › Updates: check, download,
 # Restart to update / Install – on every desktop OS, with REAL builds:
 #
-#   published   An older PUBLISHED release (`from_version`; a bisect matrix of older ones on a
-#               dispatch with `bisect`, on a pull request labelled `update-proof: bisect`, and
-#               nightly) is installed on the runner the way a user
-#               installs it – NSIS /S, the AppImage made executable, `dpkg -i`, the DMG mounted
-#               and the app copied to /Applications – and driven to the newest published release
-#               (`to_version`, default: GitHub's latest) over the renderer's own command bridge
-#               (.github/smoke/update-proof.mjs). The process that comes back must run the newer
-#               version. Red while the published builds carry the bug, green from the first fixed
-#               release on: re-run this with `from_version` = that release to prove it.
+#   published   An older PUBLISHED release (`from_version`, default: the release before
+#               `to_version` – the update a user with the previous version gets) is installed on
+#               the runner the way a user installs it – NSIS /S, the AppImage made executable,
+#               `dpkg -i`, the DMG mounted and the app copied to /Applications – and driven to
+#               the newest published release (`to_version`, default: GitHub's latest) over the
+#               renderer's own command bridge (.github/smoke/update-proof.mjs). The process that
+#               comes back must run the newer version. A bisect matrix of older releases runs
+#               too on a dispatch with `bisect`, on a pull request labelled `update-proof: bisect`
+#               and nightly; those legs report (continue-on-error) and only the default "from"
+#               decides. Red while the previous published build carries the bug, green from the
+#               first release after the fixed one on.
 #   pair        Build A (this commit) → build B (this commit with the version bumped one patch),
 #               packaged from the same electron-vite output, A installed like a user and pointed
 #               at a local release folder holding B's packages, electron-updater feeds and an
@@ -38,10 +40,10 @@ on:
   workflow_dispatch:
     inputs:
       from_version:
-        description: 'Published release to install first and update from (tag)'
+        description: 'Published release to install first and update from (tag; empty: the release before to_version)'
         required: false
         type: string
-        default: 'v0.5.70'
+        default: ''
       to_version:
         description: 'Published release to update to (tag, or "latest")'
         required: false
@@ -95,6 +97,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       from_versions: ${{ steps.pick.outputs.from_versions }}
+      from_default: ${{ steps.pick.outputs.from_default }}
       to_tag: ${{ steps.pick.outputs.to_tag }}
       to_version: ${{ steps.pick.outputs.to_version }}
       pair: ${{ steps.pick.outputs.pair }}
@@ -109,7 +112,6 @@ jobs:
           PAIR_INPUT: ${{ inputs.pair }}
           EVENT: ${{ github.event_name }}
         run: |
-          from="${FROM_INPUT:-v0.5.70}"
           to="${TO_INPUT:-latest}"
           if [[ "$to" == latest ]]; then
             curl -sSf -H 'Accept: application/vnd.github+json' \
@@ -117,6 +119,24 @@ jobs:
             to=$(node -p "JSON.parse(require('fs').readFileSync('latest.json','utf8')).tag_name")
           fi
           [[ "$to" == v* ]] || { echo "::error::to_version '$to' is not a tag"; exit 1; }
+          # The default "from" is the published release before "to": the update a user with the
+          # previous version gets. It is the leg that counts; the bisect extras below only report.
+          from="$FROM_INPUT"
+          if [[ -z "$from" ]]; then
+            curl -sSf -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$REPOSITORY/releases?per_page=30" -o releases.json
+            # The template literal below is JavaScript, not shell.
+            # shellcheck disable=SC2016
+            from=$(node -e '
+              const to = process.argv[1]
+              const releases = JSON.parse(require("fs").readFileSync("releases.json", "utf8"))
+                .filter((r) => !r.draft && !r.prerelease)
+              const at = releases.findIndex((r) => r.tag_name === to)
+              const previous = at >= 0 ? releases[at + 1] : releases.find((r) => r.tag_name !== to)
+              if (!previous) { console.error(`no published release before ${to}`); process.exit(1) }
+              process.stdout.write(previous.tag_name)' "$to")
+          fi
+          [[ "$from" == v* ]] || { echo "::error::from_version '$from' is not a tag"; exit 1; }
           list=("$from")
           if [[ "$BISECT" == true || "$EVENT" == schedule ]]; then
             list+=(v0.4.12 v0.5.0 v0.5.40 v0.5.79)
@@ -130,6 +150,7 @@ jobs:
           if [[ "$EVENT" == schedule ]]; then pair=false; fi
           {
             echo "from_versions=$json"
+            echo "from_default=$from"
             echo "to_tag=$to"
             echo "to_version=${to#v}"
             echo "pair=$pair"
@@ -153,6 +174,9 @@ jobs:
     needs: resolve
     runs-on: windows-latest
     timeout-minutes: 35
+    # The bisect extras report on releases older than the one before "to"; only the default
+    # "from" decides the job (and so the verdict).
+    continue-on-error: ${{ matrix.from != needs.resolve.outputs.from_default }}
     strategy:
       fail-fast: false
       matrix:
@@ -210,6 +234,7 @@ jobs:
     needs: resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    continue-on-error: ${{ matrix.from != needs.resolve.outputs.from_default }}
     strategy:
       fail-fast: false
       matrix:
@@ -292,6 +317,7 @@ jobs:
     needs: resolve
     runs-on: ${{ matrix.mac.os }}
     timeout-minutes: 35
+    continue-on-error: ${{ matrix.from != needs.resolve.outputs.from_default }}
     strategy:
       fail-fast: false
       # Two matrix axes, not `include`: a bare `include` list next to `from` would add its
