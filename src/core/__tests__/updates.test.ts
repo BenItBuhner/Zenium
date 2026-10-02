@@ -220,6 +220,7 @@ function fakeBrowser(
     flushSync: vi.fn(),
     // The quit's questions, agreed unless a test says otherwise; then the shutdown.
     prepareQuit: vi.fn(async () => true),
+    quitting: false,
     shutdown: vi.fn(),
     settled: vi.fn(async () => undefined)
   }
@@ -279,6 +280,27 @@ describe('UpdateService', () => {
     await service.install()
     expect(host.installs).toEqual([null])
     expect(browser.shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the swap to a quit that was asked for while the question stood', async () => {
+    const host = new FakeHost(NSIS)
+    const { browser } = fakeBrowser('0.1.0', {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: manifestFor('0.2.0') }
+    })
+    // ⌘Q joined the update's quit check and is quitting on its own once it agreed.
+    ;(browser.prepareQuit as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async () => {
+        ;(browser as unknown as { quitting: boolean }).quitting = true
+        return true
+      }
+    )
+    const service = new UpdateService(browser, host)
+    await service.check({ manual: false })
+    await until(() => service.status().phase === 'ready')
+    await service.install()
+    expect(host.restarts).toEqual([])
+    expect(browser.shutdown).not.toHaveBeenCalled()
+    expect(service.status().phase).toBe('ready')
   })
 
   it('reports a host that could not install, before it quit anything', async () => {

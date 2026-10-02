@@ -188,6 +188,9 @@ export class UpdateService {
         return
       }
       if (!(await this.browser.prepareQuit(from))) return
+      // A quit asked for while the question stood (⌘Q joins the same check) is ending the
+      // process on its own: the swap must not start under it.
+      if (this.browser.quitting) return
       await this.host.install(release, downloadedPath, {
         quit: async () => {
           this.browser.shutdown()

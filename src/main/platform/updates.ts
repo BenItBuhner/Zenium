@@ -38,6 +38,7 @@ import { downloadDir, uniquePath } from './downloads'
 import {
   appImageSwapPlan,
   detectInstallKind,
+  installByHandover,
   macAppBundleOf,
   macSwapScript,
   relaunchArgs,
@@ -180,14 +181,28 @@ export class ElectronUpdateHost implements UpdateHost {
   /**
    * NSIS: the installer runs silent and detached, waits for this process to go (it closes a
    * still-running app itself after a moment, so the profile is written before it starts) and
-   * relaunches the app. Spawn failures surface as electron-updater errors on the next tick;
-   * the ones it knows (no rights) it answers itself with `elevate.exe`.
+   * relaunches the app. The ones it knows (no rights) electron-updater answers itself with
+   * `elevate.exe`. The installer file is checked before the quit (an antivirus may have taken
+   * it between the download and the click); a start that still fails after the quit ends the
+   * process all the same (`installByHandover`) – the staged update is offered again next launch.
    */
-  private async installNsis(restart: UpdateRestart): Promise<void> {
-    await restart.quit()
-    await this.runUpdaterInstall(true, true)
-    await delay(150)
-    app.quit()
+  private installNsis(restart: UpdateRestart): Promise<void> {
+    return this.handOver(restart, () => Boolean(this.staged && existsSync(this.staged)))
+  }
+
+  /** The steps `installByHandover` runs, on electron-updater and this process. */
+  private handOver(restart: UpdateRestart, installerPresent: () => boolean): Promise<void> {
+    return installByHandover({
+      installerPresent,
+      resetOneShot: resetUpdaterInstallFlag,
+      quit: () => restart.quit(),
+      runInstaller: () => this.runUpdaterInstall(true, true),
+      endProcess: async () => {
+        await delay(150)
+        app.quit()
+      },
+      log: (message) => console.error('[zen] updater:', message)
+    })
   }
 
   /**
@@ -226,12 +241,12 @@ export class ElectronUpdateHost implements UpdateHost {
     app.quit()
   }
 
-  /** macOS with a Developer ID: Squirrel.Mac swaps the bundle on quit. Not yet a published build. */
-  private async installMacSigned(restart: UpdateRestart): Promise<void> {
-    await restart.quit()
-    await this.runUpdaterInstall(true, true)
-    await delay(150)
-    app.quit()
+  /**
+   * macOS with a Developer ID: Squirrel.Mac swaps the bundle on quit, from the zip it holds
+   * itself (no file of ours to check). Not yet a published build.
+   */
+  private installMacSigned(restart: UpdateRestart): Promise<void> {
+    return this.handOver(restart, () => true)
   }
 
   /**

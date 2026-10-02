@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   appImageSwapPlan,
   detectInstallKind,
+  installByHandover,
   macAppBundleOf,
   macSwapScript,
   relaunchArgs,
   shellQuote,
+  type HandoverInstallSteps,
   type InstallProbe,
   type InstallProbeFs
 } from '../updateInstall'
@@ -223,6 +225,67 @@ describe('detectInstallKind', () => {
       expect(detectInstallKind(probe({ fs: noConfig }))).toBe('unpacked')
       expect(detectInstallKind(probe({}))).toBe('unpacked')
     })
+  })
+})
+
+describe('installByHandover (NSIS, Squirrel.Mac)', () => {
+  function steps(options: { present?: boolean; start?: () => Promise<void> } = {}): {
+    calls: string[]
+    logged: string[]
+    steps: HandoverInstallSteps
+  } {
+    const calls: string[] = []
+    const logged: string[] = []
+    return {
+      calls,
+      logged,
+      steps: {
+        installerPresent: () => {
+          calls.push('present?')
+          return options.present ?? true
+        },
+        resetOneShot: () => {
+          calls.push('reset')
+        },
+        quit: async () => {
+          calls.push('quit')
+        },
+        runInstaller: async () => {
+          calls.push('start')
+          await (options.start ?? (async () => undefined))()
+        },
+        endProcess: async () => {
+          calls.push('end')
+        },
+        log: (message: string) => {
+          logged.push(message)
+        }
+      }
+    }
+  }
+
+  it('checks the installer and clears the one-shot flag before the quit, then starts it and ends', async () => {
+    const s = steps()
+    await installByHandover(s.steps)
+    expect(s.calls).toEqual(['present?', 'reset', 'quit', 'start', 'end'])
+    expect(s.logged).toEqual([])
+  })
+
+  it('refuses before the quit when the installer is gone – nothing shut down, the error reaches the user', async () => {
+    const s = steps({ present: false })
+    await expect(installByHandover(s.steps)).rejects.toThrow('the downloaded installer is gone')
+    expect(s.calls).toEqual(['present?'])
+  })
+
+  it('ends the process all the same when the installer fails to start after the quit', async () => {
+    const s = steps({
+      start: async () => {
+        throw new Error('spawn EACCES')
+      }
+    })
+    await installByHandover(s.steps)
+    expect(s.calls).toEqual(['present?', 'reset', 'quit', 'start', 'end'])
+    expect(s.logged).toEqual(['the installer did not start after the quit: spawn EACCES'])
   })
 })
 

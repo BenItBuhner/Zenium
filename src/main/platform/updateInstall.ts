@@ -70,6 +70,44 @@ export function detectInstallKind(probe: InstallProbe): UpdateInstallKind {
   }
 }
 
+/** The steps of an install that hands over to an installer after the quit (NSIS, Squirrel.Mac). */
+export interface HandoverInstallSteps {
+  /** Whether the package the installer needs is still where it was downloaded. */
+  installerPresent(): boolean
+  /** Clear the updater's one-shot "already tried" flag, so this try is a real one. */
+  resetOneShot(): void
+  /** The core's `UpdateRestart.quit()`: the browser's shutdown and the profile's final write. */
+  quit(): Promise<void>
+  /** Start the installer; rejects when it could not be started. */
+  runInstaller(): Promise<void>
+  /** End this process – after a successful start, and after a failed one just the same. */
+  endProcess(): Promise<void>
+  log(message: string): void
+}
+
+/**
+ * An install whose last step is an installer that waits for this process to go (NSIS with
+ * `--force-run`; Squirrel.Mac) obeys the core's contract – `quit()` is called once nothing
+ * can fail any more, and the process ends right after it: what can be checked is checked
+ * before the quit (the package still there, the one-shot flag clear); an installer that still
+ * fails to start after it is logged and the process ends anyway, so the user is never left
+ * with a shut-down window that no longer quits. The update stays staged for the next launch.
+ */
+export async function installByHandover(steps: HandoverInstallSteps): Promise<void> {
+  if (!steps.installerPresent()) throw new Error('the downloaded installer is gone')
+  steps.resetOneShot()
+  await steps.quit()
+  try {
+    await steps.runInstaller()
+  } catch (error) {
+    steps.log(
+      `the installer did not start after the quit: ${error instanceof Error ? error.message : String(error)}`
+    )
+  } finally {
+    await steps.endProcess()
+  }
+}
+
 /** The `.app` bundle an executable runs from (`…/Zenium.app/Contents/MacOS/Zenium`), or null. */
 export function macAppBundleOf(execPath: string): string | null {
   let dir = execPath
