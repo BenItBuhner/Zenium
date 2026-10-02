@@ -108,7 +108,8 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
                   </span>
                 )}
                 {action.current && (
-                  <Check className="h-5 w-5 shrink-0" strokeWidth={2} aria-hidden data-check="" />
+                  // A trailing indicator: 16 on both platforms (§9.3).
+                  <Check className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden data-check="" />
                 )}
               </button>
             </li>

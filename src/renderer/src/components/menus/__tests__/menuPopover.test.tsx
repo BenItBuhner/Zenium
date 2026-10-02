@@ -420,6 +420,21 @@ describe('the popover menu', () => {
     ).toBe('color: inherit;')
   })
 
+  it('a row’s trailing indicators – the submenu chevron, the managed mark – are 16 on the tablet too (§9.3)', () => {
+    // `.zen-v2-menu-item .lucide` hands every glyph `--v2-icon`, the LEADING size (20 on the
+    // tablet); the trailing slot's rule follows it in the cascade and holds the pair at 16.
+    const css = stylesheet()
+    expect(
+      declarations(css, [
+        '.zen-v2-menu-item .zen-v2-menu-chevron',
+        '.zen-v2-menu-item .zen-v2-menu-mark'
+      ])
+    ).toBe('width: 16px; height: 16px;')
+    expect(css.indexOf('.zen-v2-menu-item .zen-v2-menu-chevron,')).toBeGreaterThan(
+      css.indexOf('.zen-v2-menu-item .lucide {')
+    )
+  })
+
   it('an empty state’s sentence is a note row, not a menuitem: the deemphasised ink, no focus, the arrows and Tab pass it by (§9.17)', () => {
     // The History submenu with nothing closed: Show Full History | "No recently closed tabs".
     show(

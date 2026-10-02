@@ -1341,7 +1341,8 @@ function SheetRow({
       )}
       {control}
       {onClick && !control && (
-        <ChevronRight className="zen-sheet-item-secondary h-5 w-5 shrink-0" strokeWidth={1.75} />
+        // A trailing indicator: 16 on both platforms (§9.3).
+        <ChevronRight className="zen-sheet-item-secondary h-4 w-4 shrink-0" strokeWidth={1.75} />
       )}
     </>
   )
@@ -1557,7 +1558,8 @@ function CookieRows({
   const cookies = info?.cookies.items ?? []
   const shown = all ? cookies : cookies.slice(0, COOKIE_FOLD)
   const thirdParty = info?.cookies.thirdParty ?? []
-  const foldClass = phone ? 'zen-sheet-item-secondary h-5 w-5 shrink-0' : 'zen-siteinfo-chevron'
+  // The fold's chevron sits in the row's trailing slot: 16 on both platforms (§9.3).
+  const foldClass = phone ? 'zen-sheet-item-secondary h-4 w-4 shrink-0' : 'zen-siteinfo-chevron'
   return (
     <div className={cn('flex flex-col', phone && 'pb-2')}>
       <Heading
