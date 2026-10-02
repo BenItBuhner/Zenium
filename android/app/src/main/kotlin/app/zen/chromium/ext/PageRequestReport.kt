@@ -44,7 +44,9 @@ import java.util.Locale
  *   here and reported `complete` before WebView is handed it (Chrome's `onCompleted` runs ahead
  *   of the page's `load` event; R27-7), one past the cap streamed to WebView through the same
  *   [HeaderStage.ObservedStream] that reports `complete` at its end and `error` when WebView
- *   closed it early. A `3xx` with a `Location` is reported at `headers` –
+ *   closed it early; the report is SETTLED – in the chrome's hands, [Sink.settle] – before the
+ *   body or the stream's end is handed on, since posted as a Java message alone it lost the UI
+ *   thread to the page's own reaction to the body (R27-9). A `3xx` with a `Location` is reported at `headers` –
  *   the runtime makes `onBeforeRedirect` of it and marks the target – and followed HERE, the
  *   target's own request stage reported under a fresh id the runtime's ledger continues under
  *   the chain's (`onBeforeRequest` again, as Chrome fires it), up to [MAX_HOPS]. Without a
@@ -96,6 +98,18 @@ class PageRequestReport(
     /** Where the report's events go, in the order they happened: `ext.request` / `ext.response` payloads. */
     fun interface Sink {
         fun event(name: String, payload: JSONObject)
+
+        /**
+         * Every event posted so far is to be in the chrome's hands before this returns (bounded
+         * by the implementation): called once the report of a body is complete and before WebView
+         * is handed the body – or, for a body streamed past the cap, its end. The report and the
+         * page's own reaction to the body (an `img.onload` asking the worker what the load's
+         * headers were, Image Downloader's `getImagesCT`) otherwise race on the UI thread, where a
+         * page message is a native task the pump drains ahead of a report posted as a Java
+         * message (compat round 27 §3.2: the four `onCompleted` 65 ms after the four questions).
+         * Chrome's `onCompleted` precedes the renderer's `load` event by construction.
+         */
+        fun settle() {}
     }
 
     /**
@@ -184,10 +198,12 @@ class PageRequestReport(
             if (body == null) {
                 // Nothing to stream (a 204, a HEAD): the response is complete as it stands.
                 report(COMPLETE, null)
+                sink.settle()
                 return Relayed(fetched.status, reason, mime, charset, served, ByteArrayInputStream(ByteArray(0)))
             }
             // The body within the cap is read here and is complete before WebView sees a byte of
-            // it; one past the cap streams, the part read so far ahead of the rest.
+            // it; one past the cap streams, the part read so far ahead of the rest. The report is
+            // settled (in the chrome's hands) before the body, or the stream's end, is handed on.
             val whole = try {
                 readUpTo(body, wholeBodyCap)
             } catch (e: IOException) {
@@ -198,9 +214,17 @@ class PageRequestReport(
             if (whole.ended) {
                 body.close()
                 report(COMPLETE, null)
+                sink.settle()
                 return Relayed(fetched.status, reason, mime, charset, served, ByteArrayInputStream(whole.bytes))
             }
-            val rest = HeaderStage.ObservedStream(body, onComplete = { report(COMPLETE, null) }, onError = { report(ERROR, it) })
+            val rest = HeaderStage.ObservedStream(
+                body,
+                onComplete = {
+                    report(COMPLETE, null)
+                    sink.settle()
+                },
+                onError = { report(ERROR, it) }
+            )
             return Relayed(fetched.status, reason, mime, charset, served, SequenceInputStream(ByteArrayInputStream(whole.bytes), rest))
         }
     }

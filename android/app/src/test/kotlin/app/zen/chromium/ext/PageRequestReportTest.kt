@@ -156,6 +156,64 @@ class PageRequestReportTest {
         assertEquals(2, events.size)
     }
 
+    /** A sink whose settle calls are on the record with the events, as `"settle"` lines. */
+    private class SettlingSink(private val events: MutableList<Event>) : PageRequestReport.Sink {
+        override fun event(name: String, payload: JSONObject) {
+            events.add(Event(name, payload))
+        }
+
+        override fun settle() {
+            events.add(Event("settle", JSONObject().put("requestId", "-")))
+        }
+    }
+
+    private fun settled(fetcher: HeaderStage.Fetcher, load: PageRequestReport.Load, events: MutableList<Event>, wholeBodyCap: Int = PageRequestReport.WHOLE_BODY_CAP): PageRequestReport.Relayed? {
+        var next = 100
+        return PageRequestReport(fetcher, wholeBodyCap).relay(load, ORIGIN, PageRequestReport.typeOf(load), "41", { (++next).toString() }, UA, SettlingSink(events))
+    }
+
+    @Test
+    fun `the report is settled before WebView is handed a body, a body's end, or an empty response, and not for a load that goes back to WebView`() {
+        // A body within the cap: headers, complete, then the settle, all before the relay returns (R27-9).
+        val whole = ArrayList<Event>()
+        val relayed = settled(ScriptedFetcher(mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/png", body = ByteArray(64)) })), image(), whole)!!
+        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41", "settle:-:-"), names(whole))
+        assertEquals(64, relayed.body.readBytes().size)
+        relayed.body.close()
+        assertEquals(3, whole.size)
+        // A body past the cap: settled at the stream's end, before the end is returned to WebView.
+        val streamed = ArrayList<Event>()
+        val stream = settled(ScriptedFetcher(mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/png", body = ByteArray(64)) })), image(), streamed, wholeBodyCap = 16)!!
+        assertEquals(listOf("ext.response:headers:41"), names(streamed))
+        val buffer = ByteArray(64)
+        var read = 0
+        while (read < 64) read += stream.body.read(buffer, read, 64 - read)
+        assertEquals(listOf("ext.response:headers:41"), names(streamed))
+        assertEquals(-1, stream.body.read())
+        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41", "settle:-:-"), names(streamed))
+        stream.body.close()
+        assertEquals(3, streamed.size)
+        // A streamed body WebView closes early: the error, no settle (nothing of the page's follows a body it dropped).
+        val aborted = ArrayList<Event>()
+        settled(ScriptedFetcher(mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/png", body = ByteArray(64)) })), image(), aborted, wholeBodyCap = 16)!!.body.close()
+        assertEquals(listOf("ext.response:headers:41", "ext.response:error:41"), names(aborted))
+        // No body (a 204): complete then the settle.
+        val empty = ArrayList<Event>()
+        assertNotNull(settled(ScriptedFetcher(mapOf(IMAGE to { response(204, "No Content", body = null) })), image(), empty))
+        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41", "settle:-:-"), names(empty))
+        // A load that goes back to WebView (a fetch that could not be made, a 304): reported, never settled.
+        val failed = ArrayList<Event>()
+        assertNull(settled(ScriptedFetcher(emptyMap()), image(), failed))
+        assertEquals(listOf("ext.response:error:41"), names(failed))
+        val notModified = ArrayList<Event>()
+        assertNull(settled(ScriptedFetcher(mapOf(IMAGE to { response(304, "Not Modified", body = null) })), image(), notModified))
+        assertEquals(listOf("ext.response:headers:41"), names(notModified))
+        // A plain sink settles as nothing (the interface's default), so the relay's other callers are as before.
+        val plain = ArrayList<Event>()
+        assertNotNull(relay(ScriptedFetcher(mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/png", body = ByteArray(8)) })), image(), plain))
+        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41"), names(plain))
+    }
+
     @Test
     fun `a body past the cap streams, the part read ahead of the rest, and is complete at the stream's end`() {
         val body = ByteArray(100) { (it % 251).toByte() }

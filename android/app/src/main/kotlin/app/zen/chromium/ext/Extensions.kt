@@ -2215,7 +2215,13 @@ class Extensions(private val host: Host) {
         val origin = "https://${page.id}$ORIGIN_SUFFIX"
         val type = PageRequestReport.typeOf(load)
         val requestId = requestIds.getAndIncrement().toString()
-        val sink = PageRequestReport.Sink { name, payload -> main.post { chromeEvent(name, payload) } }
+        val sink = object : PageRequestReport.Sink {
+            override fun event(name: String, payload: JSONObject) {
+                main.post { chromeEvent(name, payload) }
+            }
+
+            override fun settle() = settleReports()
+        }
         sink.event(PageRequestReport.REQUEST, PageRequestReport.request(load, load.url, origin, requestId, type))
         val observeResponses = host.blocking.observeResponses
         if (answer != null) {
@@ -2223,12 +2229,33 @@ class Extensions(private val host: Host) {
                 for (payload in PageRequestReport.answered(requestId, load, type, answer.statusCode, answer.reasonPhrase, answer.responseHeaders, answer.mimeType, answer.encoding)) {
                     sink.event(PageRequestReport.RESPONSE, payload)
                 }
+                sink.settle()
             }
             return answer
         }
         if (!observeResponses) return null
         val relayed = pageRequests.relay(load, origin, type, requestId, { requestIds.getAndIncrement().toString() }, userAgent, sink) ?: return null
         return WebResourceResponse(relayed.mime, relayed.charset, relayed.status, relayed.reason, relayed.headers, relayed.body)
+    }
+
+    /**
+     * Wait, bounded by [REPORT_SETTLE_MS], until the main thread has run every report posted
+     * ahead of this call ([PageRequestReport.Sink.settle]; the intercept thread, or the thread
+     * WebView reads a streamed body from). The reports go to the chrome as Java messages
+     * (`main.post`), while a page's bridge message arrives as a NATIVE task of the UI thread
+     * (`WebMessageListenerHolder.onPostMessage`), and the pump drains its native tasks before
+     * it yields to the Java queue (`MessagePumpForUI::DoNonDelayedLooperWork`; the same order
+     * `ImageOwner.kt` reads for a frame's hello against `onPageStarted`): a `complete` posted
+     * and then the body handed to WebView lost to the popup's `img.onload` question on both
+     * lanes (compat round 27 §3.2, R27-9), so the body waits for the report instead. Nothing on
+     * the main thread waits for an intercept, so the wait cannot cycle; past the bound the body
+     * goes anyway (a main thread held that long has the page waiting too).
+     */
+    private fun settleReports() {
+        if (Looper.myLooper() === Looper.getMainLooper()) return
+        val settled = java.util.concurrent.CountDownLatch(1)
+        main.post { settled.countDown() }
+        runCatching { settled.await(REPORT_SETTLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS) }
     }
 
     /**
@@ -2860,6 +2887,8 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
+        /** The most an extension page's relayed body waits for its report to reach the chrome ([settleReports]). */
+        const val REPORT_SETTLE_MS = 1_000L
         /**
          * The document a tab shows while its extension page is held (or is being failed): empty,
          * in the page's colour scheme, so it reads as a page still loading, not as a page.
