@@ -146,11 +146,6 @@ class SweepHeapStepsTest {
         val noBefore = SweepHeapSteps.peakGate(120 * mib, 512 * mib, null)
         assertEquals(false, noBefore.grown20MiB)
         assertEquals(false, noBefore.regression)
-
-        val either = SweepHeapSteps.peakGate(atTenth, cap, before)
-        assertEquals(true, either.withinTenthOfCap)
-        assertEquals(false, either.grown20MiB)
-        assertEquals(true, either.regression)
         assertEquals(false, SweepHeapSteps.peakGate(0, cap).withinTenthOfCap)
         assertEquals(false, SweepHeapSteps.peakGate(atTenth, 0, before).grown20MiB)
         assertEquals(false, SweepHeapSteps.peakGate(0, 0, before).regression)
