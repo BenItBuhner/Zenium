@@ -1,6 +1,7 @@
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
+  type AgentDialogPolicy,
   type ContentCover,
   type ImageThumbnailBounds,
   type KeyBinding,
@@ -65,6 +66,7 @@ import {
   uploadPathsRefusal,
   type FileChooserEvent
 } from './agentPrompts'
+import { pageDialogAnsweredOf } from './agentDialogs'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
 export interface ViewNavState {
@@ -169,6 +171,12 @@ export interface ViewEventPayloads {
    * comes back as `view.fileChooserAnswer` (`agentPrompts.ts`).
    */
   fileChooser: FileChooserEvent
+  /**
+   * Kotlin's `WebChromeClient` answered a page dialog on a hidden agent-driven tab itself –
+   * from the policy `view.setDialogPolicy` handed it, or with the default answer – and reports
+   * it (`DialogPolicyAnswer.kt`); read as the core's `PageDialogAnswered` (`agentDialogs.ts`).
+   */
+  pageDialogAnswered: unknown
   destroyed: void
 }
 
@@ -454,6 +462,12 @@ export class AndroidTabView implements TabView {
       case 'fileChooser':
         this.onFileChooser(payload as FileChooserEvent)
         return
+      case 'pageDialogAnswered': {
+        // A report the core cannot read is dropped: misread, it would spend the wrong rule.
+        const report = pageDialogAnsweredOf(payload)
+        if (report) ev.onPageDialogAnswered?.(report)
+        return
+      }
       case 'destroyed':
         this.destroyed = true
         ev.onDestroyed()
@@ -772,6 +786,21 @@ export class AndroidTabView implements TabView {
    */
   setAgentDriven(driven: boolean): void {
     this.bridge.send('view.setAgentDriven', { tabId: this.tabId, driven })
+  }
+
+  /**
+   * The agent's dialog policy for this tab (`TabView.setDialogPolicy`; the agent service hands
+   * it beside `setAgentDriven` at each prepare and whenever it changes, `null` when no rule
+   * covers the tab any more). Kotlin keeps it on the `TabWebView` (`DialogPolicyAnswer.kt`): a
+   * dialog of a hidden agent-driven page – `alert`, `confirm`, `prompt`, "Leave site?" – is
+   * answered from it at once, the default for a kind left out, and every answer comes back as
+   * the `pageDialogAnswered` event; the tab in front of the user keeps its sheet, and a close
+   * the user makes never asks (`UnloadObjection`). Kotlin never spends a `once` rule itself:
+   * the core does on the report, and sends what is left. Sent as it is said, so a view
+   * replaced meanwhile (a renderer swap) hears it again at the agent's next action.
+   */
+  setDialogPolicy(policy: AgentDialogPolicy | null): void {
+    this.bridge.send('view.setDialogPolicy', { tabId: this.tabId, policy })
   }
 
   findInPage(text: string, forward: boolean, newSession: boolean): void {

@@ -1,0 +1,63 @@
+name: Android dialog policy demo
+
+# Records an AI agent's dialog policy on the phone (`browser_dialog_policy`, the Android half:
+# DialogPolicyAnswer.kt, TabWebView.dialogPolicy): a page an agent drives while the user is not
+# looking at it has its alert / confirm / prompt and its "Leave site?" answered from the policy
+# at once – nothing drawn, the default for a kind the policy leaves out – and every answer
+# reported to the core as `pageDialogAnswered`; the tab in front of the user keeps its sheet,
+# policy or not. The driver sends the agent's two words the way the core does (the bridge's
+# `view.setAgentDriven` and `view.setDialogPolicy`), reads what the page's calls returned and the
+# app's windows in the accessibility tree (a sheet is a second window), and keeps a copy of each
+# report where the core receives it (findings text in the artifact; the run fails on a FAIL).
+#
+# One act, the light colour scheme: nothing of the feature is drawn – the stills record the
+# sheet the tab in front keeps and the other tab with nothing over it – so a dark act would add
+# no design record. Dispatch-only, like the page dialogs demo: it says nothing about a change
+# being correct beyond what `dialog-policy-findings.txt` records. The build, the emulator and the
+# Gradle cache live in android-emulator-demo.yml; this file picks the driver. One more boot when
+# the emulator itself went away under the driver (adb lost the device), and never when the driver
+# failed: a run is then spent on the demo rather than on the runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-dialog-policy-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Dialog policy demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DialogPolicyDemo
+        DEMO_DIR=policy
+        DEMO_OUT=artifacts/android-dialog-policy-demo
+        DEMO_VIDEO=android-dialog-policy-demo-light.mp4
+        DEMO_THEME=light
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-dialog-policy-demo-light
+      artifact-path: artifacts/android-dialog-policy-demo/
+
+  light-again:
+    name: Dialog policy demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DialogPolicyDemo
+        DEMO_DIR=policy
+        DEMO_OUT=artifacts/android-dialog-policy-demo
+        DEMO_VIDEO=android-dialog-policy-demo-light.mp4
+        DEMO_THEME=light
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-dialog-policy-demo-light-second-boot
+      artifact-path: artifacts/android-dialog-policy-demo/

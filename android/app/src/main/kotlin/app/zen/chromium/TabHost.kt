@@ -213,9 +213,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         host.extensions?.attach(view)
         view.applyAutofillProvider()
         view.tabId = viewId
-        // The core's view for the new tab says whether an agent drives it (OS-40) and whether
-        // it holds the page's prompts for one (AgentPrompts.kt).
+        // The core's view for the new tab says whether an agent drives it (OS-40), what its
+        // dialog policy is (DialogPolicyAnswer.kt) and whether it holds the page's prompts for
+        // one (AgentPrompts.kt).
         view.agentDriven = false
+        view.dialogPolicy = null
         view.setInterceptAgentPrompts(false)
         show(view, false)
         view.translationX = 0f
@@ -238,8 +240,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         host.viewBound(viewId, tabId)
         view.tabId = tabId
         // The tab is the core's from here: its word on an agent driving the page comes with it
-        // (OS-40), as does its word on holding the page's prompts for one (AgentPrompts.kt).
+        // (OS-40), as do the agent's dialog policy (DialogPolicyAnswer.kt) and its word on
+        // holding the page's prompts for one (AgentPrompts.kt).
         view.agentDriven = false
+        view.dialogPolicy = null
         view.setInterceptAgentPrompts(false)
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
