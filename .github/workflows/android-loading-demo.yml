@@ -9,6 +9,11 @@ name: Android loading feedback demo
 # and its caches live in android-emulator-demo.yml; this file only picks the driver and the
 # colour scheme.
 on:
+  # TEMPORARY (W6-S29-d, PR #786): a push trigger scoped to the branch so the one emulator run
+  # the gate needs can start from a worker token; removed before the PR is ready.
+  push:
+    branches:
+      - cursor/android-overview-stack-cover-9271
   workflow_dispatch:
     inputs:
       theme:
