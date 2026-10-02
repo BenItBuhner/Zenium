@@ -670,6 +670,34 @@ describe('installExtensionApi', () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Unchecked runtime.lastError'))
   })
 
+  it('surfaces a callback’s throw as the page’s own uncaught error on the next tick, the onUncaught option told first', async () => {
+    const seen: unknown[] = []
+    installExtensionApi(host, API_SPEC, {
+      onUncaught: (error) => {
+        seen.push(error)
+        throw new Error('a hook that throws changes nothing')
+      }
+    })
+    host.respond = () => ({ ok: true, value: [{ id: 7 }] })
+    const ticks: Array<() => void> = []
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) => {
+      ticks.push(fn)
+      return 0
+    }) as unknown as typeof setTimeout)
+    const thrown = new TypeError("Cannot read properties of undefined (reading '1')")
+    expect(
+      g.chrome.tabs.query({}, () => {
+        throw thrown
+      })
+    ).toBeUndefined()
+    for (let i = 0; i < 10 && seen.length === 0; i += 1) await Promise.resolve()
+    // The hook saw the error object itself – its stack names the throw's site, which the
+    // page's sanitized `error` event of the tick's throw would not – and the tick still throws.
+    expect(seen).toEqual([thrown])
+    expect(ticks).toHaveLength(1)
+    expect(() => ticks[0]()).toThrow(thrown)
+  })
+
   it('skips optional arguments Chrome-style', () => {
     installExtensionApi(host, API_SPEC)
     g.chrome.tabs.update({ url: 'https://example.com' })

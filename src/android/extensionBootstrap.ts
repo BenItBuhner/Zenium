@@ -31,10 +31,13 @@ import {
   collectOperations,
   createScopeProxy,
   installTrustedTypesShield,
+  noteFrameIdiom,
   ownScriptMatcher,
   type Any,
+  type ScopeFrames,
   type ShieldResult
 } from './extensionIsolation'
+import { onRethrow } from '@core/extensions/api/rethrow'
 import { installModuleChrome } from './extensionModuleChrome'
 import { createChunkRelay, type ChunkRelay, type ChunkStats } from './extensionChunkRelay'
 import {
@@ -347,6 +350,49 @@ declare const __zenExtBoot: Boot
   }
 
   /**
+   * Debug: an error an extension callback threw, as the runtime hands it over before surfacing
+   * it as the page's own uncaught error (`onRethrow`, rethrow.ts), with the stack of its
+   * construction – the `error` event of that throw carries none when the runtime's script is
+   * the document-start one (sanitized: `Script error.`, line 0, column 0).
+   */
+  function rethrownStat(error: unknown): BootErrorStat {
+    const cause = error as { name?: unknown; message?: unknown; stack?: unknown } | null
+    const object = typeof cause === 'object' && cause !== null
+    const name = object && typeof cause.name === 'string' ? cause.name : 'Error'
+    const message = object && typeof cause.message === 'string' ? cause.message : String(error)
+    return {
+      message: `${name}: ${message}`,
+      source: '',
+      line: 0,
+      column: 0,
+      stack: object && typeof cause.stack === 'string' ? cause.stack.slice(0, 1200) : null,
+      at: performance.now(),
+      inline: null,
+      frame: null,
+      rethrown: true
+    }
+  }
+
+  /**
+   * Debug: the first uncaught errors of this document onto `errors`: the page's `error` event
+   * (capturing, so a page's own handler cannot keep it) and the runtime's rethrows of extension
+   * callbacks' throws, which the event reports sanitized (`rethrownStat`).
+   */
+  function watchErrors(errors: BootErrorStat[]): void {
+    window.addEventListener(
+      'error',
+      (event) => {
+        const record = bootErrorStat(event, null)
+        if (record && errors.length < 12) errors.push(record)
+      },
+      true
+    )
+    onRethrow((error) => {
+      if (errors.length < 12) errors.push(rethrownStat(error))
+    })
+  }
+
+  /**
    * Debug: the uncaught errors of a sub-frame this copy leaves alone go onto the parent's stats
    * (`frameErrors`). Such an error never reaches the parent's `error` listeners, and its console
    * line does not name the frame; the frame's own window is where it can be caught, and a
@@ -540,20 +586,28 @@ declare const __zenExtBoot: Boot
       // counters, for the compat sweep's reading of what a popup's burst met at the page.
       const flow: Record<string, FlowStats> = {}
       for (const [ep, running] of engines) flow[ep] = running.flow
-      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills'> & {
+      // The page's first uncaught errors, as the content world keeps them: a console line gives
+      // an error of the document-start script as `<document URL>:2` (the bootstrap's own line,
+      // the config on line 1), which names neither the code nor the caller, and the event of
+      // such a throw is sanitized; the runtime's own hand-over of a callback's throw carries
+      // the stack that does (Save Page WE's worker, compat round 27; `watchErrors`).
+      const errors: BootErrorStat[] = []
+      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills' | 'errors'> & {
         page: EngineContextKind
       } = {
         frame: frame.url,
         world: 'page',
         page: context,
         flow,
-        polyfills
+        polyfills,
+        errors
       }
       Object.defineProperty(g, '__zenExtStats', {
         value: pageStats,
         enumerable: false,
         configurable: true
       })
+      watchErrors(errors)
     }
     const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
     let lifecycle: (() => Promise<void>) | null = null
@@ -900,15 +954,8 @@ declare const __zenExtBoot: Boot
     // The document's first uncaught errors, for the compat sweep: a console line gives an inline
     // script's error as `<document URL>:1`, which tells neither the code nor the caller; the
     // event still carries the stack, and the script element still runs while it is dispatched.
-    const errors: BootErrorStat[] = (stats.errors = [])
-    window.addEventListener(
-      'error',
-      (event) => {
-        const record = bootErrorStat(event, null)
-        if (record && errors.length < 12) errors.push(record)
-      },
-      true
-    )
+    // A callback's throw the runtime rethrows is recorded as it is handed over (`watchErrors`).
+    watchErrors((stats.errors = []))
   }
 
   /**
@@ -971,6 +1018,13 @@ declare const __zenExtBoot: Boot
      * (world), and `window.location = location` again would navigate.
      */
     mirror: (name: string, value: unknown) => void
+    /**
+     * What the scope proxy's `top` / `parent` answer for the frame's own window (the scope or
+     * the page's window, `ScopeFrames`), set from each unit's function name as it runs
+     * (`noteFrameIdiom`; the host names the literal by its text, `FrameIdioms.kt`). Read by the
+     * `with` scope alone; a world's or the page's own window has no such split.
+     */
+    frames: ScopeFrames
   }
   const scopes = new Map<string, Scope>()
 
@@ -1068,12 +1122,14 @@ declare const __zenExtBoot: Boot
           return realWindow.browser
         },
         isolation,
-        mirror: mirrorOnto(realWindow)
+        mirror: mirrorOnto(realWindow),
+        frames: { page: true, locked: true }
       }
       scopes.set(key, scope)
       return scope
     }
     const messaging = unit.messaging
+    const frames: ScopeFrames = { page: false, locked: false }
     let root: Any
     if (isolation === 'world') {
       shieldWorld(ext, 'world')
@@ -1090,7 +1146,7 @@ declare const __zenExtBoot: Boot
     } else {
       shieldWorld(ext, 'with')
       operations ??= collectOperations(realWindow)
-      root = createScopeProxy(realWindow, builtins, operations)
+      root = createScopeProxy(realWindow, builtins, operations, frames)
       // The scope's `fetch` (a bare `fetch(...)`, `window.fetch`, `self.fetch`) and its
       // `XMLHttpRequest` are the relays': the host's answer for the extension's own file, the
       // page's for anything else. They land in the scope's own store, never on the page's window.
@@ -1136,7 +1192,8 @@ declare const __zenExtBoot: Boot
       chrome: engine ? engine.chrome : undefined,
       browser: engine ? (root.browser ?? engine.chrome) : undefined,
       isolation,
-      mirror: mirrorOnto(root)
+      mirror: mirrorOnto(root),
+      frames
     }
     scopes.set(key, scope)
     return scope
@@ -1253,6 +1310,7 @@ declare const __zenExtBoot: Boot
     const fn = sources[`${scope.ext.id}/${group.index}`]
     if (fn) {
       const w = scope.window
+      noteFrameIdiom(scope.frames, fn)
       try {
         fn.call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
       } catch (e) {
@@ -1329,6 +1387,7 @@ declare const __zenExtBoot: Boot
     }
     if (typeof fn !== 'function') throw new Error('no script')
     const w = scope.window
+    noteFrameIdiom(scope.frames, fn)
     // A webpack chunk of the content script's module graph (`chunkScript`, the stub's ask): the
     // block runs in the scope and the stub's wait is settled here, the chunk's throw as its
     // rejection; the host hears nothing of it but the exec's own outcome.

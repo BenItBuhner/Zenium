@@ -117,7 +117,7 @@ object RelativeImports {
         var length = text.length
         for (e in edits) length += e.replacement.length - (e.end - e.start)
         var held: String? = text
-        return ExtensionScripts.Source(length, TopLevelDeclarations.scanSource(text)) { sb ->
+        return ExtensionScripts.Source(length, TopLevelDeclarations.scanSource(text), FrameIdioms.scan(text)) { sb ->
             val t = held ?: throw IllegalStateException("a transient source is appended once")
             var pos = 0
             for (e in edits) {

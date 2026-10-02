@@ -380,6 +380,11 @@ class Extensions(private val host: Host) {
         }
     ) { userAgent }
     /**
+     * The `webRequest` report of an extension page's own subresource loads, and their relay for
+     * the response stage ([PageRequestReport], compat round 27): [interceptPageRequest].
+     */
+    private val pageRequests = PageRequestReport()
+    /**
      * The engine's last decisions on the tabs' requests ("allow|block|redirect|upgrade type
      * <micros>us <cpuMicros>cpu url": the wall-clock time `EngineSnapshot.decide` took and the
      * CPU time the thread spent in it, `?cpu` where the platform cannot tell), kept while `debug`
@@ -1161,10 +1166,12 @@ class Extensions(private val host: Host) {
                 // The page a message speaks of, when it names one (a content script's report of
                 // what it found on its page carries the page's address: the sweep reads the
                 // discovery off this line), at the top or one level down in a `data`, `payload`,
-                // `message` or `params` object (RSS Feed Reader's `{type, data: {feeds, url}}`).
+                // `message` or `params` object (RSS Feed Reader's `{type, data: {feeds, url}}`),
+                // under `url` or `location` (Save Page WE's `{type: "loadResource", location}`:
+                // the resources a saver asks its background for, read off these lines).
                 val about = (data as? JSONObject)?.let { d ->
                     (listOf(d) + listOf("data", "payload", "message", "params").mapNotNull { d.optJSONObject(it) })
-                        .firstNotNullOfOrNull { o -> o.optString("url", "").ifEmpty { null } }
+                        .firstNotNullOfOrNull { o -> listOf("url", "location").firstNotNullOfOrNull { k -> o.optString(k, "").ifEmpty { null } } }
                 }
                 listOfNotNull(
                     target?.opt("tabId")?.let { "tab=$it" },
@@ -2188,6 +2195,70 @@ class Extensions(private val host: Host) {
     }
 
     /**
+     * An EXTENSION WEBVIEW's request ([ExtensionWebView.Client.shouldInterceptRequest], the
+     * intercept thread): answered as [intercept] answers it and – while an extension listens for
+     * `webRequest` – reported as the page's own load ([PageRequestReport], compat round 27,
+     * R27-2), the request stage as `ext.request` with the served origin as the `initiator` and
+     * no tab, the response stage as `ext.response` while a response-stage listener exists
+     * (`ext.observeResponses`, the engine's switch the tab path's media relay turns on too):
+     * whole where the host answered – the extension's own file, the CORS proxy's reply, a
+     * refusal – and from the relay otherwise, which fetches the load the host would have left to
+     * WebView and streams it on. Without a listener for the response stage the request goes
+     * back to WebView as before. Chrome's events for an extension page's requests are the
+     * extension's own to see (`web_request_permissions.cc`); the runtime addresses them so.
+     */
+    fun interceptPageRequest(request: WebResourceRequest, page: Served, backgroundDocument: Boolean): WebResourceResponse? {
+        val answer = intercept(request, null, page, backgroundDocument)
+        if (!observeRequests) return answer
+        val load = PageRequestReport.Load(request.url.toString(), request.method ?: "GET", request.isForMainFrame, request.requestHeaders ?: emptyMap())
+        if (!PageRequestReport.reports(load)) return answer
+        val origin = "https://${page.id}$ORIGIN_SUFFIX"
+        val type = PageRequestReport.typeOf(load)
+        val requestId = requestIds.getAndIncrement().toString()
+        val sink = object : PageRequestReport.Sink {
+            override fun event(name: String, payload: JSONObject) {
+                main.post { chromeEvent(name, payload) }
+            }
+
+            override fun settle() = settleReports()
+        }
+        sink.event(PageRequestReport.REQUEST, PageRequestReport.request(load, load.url, origin, requestId, type))
+        val observeResponses = host.blocking.observeResponses
+        if (answer != null) {
+            if (observeResponses) {
+                for (payload in PageRequestReport.answered(requestId, load, type, answer.statusCode, answer.reasonPhrase, answer.responseHeaders, answer.mimeType, answer.encoding)) {
+                    sink.event(PageRequestReport.RESPONSE, payload)
+                }
+                sink.settle()
+            }
+            return answer
+        }
+        if (!observeResponses) return null
+        val relayed = pageRequests.relay(load, origin, type, requestId, { requestIds.getAndIncrement().toString() }, userAgent, sink) ?: return null
+        return WebResourceResponse(relayed.mime, relayed.charset, relayed.status, relayed.reason, relayed.headers, relayed.body)
+    }
+
+    /**
+     * Wait, bounded by [REPORT_SETTLE_MS], until the main thread has run every report posted
+     * ahead of this call ([PageRequestReport.Sink.settle]; the intercept thread, or the thread
+     * WebView reads a streamed body from). The reports go to the chrome as Java messages
+     * (`main.post`), while a page's bridge message arrives as a NATIVE task of the UI thread
+     * (`WebMessageListenerHolder.onPostMessage`), and the pump drains its native tasks before
+     * it yields to the Java queue (`MessagePumpForUI::DoNonDelayedLooperWork`; the same order
+     * `ImageOwner.kt` reads for a frame's hello against `onPageStarted`): a `complete` posted
+     * and then the body handed to WebView lost to the popup's `img.onload` question on both
+     * lanes (compat round 27 §3.2, R27-9), so the body waits for the report instead. Nothing on
+     * the main thread waits for an intercept, so the wait cannot cycle; past the bound the body
+     * goes anyway (a main thread held that long has the page waiting too).
+     */
+    private fun settleReports() {
+        if (Looper.myLooper() === Looper.getMainLooper()) return
+        val settled = java.util.concurrent.CountDownLatch(1)
+        main.post { settled.countDown() }
+        runCatching { settled.await(REPORT_SETTLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS) }
+    }
+
+    /**
      * The engine decided a tab's request ([DecisionObserver], on the IO thread that took it).
      * A decision an extension's rule took (`ext:` set) always reaches the core – it is that
      * extension's matched rule, action count and `onRuleMatchedDebug` event; while an extension
@@ -2816,6 +2887,8 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
+        /** The most an extension page's relayed body waits for its report to reach the chrome ([settleReports]). */
+        const val REPORT_SETTLE_MS = 1_000L
         /**
          * The document a tab shows while its extension page is held (or is being failed): empty,
          * in the page's colour scheme, so it reads as a page still loading, not as a page.

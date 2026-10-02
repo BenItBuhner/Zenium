@@ -186,6 +186,52 @@ const VIEW_EVENT_CONSTRUCTORS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * The function names the host gives a content script's function literal by what its text does
+ * with the frame tree (`FrameIdioms.kt`; the bootstrap reads `fn.name` before the unit runs and
+ * sets its scope's [ScopeFrames]): [SCOPE_FRAMES_NAME] for a unit that compares its own global
+ * with `top` / `parent` (`window === window.top`, the idiom content scripts tell the top frame
+ * by), [PAGE_FRAMES_NAME] for a unit that walks a window chain the DOM handed it
+ * (`win = win.parent`) against `window.top` without the idiom; anonymous otherwise.
+ */
+export const SCOPE_FRAMES_NAME = '__zenScopeFrames'
+export const PAGE_FRAMES_NAME = '__zenPageFrames'
+
+/**
+ * What a scope's `top` and `parent` answer for the frame's own window: the scope itself
+ * (`page` false, Chrome's isolated world – every path to the world's global yields its one
+ * wrapper) or the page's real window (`page` true). The scope proxy has one identity split an
+ * isolated world does not: `window`, `self`, `top` and `parent` are the proxy, but a window the
+ * DOM hands out – `document.defaultView`, an iframe's `contentWindow`, their `.parent` – is the
+ * real one, and a script that walks such a chain up to `window.top` (Save Page WE's
+ * `content-frame.js`: `win = document.defaultView; while (win != window.top) win = win.parent`,
+ * keying every frame for its capture) never gets there: `win.parent` of the real top window is
+ * the real top window, never the proxy, and the loop runs the renderer to V8's heap limit
+ * (compat round 27, WebView 113's `with` fallback). The two readings cannot both hold without
+ * putting the scope on the page's prototypes, so the choice is per scope by what its units'
+ * text does ([noteFrameIdiom]); `locked` marks a scope one unit's idiom decided for good.
+ */
+export interface ScopeFrames {
+  page: boolean
+  locked: boolean
+}
+
+/**
+ * The frame reading a unit's function name asks for its scope, applied before the unit runs:
+ * the idiom ([SCOPE_FRAMES_NAME]) keeps `top` / `parent` the scope's and locks the scope so;
+ * the walk ([PAGE_FRAMES_NAME]) makes them the page's unless an idiom unit locked the scope
+ * already – an extension with both in one scope keeps the reading the common idiom needs.
+ */
+export function noteFrameIdiom(frames: ScopeFrames, fn: unknown): void {
+  const name = typeof fn === 'function' ? (fn as { name?: unknown }).name : undefined
+  if (name === SCOPE_FRAMES_NAME) {
+    frames.page = false
+    frames.locked = true
+  } else if (name === PAGE_FRAMES_NAME && !frames.locked) {
+    frames.page = true
+  }
+}
+
+/**
  * A per-extension stand-in for `window` / `self` / `globalThis`: expandos land in a private
  * store and never reach the page, reads of browser globals fall through to the real window with
  * native methods bound so `window.setTimeout(...)` keeps working, page globals read as
@@ -204,6 +250,10 @@ const VIEW_EVENT_CONSTRUCTORS: ReadonlySet<string> = new Set([
  * for the real window in `init.view` (`instanceof`, `prototype` and the built instances are the
  * native's; `MouseEvent === event.constructor` is what the wrapper costs).
  *
+ * `top` and `parent`, when they are this frame's own window, answer the scope or the real
+ * window as `frames` says ([ScopeFrames]; the scope, absent); another frame's window stays the
+ * page's, as Chrome shows it.
+ *
  * What it cannot hide is what makes the host report reduced isolation: the page and the script
  * share prototypes, and a bare identifier the page defined is found through the real global
  * scope when the store and the browser do not have it.
@@ -211,7 +261,8 @@ const VIEW_EVENT_CONSTRUCTORS: ReadonlySet<string> = new Set([
 export function createScopeProxy(
   realWindow: object,
   builtins: Set<PropertyKey>,
-  operations: ReadonlySet<PropertyKey> = new Set()
+  operations: ReadonlySet<PropertyKey> = new Set(),
+  frames?: ScopeFrames
 ): Any {
   const store: Any = Object.create(null) as Any
   const bound = new Map<PropertyKey, { of: unknown; fn: unknown }>()
@@ -253,8 +304,11 @@ export function createScopeProxy(
       const value = win[key]
       // In an isolated world `window.top` and `window.parent` are the world's own global when
       // they are this frame's (the top frame: `window === window.top`, the idiom content scripts
-      // tell the top frame by); another frame's window stays the page's, as Chrome shows it.
-      if ((key === 'top' || key === 'parent') && value === realWindow) return proxy
+      // tell the top frame by); another frame's window stays the page's, as Chrome shows it. A
+      // scope whose unit walks a DOM-handed window chain against them reads the page's instead
+      // (ScopeFrames: the chain never reaches the proxy).
+      if ((key === 'top' || key === 'parent') && value === realWindow)
+        return frames && frames.page ? value : proxy
       if (typeof value === 'function' && typeof key === 'string') {
         const fn = value as { prototype?: unknown }
         if (VIEW_EVENT_CONSTRUCTORS.has(key)) {

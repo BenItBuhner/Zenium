@@ -42,6 +42,7 @@ import {
   splitDue,
   type Alarm
 } from '@core/extensions/api/alarms'
+import type { ContentSettingRule } from '@core/extensions/api/contentSettings'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
 import type { PersistedRule } from '@core/extensions/api/declarativeContent'
 import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
@@ -82,7 +83,11 @@ import {
 } from '@core/extensions/searchProvider'
 import { stripJsonComments } from '@core/extensions/manifest'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
-import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
+import {
+  extensionUrl,
+  parseExtensionUrl,
+  type RegisteredContentScript
+} from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
 import {
   foldFilesFor,
@@ -128,7 +133,7 @@ import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
-import { RequestLedger, type NotedRequest } from './extensionRequestLedger'
+import { RequestLedger, requestUrlKey, type NotedRequest } from './extensionRequestLedger'
 import { scriptObservation, type RequestObservation } from './requestObserver'
 import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
@@ -443,6 +448,23 @@ const OUTERMOST_FRAME = {
   'frameId' | 'parentFrameId' | 'frameType' | 'documentLifecycle'
 >
 
+/**
+ * A document's hop the navigation hook told before the hop's own request-stage decision reached
+ * the runtime, held for it (`documentHop`, compat round 27, R27-6).
+ */
+interface PendingHop {
+  tab: string
+  chromeTabId: number
+  from: string
+  to: string
+  timer: unknown
+}
+
+/** How long a held hop waits for its decision when no commit of the tab tells it first. */
+export const PENDING_HOP_MS = 1_000
+/** Hops held at most; the oldest is told as it stands when a newer one needs the room. */
+const PENDING_HOPS_CAP = 16
+
 /** The request headers Chrome withholds from a listener without `extraHeaders` (since 72). */
 const REQUEST_HEADERS_BEHIND_EXTRA: ReadonlySet<string> = new Set([
   'cookie',
@@ -540,6 +562,8 @@ interface RuntimeData {
   fontSettings: Record<string, FontValues>
   /** id → the `chrome.privacy` values it set, by setting key and scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
   privacy: Record<string, Record<string, ScopedValues>>
+  /** id → the `chrome.contentSettings` rules it set, by type (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
+  contentSettings: Record<string, Record<string, ContentSettingRule[]>>
   /**
    * id → the optional permissions `permissions.request` granted (API permissions and host
    * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
@@ -720,6 +744,7 @@ function emptyData(): RuntimeData {
     proxy: {},
     fontSettings: {},
     privacy: {},
+    contentSettings: {},
     grants: {}
   }
 }
@@ -742,6 +767,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.proxy = saved.proxy ?? {}
   data.fontSettings = saved.fontSettings ?? {}
   data.privacy = saved.privacy ?? {}
+  data.contentSettings = saved.contentSettings ?? {}
   data.grants = saved.grants ?? {}
   return data
 }
@@ -872,6 +898,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * chain's ids, the requests' initiators, the page-script observer's pairing (§7, 7.10).
    */
   private readonly ledger = new RequestLedger()
+  /**
+   * A document's hop the navigation hook reported before the hop's own request-stage decision
+   * reached the runtime, held for that decision ([documentHop], compat round 27, R27-6); keyed
+   * by tab and the hop's `from` ([requestUrlKey]).
+   */
+  private readonly pendingHops = new Map<string, PendingHop>()
   private subscribed = false
   private activeTabId: string | null = null
   /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
@@ -1258,6 +1290,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.proxy[id]
     delete this.data.fontSettings[id]
     delete this.data.privacy[id]
+    delete this.data.contentSettings[id]
     delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
@@ -1720,6 +1753,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   setPrivacyValues(id: string, values: Record<string, ScopedValues>): void {
     if (Object.keys(values).length === 0) delete this.data.privacy[id]
     else this.data.privacy[id] = values
+    this.save()
+  }
+
+  contentSettingRules(id: string): unknown {
+    return this.data.contentSettings[id] ?? {}
+  }
+
+  setContentSettingRules(id: string, rules: Record<string, ContentSettingRule[]>): void {
+    if (Object.keys(rules).length === 0) delete this.data.contentSettings[id]
+    else this.data.contentSettings[id] = rules
     this.save()
   }
 
@@ -2734,6 +2777,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         error: 'net::ERR_BLOCKED_BY_CLIENT',
         fromCache: false
       })
+    // A document's hop the navigation hook told ahead of this decision ([documentHop]) is
+    // told now, after the request it belongs to.
+    if (event.mainFrame) this.finishHop(tab, event.url)
   }
 
   /**
@@ -2751,10 +2797,82 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * `onCompleted` never forms (the stated ceiling). Nothing while no `webRequest` listener
    * exists, and no hop while the response stage is not observed (the switch is the gate, as
    * for the stamped path).
+   *
+   * The notice and the hop's own request-stage decision cross the bridge on different legs: the
+   * decision as a Runnable the intercept thread posted to the main looper, the notice straight
+   * from the UI thread's `shouldOverrideUrlLoading`, which Chromium dispatches through the
+   * looper's native poll – served ahead of a queued Java message – so the notice can land
+   * first (compat round 27, R27-6: Redirect Path's hop 80 ms after its decision was logged and
+   * the ledger empty, where Chrome never tells a hop before its request). A hop whose `from`
+   * the ledger knows no open main-frame request for ([RequestLedger.knowsMainFrame]) is held
+   * ([holdHop]) and told, in Chrome's order, by the decision when it lands ([onRequest] →
+   * [finishHop]); one no decision follows is told as before at the tab's commit – the commit
+   * is posted after the decision, so a decision still to come has come by then – or after
+   * [PENDING_HOP_MS], whichever is first. A hop whose request the ledger does know, latest or
+   * not, is told at once (the pinned case of a newer navigation in flight: no pair).
    */
   private documentHop(tab: string, chromeTabId: number, from: string, to: string): void {
     if (!this.observing) return
     const now = this.now()
+    if (this.observingResponses && !this.ledger.knowsMainFrame(tab, from, now)) {
+      this.holdHop(tab, chromeTabId, from, to)
+      return
+    }
+    this.tellHop(tab, chromeTabId, from, to, now)
+  }
+
+  /** [documentHop]'s hold of a hop for its request-stage decision; the newest notice at one `from` wins. */
+  private holdHop(tab: string, chromeTabId: number, from: string, to: string): void {
+    const key = `${tab}|${requestUrlKey(from)}`
+    const previous = this.pendingHops.get(key)
+    if (previous) {
+      this.pendingHops.delete(key)
+      this.timers.clearTimeout(previous.timer)
+    }
+    while (this.pendingHops.size >= PENDING_HOPS_CAP) {
+      const oldest = this.pendingHops.keys().next().value
+      if (oldest === undefined) break
+      this.releaseHop(oldest)
+    }
+    if (this.debug)
+      console.info(
+        `[zen] extensions: redirect pair ${from} -> ${to} (tab ${tab}) held for its request's decision`
+      )
+    const timer = this.timers.setTimeout(() => this.releaseHop(key), PENDING_HOP_MS)
+    this.pendingHops.set(key, { tab, chromeTabId, from, to, timer })
+  }
+
+  /** A held hop told now ([tellHop]) – its decision landed, its tab committed, or its hold ran out. */
+  private releaseHop(key: string): void {
+    const hop = this.pendingHops.get(key)
+    if (!hop) return
+    this.pendingHops.delete(key)
+    this.timers.clearTimeout(hop.timer)
+    this.tellHop(hop.tab, hop.chromeTabId, hop.from, hop.to, this.now())
+  }
+
+  /** The hop held for this main-frame decision ([holdHop]), if one is, told now that the decision's `onBeforeRequest` went out. */
+  private finishHop(tab: string | null, url: string): void {
+    if (tab === null || this.pendingHops.size === 0) return
+    this.releaseHop(`${tab}|${requestUrlKey(url)}`)
+  }
+
+  /** Every hop held for the tab, told now (the tab committed a document) or dropped (the tab is gone). */
+  private settleHops(tab: string, tell: boolean): void {
+    if (this.pendingHops.size === 0) return
+    for (const [key, hop] of [...this.pendingHops]) {
+      if (hop.tab !== tab) continue
+      if (tell) this.releaseHop(key)
+      else {
+        this.pendingHops.delete(key)
+        this.timers.clearTimeout(hop.timer)
+      }
+    }
+  }
+
+  /** [documentHop]'s telling of a hop: `onBeforeRedirect` of the pair and the target's `onBeforeRequest`. */
+  private tellHop(tab: string, chromeTabId: number, from: string, to: string, now: number): void {
+    if (!this.observing) return
     let hop: NotedRequest | null = null
     if (this.observingResponses) hop = this.documentRedirected(tab, chromeTabId, from, to, now)
     else if (this.debug)
@@ -3039,6 +3157,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Pages, popups and content scripts get it now; the background gets it when it runs, has it
    * held while it starts (its listeners register as its script runs, ahead of `ready`), and is
    * woken for it when it is stopped and persisted a listener for the event.
+   *
+   * A request an extension's own page made – its `initiator` the extension's origin, as the
+   * extension view's intercept reports its subresource loads (`Extensions.interceptPageRequest`,
+   * compat round 27 R27-2) – is that extension's alone: Chrome lets an extension see a
+   * subresource request when it has host access to the request's initiator, and an extension
+   * has that access to its own origin and never to another extension's
+   * (`WebRequestPermissions::CanExtensionAccessURL`, `web_request_permissions.cc`).
    */
   private emitRequest(
     tabId: string | null,
@@ -3052,6 +3177,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       tabId: details.tabId,
       windowId: WINDOW_ID
     }
+    const owner = details.initiator ? (parseExtensionUrl(details.initiator)?.id ?? null) : null
     const matching = (endpointId: string): Array<[number, RequestListener]> =>
       this.requestListenersOf(endpointId, key).filter(([, listener]) =>
         requestFilterMatches(listener.filter, probe)
@@ -3068,6 +3194,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         })
     }
     for (const [id, ext] of this.extensions) {
+      if (owner !== null && id !== owner) continue
       if (tabId !== null && !this.sees(ext, tabId)) continue
       for (const endpoint of this.router.of(id)) {
         if (endpoint.context !== 'background') send(endpoint.id)
@@ -3160,6 +3287,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           else this.dnr.tabNavigated(chromeTabId)
           // The page-script observer's pending pairs were the old document's.
           this.ledger.documentChanged(tabId)
+          // A hop held for a decision ([documentHop]) that has not come by the commit – posted
+          // after any decision of the document's requests – is told as it stands.
+          this.settleHops(tabId, true)
         }
         updated({ status: 'loading', url: p.url })
         return
@@ -3213,6 +3343,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.router.unregisterTab(tabId)
         this.webNavigation.tabRemoved(tabId)
         this.ledger.tabRemoved(tabId)
+        this.settleHops(tabId, false)
         return
       default:
         return
@@ -3225,16 +3356,26 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.emitForTab(tabId, 'webNavigation', event, [details], details.url)
   }
 
-  /** The core's state snapshot changed: diff tabs for onCreated / onRemoved / onActivated. */
+  /**
+   * The core's state snapshot changed: diff tabs for onCreated / onRemoved / onActivated. The
+   * snapshot follows the browser whether or not an extension is installed: one installed into
+   * a browser whose tabs moved while none was hears only what happens after its install, as in
+   * Chrome – not a tab opened, closed or brought to the front in the gap. (A snapshot left
+   * standing through the gap handed Save Page WE a `tabs.onActivated` for the tab already in
+   * front at its install, 22 ms after its worker's ready and before its own startup had stored
+   * the state the listener reads – its `TypeError` at `local["tabs-pagetype"][tab.id]`.)
+   */
   private onStateChanged(): void {
-    if (this.extensions.size === 0) return
+    const listening = this.extensions.size > 0
     const win = this.windowOf()
     const active = this.browser.tabs.activeTabFor(win)?.id ?? null
     const tabs = Object.values(this.browser.tabs.model.tabs)
     const now = this.snapshotTabs()
-    for (const tab of tabs) {
-      if (!this.knownTabs.has(tab.id))
-        this.emitForTab(tab.id, 'tabs', 'onCreated', [this.api.tabs.chromeTab(tab)])
+    if (listening) {
+      for (const tab of tabs) {
+        if (!this.knownTabs.has(tab.id))
+          this.emitForTab(tab.id, 'tabs', 'onCreated', [this.api.tabs.chromeTab(tab)])
+      }
     }
     for (const id of this.knownTabs.keys()) {
       if (now.has(id)) continue
@@ -3260,7 +3401,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
     if (active !== this.activeTabId) {
       this.activeTabId = active
-      if (active)
+      if (active && listening)
         this.emitForTab(active, 'tabs', 'onActivated', [
           { tabId: this.api.tabs.chromeIdFor(active), windowId: 1 }
         ])

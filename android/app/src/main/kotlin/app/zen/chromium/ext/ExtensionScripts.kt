@@ -27,9 +27,12 @@ object ExtensionScripts {
      * characters of `content.js`) is being assembled the heap holds the text and the builder, and
      * at the copy out only the builder and the script: two copies at the peak, never three. The
      * third copy was the allocation that failed on the 192 MB debug heap.
+     *
+     * [frames] is what the text does with the frame tree ([FrameIdioms.scan]), read off the text
+     * as [names] are: the group's function literal is named by it ([Group.frameName]).
      */
-    class Source(val length: Int, val names: List<String>, private val write: (Appendable) -> Unit) {
-        constructor(text: String) : this(text.length, TopLevelDeclarations.scanSource(text), { it.append(text) })
+    class Source(val length: Int, val names: List<String>, val frames: Int = 0, private val write: (Appendable) -> Unit) {
+        constructor(text: String) : this(text.length, TopLevelDeclarations.scanSource(text), FrameIdioms.scan(text), { it.append(text) })
 
         /** Write the text into `out` – the unit's builder, or the writer of its file ([documentStartTo]). */
         fun appendTo(out: Appendable) = write(out)
@@ -38,7 +41,7 @@ object ExtensionScripts {
             /** A text appended once and released: after [appendTo] the source no longer holds it. */
             fun transient(text: String): Source {
                 var held: String? = text
-                return Source(text.length, TopLevelDeclarations.scanSource(text)) { out ->
+                return Source(text.length, TopLevelDeclarations.scanSource(text), FrameIdioms.scan(text)) { out ->
                     out.append(held ?: throw IllegalStateException("a transient source is appended once"))
                     held = null
                 }
@@ -48,6 +51,13 @@ object ExtensionScripts {
 
     /** One content-script group: the extension id, the group index and its files' sources in order. */
     class Group(val extensionId: String, val index: Int, val sources: List<Source>, val isolation: String) {
+        /**
+         * The group's function literal's name, from what its files do with the frame tree
+         * ([FrameIdioms.nameOf] over the files' flags together): the bootstrap reads it off the
+         * function before the group runs. Empty for an anonymous literal.
+         */
+        val frameName: String = FrameIdioms.nameOf(sources.fold(0) { flags, source -> flags or source.frames })
+
         companion object {
             /** A group over texts held in memory. */
             fun of(extensionId: String, index: Int, sources: List<String>, isolation: String): Group =
@@ -334,7 +344,7 @@ object ExtensionScripts {
 
     /** Exactly what [appendGroupFunction] writes for `group` with `mirror` as its mirror tail, in characters. */
     fun groupFunctionChars(group: Group, mirror: String): Int {
-        var count = FUNCTION_HEAD.length + mirror.length + FUNCTION_TAIL.length
+        var count = functionHead(group.frameName).length + FUNCTION_PARAMS.length + mirror.length + FUNCTION_TAIL.length
         if (group.isolation == "with") count += WITH_HEAD.length + 1
         for (source in group.sources) count += SOURCE_JOIN_HEAD.length + source.length + SOURCE_JOIN_TAIL.length
         return count
@@ -375,12 +385,15 @@ object ExtensionScripts {
      * a `;` (a file ending in an expression must not become a call of the next file's leading
      * parenthesis). The mirror ([TopLevelDeclarations.mirror]) hands the files' top-level
      * declarations to the extension's scope, where Chrome's world would have had them as globals.
+     * The literal is named by what the files do with the frame tree ([Group.frameName]:
+     * `function __zenScopeFrames(window, …)`), a name the bootstrap reads before the group runs
+     * and the function's own body alone can see; anonymous when they do nothing of note.
      */
     fun appendGroupFunction(out: Appendable, group: Group) = appendGroupFunction(out, group, mirrorOf(group))
 
     /** [appendGroupFunction] with the group's mirror ([mirrorOf]) computed by the caller – the layout counts it first. */
     fun appendGroupFunction(out: Appendable, group: Group, mirror: String) {
-        out.append(FUNCTION_HEAD)
+        out.append(functionHead(group.frameName)).append(FUNCTION_PARAMS)
         if (group.isolation == "with") out.append(WITH_HEAD)
         for (source in group.sources) {
             out.append(SOURCE_JOIN_HEAD)
@@ -400,8 +413,24 @@ object ExtensionScripts {
         return TopLevelDeclarations.mirror(names)
     }
 
-    /** The parameters of a content-script or `executeScript` function literal; the bootstrap's `runGroup` / `exec` call it with these. */
-    private const val FUNCTION_HEAD = "function(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM}){"
+    /** A function literal's keyword; its name ([FrameIdioms]), when it has one, goes between this and the parameters. */
+    private const val FUNCTION_KEYWORD = "function"
+
+    /**
+     * The literal's text up to its parameters: the keyword alone for an anonymous one, the
+     * keyword, a space and the name otherwise – `function __zenScopeFrames`. The space is the
+     * syntax: glued on, `function__zenScopeFrames(window,…){` is an identifier and a call, and
+     * the whole script a SyntaxError (round 27's first `[savepagewe]` run lost `content-frame.js`
+     * to "missing ) after argument list" that way, and every idiom extension's document-start
+     * script would have gone with it).
+     */
+    private fun functionHead(name: String): String = if (name.isEmpty()) FUNCTION_KEYWORD else "$FUNCTION_KEYWORD $name"
+
+    /** The most [functionHead] adds past the keyword: the space and the longest name. */
+    private val FUNCTION_NAME_ROOM: Int = 1 + FrameIdioms.MAX_NAME_LENGTH
+
+    /** The parameters of a content-script function literal; the bootstrap's `runGroup` calls it with these. */
+    private const val FUNCTION_PARAMS = "(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM}){"
 
     /**
      * The `executeScript` wrapper's seventh parameter, where a script injection's completion value
@@ -411,8 +440,8 @@ object ExtensionScripts {
      */
     const val COMPLETION_PARAM = "__zenCompletion"
 
-    /** The `executeScript` wrapper's head: [FUNCTION_HEAD]'s parameters and [COMPLETION_PARAM]. */
-    private const val EXEC_FUNCTION_HEAD = "function(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM},$COMPLETION_PARAM){"
+    /** The `executeScript` wrapper's parameters: [FUNCTION_PARAMS]'s and [COMPLETION_PARAM]; the bootstrap's `exec` calls it with the first six. */
+    private const val EXEC_FUNCTION_PARAMS = "(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM},$COMPLETION_PARAM){"
 
     /** Written before a script's last expression statement, so the statement's value is the parameter's. */
     private const val COMPLETION_ASSIGN = "$COMPLETION_PARAM="
@@ -452,14 +481,23 @@ object ExtensionScripts {
      * returns, nothing. So when the text's last statement is an expression
      * ([TopLevelDeclarations.lastExpressionStatement]) the wrapper writes it into its completion
      * parameter and returns that after the mirror; a promise there is awaited by the bootstrap as
-     * a `func`'s is. A script ending in a declaration or a block answers undefined, as in Chrome.
+     * a `func`'s is. A script ending in a bare block answers the block's last statement (Auto Tab
+     * Discard's `meta.js` is one block whose last statement is its report; Chrome answers the
+     * report); one ending in a declaration answers undefined, as in Chrome.
+     *
+     * The wrapper's function literal is named by what the injected text does with the frame
+     * tree, as a content script's group is ([FrameIdioms]; `code`, `funcSource` or the files
+     * streamed in by [execScript]): Save Page WE's `content-frame.js` is a `scripting` injection,
+     * not a manifest script, and its chain walk against `window.top` is what the name tells the
+     * bootstrap before the file runs.
      */
     fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?, scoped: Boolean = false): String {
         val body = execBody(code, funcSource, argsJson)
         val script = if (funcSource == null) code else null
         val completion = if (script != null) TopLevelDeclarations.lastExpressionStatement(body) else null
         val captured = if (completion == null) body else body.substring(0, completion[0]) + COMPLETION_ASSIGN + body.substring(completion[0])
-        return execHead(token, extensionId, kind, payload, scoped) + captured +
+        val name = FrameIdioms.nameOf(FrameIdioms.scan(code ?: "") or FrameIdioms.scan(funcSource ?: ""))
+        return execHead(token, extensionId, kind, payload, scoped, name) + captured +
             (if (script != null) TopLevelDeclarations.mirror(TopLevelDeclarations.scanSource(script)) else "") +
             (if (completion != null) COMPLETION_RETURN else "") +
             execTail(scoped)
@@ -473,10 +511,14 @@ object ExtensionScripts {
      */
     const val NO_ACCESS = "Cannot access contents of the page. Extension manifest must request permission to access the respective host."
 
-    private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject, scoped: Boolean): String =
+    /** The `exec` call's text up to and including the wrapper's opening line; `name` is the literal's ([FrameIdioms.nameOf]), empty for anonymous. */
+    private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject, scoped: Boolean, name: String): String =
         "(typeof __zenExtExec===\"function\"?__zenExtExec:function(){throw new Error(${JSONObject.quote(NO_ACCESS)})})" +
             "(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
-            EXEC_FUNCTION_HEAD + (if (scoped) "with(window){" else "") + "\n"
+            functionHead(name) + EXEC_FUNCTION_PARAMS + (if (scoped) WITH_HEAD else "") + "\n"
+
+    /** Where the literal's space and name go in an [execHead] written anonymous: after the keyword – before the parameters, the `with` head and the newline. */
+    private fun execNameOffsetFromEnd(scoped: Boolean): Int = EXEC_FUNCTION_PARAMS.length + (if (scoped) WITH_HEAD.length else 0) + 1
 
     private fun execTail(scoped: Boolean): String = if (scoped) EXEC_TAIL_SCOPED else EXEC_TAIL
 
@@ -519,7 +561,7 @@ object ExtensionScripts {
         scoped: Boolean = false,
         mirror: Boolean = true
     ): String {
-        val head = execHead(token, extensionId, kind, payload, scoped)
+        val head = execHead(token, extensionId, kind, payload, scoped, "")
         val body = execBody(code, funcSource, argsJson)
         val tail = execTail(scoped)
         // A script's declarations (`code`, `files`) are mirrored onto the scope after the body; a
@@ -529,15 +571,19 @@ object ExtensionScripts {
         // written into the completion parameter in place, which shifts the text after it once.
         // A module of the content script's graph run as a block (`mirror` false, the exec of kind
         // `chunk`) keeps its top level to itself, as a module's is its own in Chrome, and has no
-        // completion value to answer.
+        // completion value to answer. The literal's name ([FrameIdioms]) is read off the text the
+        // same way and written into the head in place at the end – a second shift, only when
+        // the text asks for a name.
         val mirrored = mirror && funcSource == null && (code != null || files.isNotEmpty())
         val capacity = (prefix?.length ?: -1) + 1 + GUARD_HEAD.length + head.length + body.length +
             files.sumOf { it.length().toInt() + FILE_JOIN.length } + tail.length + GUARD_TAIL.length +
-            (if (named) SOURCE_URL_TAIL.length else 0) +
+            (if (named) SOURCE_URL_TAIL.length else 0) + FUNCTION_NAME_ROOM +
             (if (mirrored) TopLevelDeclarations.MIRROR_ROOM + COMPLETION_ASSIGN.length + COMPLETION_RETURN.length else 0)
         val sb = StringBuilder(capacity)
         if (prefix != null) sb.append(prefix).append('\n')
         sb.append(GUARD_HEAD).append(head)
+        val nameAt = sb.length - execNameOffsetFromEnd(scoped)
+        var frames = FrameIdioms.scan(code ?: "") or FrameIdioms.scan(funcSource ?: "")
         val names = LinkedHashSet<String>()
         val bodyStart = sb.length
         var lastStart = bodyStart
@@ -558,6 +604,7 @@ object ExtensionScripts {
                 }
             }
             if (mirrored) names.addAll(TopLevelDeclarations.scanSource(sb, fileStart, sb.length))
+            frames = frames or FrameIdioms.scan(sb, fileStart, sb.length)
         }
         val completion = if (mirrored) TopLevelDeclarations.lastExpressionStatement(sb, lastStart, sb.length) else null
         if (completion != null) sb.insert(completion[0], COMPLETION_ASSIGN)
@@ -565,6 +612,8 @@ object ExtensionScripts {
         if (completion != null) sb.append(COMPLETION_RETURN)
         sb.append(tail).append(GUARD_TAIL)
         if (named) sb.append(SOURCE_URL_TAIL)
+        val name = FrameIdioms.nameOf(frames)
+        if (name.isNotEmpty()) sb.insert(nameAt, functionHead(name).substring(FUNCTION_KEYWORD.length))
         return sb.toString()
     }
 

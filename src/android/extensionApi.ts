@@ -11,6 +11,7 @@ import {
   normalizeCaptureOptions
 } from '@core/extensions/api/capture'
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
+import type { ContentSettingRule } from '@core/extensions/api/contentSettings'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
 import type { PersistedRule } from '@core/extensions/api/declarativeContent'
 import { parseCssColor, type CssRgba } from '@core/extensions/api/cssColor'
@@ -90,6 +91,7 @@ import {
   FONT_SETTINGS_PERMISSION,
   type WebViewFontLayer
 } from './extensionFontSettings'
+import { AndroidContentSettings, CONTENT_SETTINGS_PERMISSION } from './extensionContentSettings'
 import {
   AndroidPrivacy,
   PRIVACY_PERMISSION,
@@ -259,6 +261,9 @@ export interface ApiHost {
   /** `chrome.privacy`: an extension's values by setting key and scope, kept across sessions (`extensionPrivacy.ts`). */
   privacyValues(id: string): unknown
   setPrivacyValues(id: string, values: Record<string, ScopedValues>): void
+  /** `chrome.contentSettings`: an extension's rules by type, kept across sessions (`extensionContentSettings.ts`). */
+  contentSettingRules(id: string): unknown
+  setContentSettingRules(id: string, rules: Record<string, ContentSettingRule[]>): void
   /** The container ids of the regular (non-private) partitions, the scope of the privacy layer's request rules. */
   regularPartitions(): readonly string[]
   /** The privacy layer's request rule sets to the blocking engine; false while the engine is not up yet. */
@@ -565,6 +570,8 @@ export class ExtensionApi {
   readonly fontSettings: AndroidFontSettings
   /** `chrome.privacy`: the extensions' layer over the browser settings, published to the services (`extensionPrivacy.ts`). */
   readonly privacy: AndroidPrivacy
+  /** `chrome.contentSettings`: the extensions' rules over the permission store's override (`extensionContentSettings.ts`). */
+  readonly contentSettings: AndroidContentSettings
   readonly browsingData: AndroidBrowsingData
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
@@ -665,6 +672,16 @@ export class ExtensionApi {
       emit: (id, ns, name, args) => host.emit(id, ns, name, args),
       warn: (message) => console.warn(`[zen] ${message}`)
     })
+    this.contentSettings = new AndroidContentSettings({
+      attached: (id) => host.attached(id),
+      holdsPermission: (ext) => this.holdsPermission(ext, CONTENT_SETTINGS_PERMISSION),
+      allowedInPrivate: (id) => host.attached(id)?.record.allowPrivate === true,
+      privateTabOpen: () => host.privateTabOpen(),
+      persistedRules: (id) => host.contentSettingRules(id),
+      persistRules: (id, rules) => host.setContentSettingRules(id, rules),
+      permissions: host.browser.permissions,
+      warn: (message) => console.warn(`[zen] ${message}`)
+    })
     this.browsingData = new AndroidBrowsingData({ browser: host.browser })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
@@ -728,11 +745,14 @@ export class ExtensionApi {
    */
   prime(records: readonly PrivacyPrimeRecord[]): void {
     this.privacy.prime(records)
+    // The same for the `chrome.contentSettings` rules: the first pages' `WebSettings` read them.
+    this.contentSettings.prime(records)
   }
 
   /** The user allowed an extension in private tabs, or withdrew that: the private tabs' values re-resolve. */
   privateAccessChanged(): void {
     this.privacy.privateAccessChanged()
+    this.contentSettings.privateAccessChanged()
   }
 
   /** The extension attached: what this layer restores before its background runs. */
@@ -742,6 +762,7 @@ export class ExtensionApi {
     this.proxy.load(ext)
     this.fontSettings.load(ext)
     this.privacy.load(ext)
+    this.contentSettings.load(ext)
     this.loadGrants(ext)
   }
 
@@ -787,6 +808,7 @@ export class ExtensionApi {
     this.proxy.unload(id)
     this.fontSettings.unload(id)
     this.privacy.unload(id)
+    this.contentSettings.unload(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
     this.grantedApis.delete(id)
@@ -1033,6 +1055,12 @@ export class ExtensionApi {
         // The ChromeSettings of `chrome.privacy` (`extensionPrivacy.ts`): the values kept per
         // extension, resolved by install order, published to the services; Chrome's error without the permission.
         return this.privacy.call(ext, method, args)
+      case 'contentSettings':
+        // The ContentSettings of `chrome.contentSettings` (`extensionContentSettings.ts`): the
+        // rules kept per extension and type, decided through the permission store's override
+        // wherever the phone asks the core (`javascript` and `images` per navigation, the
+        // pop-up blocker, the prompts); the error without the permission.
+        return this.contentSettings.call(ext, method, args)
       case 'browsingData':
         // Site data and the cache through the engine's clearing, history and downloads through
         // the models (`extensionBrowsingData.ts`); Chrome's error without the permission.

@@ -13,9 +13,12 @@ import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '@shared/fonts'
 import { DEFAULT_AUTOFILL_SETTINGS } from '@shared/defaults'
 import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from '@shared/privacy'
 import { RuleEngine } from '@core/blocking/engine'
+import { ContentRulesService } from '@core/contentRules'
 import { moveTab as moveTabInModel, type Model } from '@core/model'
 import type { Browser } from '@core/browser'
+import { PermissionService } from '@core/permissions'
 import type { SpeechHost, SpeechHostEvent, SpeechUtteranceOptions, StoreIO } from '@core/platform'
+import type { ContentRules } from '@shared/contentRules'
 import type { ReadAloudVoice } from '@shared/readAloud'
 import type { ZenWindow } from '@core/window'
 import { newRecord, type ExtensionRecord } from '@core/extensions/registry'
@@ -569,6 +572,12 @@ export interface Harness {
   passwords: { offerToSave: boolean }
   /** Every map the runtime published to `state.setExtensionControls`, in order (the whole map each time). */
   controls: Array<Record<string, ExtensionControl>>
+  /** The core's permission store (`browser.permissions`), real: `chrome.contentSettings` installs its override here. */
+  permissions: PermissionService
+  /** The core's content-rules service over it (`browser.contentRules`), started: what the Kotlin host asks per navigation. */
+  contentRules: ContentRulesService
+  /** Every document the rules service pushed to the views (`platform.views.setContentRules`): a forced push announces an extension's rule change. */
+  pushedRules: ContentRules[]
   /** Write the debounced JSON documents out now and parse one of them. */
   saved: (name: string) => Record<string, unknown>
 }
@@ -659,8 +668,21 @@ export function harness(
     preloadPages: DEFAULT_PRELOAD_PAGES
   }
   const controls: Harness['controls'] = []
+  // The permission store and the content-rules service are the core's own: an extension's
+  // `contentSettings` rule reaches the pages through the store's override and the service's
+  // forced push, so the test reads them as the Kotlin host would.
+  const permissions = new PermissionService(io, {
+    show: async () => 'block',
+    cancel: () => undefined
+  })
+  const pushedRules: ContentRules[] = []
   const browser = {
-    platform: { io, speech },
+    platform: {
+      io,
+      speech,
+      views: { setContentRules: (rules: ContentRules) => void pushedRules.push(rules) }
+    },
+    permissions,
     readAloud: {
       uiState: () => (readAloud.status === 'idle' ? null : { status: readAloud.status }),
       pause: () => {
@@ -720,6 +742,9 @@ export function harness(
       }
     }
   } as unknown as Browser
+  const contentRules = new ContentRulesService(browser)
+  ;(browser as unknown as { contentRules: ContentRulesService }).contentRules = contentRules
+  contentRules.start()
   const clock = { now: 1_700_000_000_000 }
   const timers: Harness['timers'] = []
   // A 412x915 CSS px phone at 2.625x (a Pixel's), upright; `turnScreen` rotates it.
@@ -807,6 +832,9 @@ export function harness(
     fonts,
     passwords,
     controls,
+    permissions,
+    contentRules,
+    pushedRules,
     turnScreen: (angle) => {
       screen.angle = angle
       const landscape = angle === 90 || angle === 270

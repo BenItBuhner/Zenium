@@ -121,8 +121,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val dialogsDismissed = JSONArray()
     /** Each time something else had the screen when a finger was due (the launcher, Overview) and the browser was brought back. */
     private val screenRestored = JSONArray()
-    /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissSheets]). */
+    /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissNativeSheets]). */
     private val sheetsDismissed = JSONArray()
+    /** Each row boundary the chrome had a surface of its own up at (the Downloads sheet, a panel), with its title and what the backs left ([dismissChromeSurface]). */
+    private val chromeSurfacesDismissed = JSONArray()
     /** Each chrome document found without the sweep's hooks – its renderer gone and the chrome rebuilt by the host ([chromeHooksLost]). */
     private val chromeRebuilds = JSONArray()
     /** When the hooks were last found gone (uptime), so a `zen()` call that saw it answers the prompt the old document took with it. */
@@ -211,6 +213,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
             results.put("sheetsDismissed", sheetsDismissed)
+            results.put("chromeSurfacesDismissed", chromeSurfacesDismissed)
             results.put("chromeRebuilds", chromeRebuilds)
             write()
         }
@@ -912,6 +915,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // this column says so (Paperpile's worker reads `SharedArrayBuffer.prototype` at its start).
         val isolation = runCatching { json(tabEval(view, ISOLATION_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) }
         detail.put("isolation", isolation)
+        if (uncaught.isNotEmpty()) {
+            // A console line names an error thrown inside the document-start script as
+            // `<document URL>:2` – the bootstrap's own line (the config on line 1) – which says
+            // neither the code nor the caller; the page's debug record keeps the event's stack
+            // with the column (`__zenExtStats.errors`, compat round 27: Save Page WE's worker),
+            // and the row's bridge since its install shows what the host sent the worker in its
+            // first seconds.
+            detail.put("uncaughtStacks", runCatching { targetErrors(view) }.getOrElse { JSONArray().put(JSONObject().put("kept", "unread").put("message", it.toString().take(200))) })
+            var trace: List<String> = emptyList()
+            instrumentation.runOnMainSync { trace = host.extensions.traceSnapshot(row.id) }
+            val name = "bridge-${entry.optString("slug")}-background.txt"
+            File(out, name).writeText(trace.joinToString("\n"))
+            detail.put("bridgeFile", name).put("bridgeLines", trace.size)
+        }
         stage(
             entry, "background",
             if (uncaught.isEmpty()) "P" else "PARTIAL",
@@ -1186,9 +1203,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val tabsBefore = tabUrls().keys
         val since = SystemClock.uptimeMillis()
+        val openInTab = optionsUi?.optBoolean("open_in_tab", false) ?: (optionsUi == null)
         coreCall("extension.openOptions", """{"id":${JSONObject.quote(row.id)}}""")
         var where = ""
         var tabId: String? = null
+        // An options page opened in a tab that hands its tab off to the extension's own site at
+        // once (Zoom to Fill's `options.html` → https://zoomtofill.com/settings; compat round 27,
+        // R27-3): the site's tab is the options surface the extension chose, graded on the landing
+        // with the site named – before this the probe raced the hand-off, reading a P off the
+        // extension document the instant before it left (156) or a PARTIAL off "a tab opened but
+        // never rendered" when it had left already (113).
+        var handOff: String? = null
         val view: WebView? = poll(OPTIONS_TIMEOUT_MS, 500) {
             val sheet = popupView()
             if (sheet != null && sheet.context == "options" && rendered(sheet)) {
@@ -1200,7 +1225,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 dismissDialog()?.let { text -> Log.w(TAG, "${row.name} options: a dialog pressed away: $text") }
                 return@poll null
             }
-            val opened = urls.filterKeys { it !in tabsBefore }.entries.firstOrNull { extensionPage(it.value) }
+            val openedNow = urls.filterKeys { it !in tabsBefore }
+            val opened = openedNow.entries.firstOrNull { extensionPage(it.value) }
+                ?: openedNow.entries.firstOrNull { openInTab && webPage(it.value) }?.also { handOff = it.value }
             if (opened != null) {
                 var v: TabWebView? = null
                 instrumentation.runOnMainSync { v = host.tabs.get(opened.key) }
@@ -1211,29 +1238,55 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     return@poll tabView
                 }
             }
+            handOff = null
             null
         }
         SystemClock.sleep(1_800)
+        // The extension document read rendered and then left for the site: the landing is read.
+        if (view != null && where == "tab" && openInTab && handOff == null) {
+            val now = tabId?.let { tabUrls()[it] }
+            if (now != null && webPage(now)) {
+                handOff = now
+                poll(OPTIONS_HAND_OFF_MS, 500) { if (rendered(view)) true else null }
+            }
+        }
         snap("$slug-options")
-        val detail = JSONObject().put("page", page).put("openInTab", optionsUi?.optBoolean("open_in_tab", false) ?: (optionsUi == null)).put("where", where)
+        val detail = JSONObject().put("page", page).put("openInTab", openInTab).put("where", where)
+        handOff?.let { detail.put("handOff", it) }
         if (view != null) {
             val dom = json(tabEval(view, DOM_REPORT))
             val console = consoleOf(view)
             val uncaught = console.filter(::isUncaught)
             detail.put("dom", dom).put("console", JSONArray(console.takeLast(20)))
             if (view is ExtensionWebView) detail.put("sheet", sheetSize(view))
-            stage(
-                entry, "options",
-                if (uncaught.isEmpty()) "P" else "PARTIAL",
-                "in a $where: ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\" (${extensionPath(dom.optString("url")).take(60)})" +
-                    (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
-                detail
-            )
+            val site = handOff
+            if (site != null) {
+                // The site's own console is not the extension's: the landing drawn is the measure.
+                val drawn = dom.optInt("els") > 3 || dom.optString("text").isNotBlank()
+                stage(
+                    entry, "options",
+                    if (drawn) "P" else "PARTIAL",
+                    "in a tab the options page handed off to ${site.take(100)}" +
+                        (if (drawn) ": ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\""
+                        else ", whose document had not drawn ${OPTIONS_HAND_OFF_MS / 1000} s after the hand-off (${dom.optInt("els")} elements, readyState ${dom.optString("readyState")})") +
+                        (if (uncaught.isNotEmpty()) "; the site's uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
+                    detail
+                )
+            } else {
+                stage(
+                    entry, "options",
+                    if (uncaught.isEmpty()) "P" else "PARTIAL",
+                    "in a $where: ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\" (${extensionPath(dom.optString("url")).take(60)})" +
+                        (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
+                    detail
+                )
+            }
         } else {
             val sheet = popupView()
             val openedTabs = tabUrls().filterKeys { it !in tabsBefore }
             val opened = openedTabs.values.toList()
             detail.put("openedTabs", JSONArray(opened))
+            if (openInTab) openedTabs.values.firstOrNull { !extensionPage(it) && webPage(it) }?.let { detail.put("handOff", it) }
             if (sheet != null) detail.put("sheetDom", json(tabEval(sheet, DOM_REPORT))).put("sheetConsole", JSONArray(consoleOf(sheet).takeLast(20)))
             val seen = sheet?.let(::seenInView)
             if (sheet != null && seen != null && shownDespiteEmptyDom(seen)) {
@@ -1267,6 +1320,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 entry, "options",
                 if (sheet != null || opened.isNotEmpty()) "PARTIAL" else "F",
                 if (sheet != null) "the options sheet came up but its document stayed empty after ${OPTIONS_TIMEOUT_MS / 1000} s: ${detail.optJSONObject("sheetDom")?.toString()?.take(200)}"
+                else if (detail.has("handOff")) "the options page handed its tab off to ${detail.optString("handOff").take(100)} and the landing never rendered within ${OPTIONS_TIMEOUT_MS / 1000} s (the site's or the network's)"
                 else if (opened.isNotEmpty()) "a tab opened (${opened.joinToString().take(120)}) but never rendered within ${OPTIONS_TIMEOUT_MS / 1000} s"
                 else "no options sheet or tab within ${OPTIONS_TIMEOUT_MS / 1000} s",
                 detail
@@ -1979,7 +2033,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val extra = JSONObject()
         val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", "#phrase")))
         val point = screenPoint(view, centre)
-        val buttonProbe = "(function(){var b=document.querySelector(${JSONObject.quote(button)});return JSON.stringify({pass:!!b&&b.offsetParent!==null,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
+        // Shown = laid out and not `visibility: hidden`; `offsetParent` is null for a `position: fixed`
+        // button (Simple Translate's), which round 27's BEFORE read as absent.
+        val buttonProbe = "(function(){var b=document.querySelector(${JSONObject.quote(button)});var shown=!!b&&b.getClientRects().length>0&&getComputedStyle(b).visibility!=='hidden';return JSON.stringify({pass:shown,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
         var found = JSONObject()
         var how = "none"
         if (point != null && onScreen("$label: the long press")) {
@@ -4051,7 +4107,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // address, is non-unique and needs nothing).
         val restorePlaintext = allowPlaintext(listOf(gallery), factor, extra)
         try {
-            fixture(gallery, factor, 2_500)
+            val (_, galleryView) = fixture(gallery, factor, 2_500)
             val before = tabUrls().keys
             val since = StepEvidence(row)
             coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -4062,6 +4118,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 tapLabel(tap, factor, steps, "menu")
                 extra.put("menu", steps)
             }
+            // Fatkun mounts its listing INSIDE the source tab (`#ftk-sidepanel-iframe-container` with an
+            // `<iframe src=output.html>` of the extension's origin, its default "current" mode; round
+            // 27's BEFORE read "no panel, popup or page" with the frame standing): another origin's
+            // frame in the tab's WebView, found from the page (through open shadow roots, as
+            // [clearCache] finds its confirmation) and read through the accessibility tree, which
+            // Chromium exposes across frames – [inPageFrameListing].
+            val frameSelector = JSONObject.quote("iframe[src*=\"${row.id}\"]")
+            val inPageFrameExpr = "(function(){var sel=$frameSelector;var find=function(root){var f=root.querySelector(sel);if(f)return f;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){if(all[i].shadowRoot){var r=find(all[i].shadowRoot);if(r)return r}}return null};" +
+                "var f=find(document);if(!f)return JSON.stringify({frame:false});var r=f.getBoundingClientRect();return JSON.stringify({frame:true,w:r.width,h:r.height,x:r.left,y:r.top,src:String(f.src).slice(0,160)})})()"
+            val inPageFrame = { json(runCatching { tabEval(galleryView, inPageFrameExpr) }.getOrDefault("{}")).takeIf { it.optBoolean("frame") && it.optDouble("w") > 80 && it.optDouble("h") > 80 } }
             var surface = ""
             var list = JSONObject()
             val found = poll(scaled(30_000, factor), 700) {
@@ -4074,14 +4140,28 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     surface = if (pageView != null) "tab ${extensionPath(page!!.value).take(40)}" else "sheet (${sheet!!.context})"
                     list = json(tabEval(view, IMAGE_LIST_REPORT))
                     if (list.optBoolean("pass")) view else null
-                } else null
+                } else {
+                    val frame = inPageFrame()
+                    if (frame != null) {
+                        surface = "panel in the page (iframe ${frame.optString("src").substringAfter(row.id).take(40)}, ${frame.optInt("w")}x${frame.optInt("h")} css px)"
+                        list = inPageFrameListing(galleryView, frame)
+                        if (list.optBoolean("pass")) galleryView else null
+                    } else null
+                }
             }
             if (found == null) {
                 // The surface is up without the pictures: read it once more, settled.
-                (openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView())?.let { view ->
+                val view = openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView()
+                if (view != null) {
                     SystemClock.sleep(scaled(3_000, factor))
                     list = json(tabEval(view, IMAGE_LIST_REPORT))
                     list.put("console", JSONArray(consoleOf(view).takeLast(10)))
+                } else {
+                    inPageFrame()?.let { frame ->
+                        SystemClock.sleep(scaled(3_000, factor))
+                        list = inPageFrameListing(galleryView, frame)
+                        list.put("console", JSONArray(consoleOf(galleryView).takeLast(10)))
+                    }
                 }
             }
             extra.put("surface", surface).put("list", list).put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
@@ -4097,6 +4177,35 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         } finally {
             restorePlaintext?.invoke()
         }
+    }
+
+    /**
+     * An image listing inside another origin's frame in the tab's WebView (Fatkun's `output.html`
+     * panel), read as [IMAGE_LIST_REPORT] reads a document the driver can script: the nodes of the
+     * accessibility tree within the frame's screen bounds – the pictures as `android.widget.Image`
+     * nodes, their sizes as "320 x 240" labels (Fatkun prints `width x height` on every card) –
+     * the better count the photos; `pass` at the gallery's four, the report's bar.
+     */
+    private fun inPageFrameListing(view: WebView, frame: JSONObject): JSONObject {
+        val report = JSONObject().put("byAccessibility", true).put("frame", frame)
+        val topLeft = screenPoint(view, JSONObject().put("x", frame.optDouble("x")).put("y", frame.optDouble("y")))
+        val bottomRight = screenPoint(view, JSONObject().put("x", frame.optDouble("x") + frame.optDouble("w")).put("y", frame.optDouble("y") + frame.optDouble("h")))
+        if (topLeft == null || bottomRight == null) return report.put("pass", false).put("photos", 0).put("images", 0).put("text", "")
+        val bounds = Rect(topLeft.first.toInt(), topLeft.second.toInt(), bottomRight.first.toInt(), bottomRight.second.toInt())
+        var images = 0
+        var labels = 0
+        val texts = ArrayList<String>()
+        nodes { node ->
+            val b = Rect().also(node::getBoundsInScreen)
+            if (!bounds.contains(b.centerX(), b.centerY())) return@nodes false
+            val text = (node.text ?: node.contentDescription)?.toString()?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+            if (node.className == "android.widget.Image") images++
+            if (FIXTURE_PICTURE_SIZE.containsMatchIn(text)) labels++
+            if (text.isNotEmpty() && texts.size < 24) texts += text
+            false
+        }
+        val photos = maxOf(images, labels)
+        return report.put("pass", photos >= 4).put("photos", photos).put("images", images).put("labels", labels).put("text", texts.joinToString(" / ").take(200))
     }
 
     /**
@@ -4445,21 +4554,53 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `video.html`, an `action.onClicked` row without a popup): the fixture settles, the action
      * is clicked, `expr` is polled on the page.
      */
-    private fun actionMarker(label: String, page: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun actionMarker(label: String, page: String, expr: String, settleMs: Long = 25_000, scriptSetting: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val (_, view) = fixture(page, factor, 2_500)
-        val since = StepEvidence(row)
-        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val found = pollExpr(view, expr, scaled(settleMs, factor))
-        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
-        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
-        since.record(extra, "atEnd")
-        SystemClock.sleep(600)
-        snap("${entry.optString("slug")}-action-core")
-        runCatching { coreCall("extension.closePopup", "null") }
-        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: after the action click ${found.toString().take(240)}", extra)
+        // A fixture under a public-looking name is allowed over plaintext for the row, as [domMarker] does; the address needs nothing.
+        val restorePlaintext = allowPlaintext(listOf(fixtureUrl(page)), factor, extra)
+        try {
+            val (_, view) = fixture(page, factor, 2_500)
+            val since = StepEvidence(row)
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            val found = pollExpr(view, expr, scaled(settleMs, factor))
+            extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            // The tab view's own script setting after the click (Quick Javascript Switcher's effect
+            // is `WebSettings.javaScriptEnabled` flipped before the reload): the host's reading of
+            // what the page's probe can only infer, and the grade's evidence where the probe reads
+            // nothing from a document whose scripts are off.
+            var jsEnabled: Boolean? = null
+            var statusLine: String? = null
+            if (scriptSetting) {
+                instrumentation.runOnMainSync { jsEnabled = view.settings.javaScriptEnabled }
+                extra.put("javaScriptEnabled", jsEnabled)
+                if (jsEnabled == false) {
+                    // `evaluateJavascript` answers null from a view whose scripts are off, so the
+                    // probe above read nothing (`{"raw":"null"}`, the unintended lane run of round
+                    // 27 on both WebViews): the fixture's status line is static text the page's
+                    // own script rewrites when it runs, read off the accessibility tree instead.
+                    statusLine = poll(scaled(5_000, factor), 500) {
+                        nodes { it.text?.contains("own script") == true }.firstOrNull()?.text?.toString()
+                    }
+                    extra.put("statusLine", statusLine)
+                }
+            }
+            if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            since.record(extra, "atEnd")
+            SystemClock.sleep(600)
+            snap("${entry.optString("slug")}-action-core")
+            runCatching { coreCall("extension.closePopup", "null") }
+            // A probe the document did not answer: no reading at all, or `evaluateJavascript`'s
+            // null (what `json` keeps as `raw`).
+            val probeless = found.length() == 0 || found.optString("raw") == "null"
+            val scriptsOff = jsEnabled == false && probeless && statusLine?.contains("ran.") != true
+            val pass = found.optBoolean("pass") || scriptsOff
+            val setting = if (scriptSetting) "; the tab view's javaScriptEnabled $jsEnabled" + (if (scriptsOff) " (the document answered no probe; its status line reads ${statusLine?.let { JSONObject.quote(it) } ?: "nothing on the accessibility tree"})" else "") else ""
+            Grade(if (pass) "P" else "F", "$label: after the action click ${found.toString().take(240)}$setting", extra)
+        } finally {
+            restorePlaintext?.invoke()
+        }
     }
 
     /**
@@ -8418,8 +8559,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // controls) – its rate-us popup window opens every tenth click, not the first; Notepad's
         // popup is a `<textarea id="notepad">` kept in storage; Quick Javascript Switcher's click
         // sets `contentSettings.javascript` for the tab's site (`set({primaryPattern, setting:
-        // "block"})`) and reloads it – `chrome.contentSettings` is a namespace the Android runtime
-        // has not (§7); PDF Editor for Chrome's content scripts append a `.pdffiller-button` after
+        // "block"})`) and reloads it – the public-name fixture `scripts.html`, whose own inline
+        // script marks the document when it runs (QJS_PAGE_SCRIPTS; the runtime answers the
+        // namespace from round 27); PDF Editor for Chrome's content scripts append a `.pdffiller-button` after
         // every link whose path ends in `.pdf`, never for a loopback, private-range or single-label
         // host (`isReachableByUploadApi`): the fixture is served under the nip.io name
         // (`pdf-links.html`); SEO Minion's click injects its sidebar scripts and `cs-sidebar.js`
@@ -8461,7 +8603,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("cdcpabkolgalpgeingbdcebojebfelgb", "Eightify: AI YouTube Summarizer", "eightify", core = { row, entry -> youtube(row, entry, EIGHTIFY_MOUNTED, "Eightify's summarize button and panel frame on the watch page", desktopSite = true, settleMs = 45_000) }),
         Row("adnielbhikcbmegcfampbclagcacboff", "Picture in Picture - Floating player", "picture-in-picture-floating-player", core = ::pictureInPicture),
         Row("ffbhefmlcoihbjcmibbfkocmnaiacinp", "Notepad", "notepad", core = popupMarker("Notepad", NOTEPAD_POPUP)),
-        Row("geddoclleiomckbhadiaipdggiiccfje", "Quick Javascript Switcher", "quick-javascript-switcher", core = actionMarker("Quick Javascript Switcher", "page-a.html?qjs", QJS_PAGE_SCRIPTS, settleMs = 12_000)),
+        Row("geddoclleiomckbhadiaipdggiiccfje", "Quick Javascript Switcher", "quick-javascript-switcher", core = actionMarker("Quick Javascript Switcher", "$PUBLIC_NAME_BASE/scripts.html?qjs", QJS_PAGE_SCRIPTS, settleMs = 20_000, scriptSetting = true)),
         Row("gphandlahdpffmccakmbngmbjnjiiahp", "PDF Editor for Chrome:Edit, Fill, Sign, Print", "pdf-editor-for-chrome", core = domMarker("PDF Editor for Chrome's button beside the PDF links", "$PUBLIC_NAME_BASE/pdf-links.html?pdffiller", PDFFILLER_BUTTON, settleMs = 25_000)),
         Row("giihipjfimkajhlcilipnjeohabimjhi", "SEO Minion", "seo-minion", core = actionMarker("SEO Minion", "article.html?seominion", SEO_MINION_WIDGET, settleMs = 30_000)),
         Row("afkoofjocpbclhnldmmaphappihehpma", "zkPass TransGate", "zkpass-transgate", core = popupMarker("zkPass TransGate", ZKPASS_POPUP, settleMs = 30_000)),
@@ -8480,6 +8622,129 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("kbbdabhdfibnancpjfhlkhafgdilcnji", "Screenity - Screen Recorder & Annotation Tool", "screenity", core = actionMarker("Screenity", "page-a.html?screenity", SCREENITY_UI, settleMs = 30_000)),
         Row("dfbnddndcmilnhdfmmaolepiaefacnpo", "DeepSider™:AI Sidebar | DeepSeek, Gemini, Claude, GPT", "deepsider", core = accountGate("DeepSider", Regex("deepsider", RegexOption.IGNORE_CASE), page = "sidePanel.html", gate = "a DeepSider account (its click opens its side panel, `sidePanel.html`; its chats run through its service signed in)")),
         Row("hjbfbllnfhppnhjdhhbmjabikmkfekgf", "Shopify Spy & Dropshipping - Koala Inspector", "koala-inspector", core = accountGate("Koala Inspector", Regex("koala-apps\\.io|koala-inspector", RegexOption.IGNORE_CASE), injects = "#koala-inspector, [id*='koala-inspector'], [class*='koala-inspector'], [class*='kins-']", gate = "a Koala account and a Shopify store page (its click's `\$R` mounts its inspector over the tab or opens its popup window; `identity.email` signs it in at auth.koala-apps.io)")),
+        // --- compat round 27 (ranks 691-720 by installs; `.github/scripts/ext-compat/next30-round24.json`) ---
+        // Each core rule read off the unpacked bundle: iGuge's popup (`main.html`,
+        // `check_user_login`) sends itself to `welcome.html` – its sign-in – without a user token,
+        // and its `open_vpn` sets a `pac_script` proxy; Add to MyRegistry.com Button has no
+        // default popup: its worker's `MRXMain.ActivatePopup()` sets `data/panels/contentPanel.html`
+        // with `action.setPopup`, a frame of myregistry.com's `PanelMain.aspx` behind its account;
+        // META SEO inspector's popup asks the tab's content script for `pageInfo` (`mode: "full"`)
+        // and writes the page's title, description and headings into `#out` (`#outextra` beside
+        // it); WA Sender's one content script runs on web.whatsapp.com (its bulk sender acts on a
+        // linked session's chat list); AiPrice(AliPrice)'s popup is a Vue app under an
+        // `ap-root-…` element (favorites, express tracking, search by image) whose data comes
+        // from api.aiprice.com; Table Capture's popup lists every `<table>` of the tab as an `li`
+        // carrying `.row-actions` (copy, Sheets, CSV; `li.table-not-found` when there is none);
+        // Allow Copy's content script, once its popup's `_switch_ve…` control enables the site
+        // (`storage.local`, live through `storage.local.onChanged`), inserts a `<style>` with
+        // `user-select: text !important` and capture listeners that stop the page's `copy`,
+        // `contextmenu` and `selectstart` handlers; Magic Eden Wallet's `content.js`
+        // (`document_start`) injects its Solana, Ethereum and Bitcoin providers into the page
+        // world – `window.magicEden.{solana, ethereum, bitcoin}`, `window.solana.isMagicEden` when
+        // the slot is free, a wallet-standard `register-wallet` event; Email Finder by Skrapp.io's
+        // click runs `scripting.executeScript({files: ["modalContentScript.bundle.js"]})` into a
+        // linkedin.com tab alone (`B(url)`: `url.indexOf("linkedin.com") > -1`), its modal signing
+        // in at skrapp.io; ScreenPal has no popup: its click sends `{launcherMenu: "toggle"}` to
+        // the tab's content script, which mounts `#som-popup-menu` (a 345x393 frame of its
+        // `popup_menu.html`) over the page – the recording behind it is `getDisplayMedia`'s and
+        // `tabCapture`'s, the WebView's limit as [captureLimit] reads it; DocsAfterDark has no
+        // background: its content script (docs.google.com/document) classes the document's
+        // `<html>` `DocsAfterDark_…` and links its theme sheet by that id; Simple Translate's
+        // content script shows `.simple-translate-button` on a selection and, tapped, opens
+        // `.simple-translate-panel` with the `.simple-translate-result`; RoSeal's `main.js` (the
+        // isolated world) and `inject.js` (MAIN) run at `document_start` on every roblox.com page,
+        // each appending a `#roseal-script-loaded` marker and drawing its `roseal-` buttons and
+        // icons on a game page (its click opens `www.roblox.com/my/account?roseal`); Mirror Mode for
+        // Google Meet's content script runs on meet.google.com, where its `mirrorVideos` interval
+        // turns every `<video>` by `rotateY(180deg)` and its `#reactions-plugin` sidebar mounts in
+        // a call; Ad Block Genius builds its dynamic rules from its own `json/adDomains.json` (245
+        // hosts – ads.pubmatic.com, js.adsrvr.org, x.bidswitch.net among them, none of the tracker
+        // fixture's eight) with `updateDynamicRules`; Bardeen has no popup: its click opens its
+        // side panel (`sidePanel.open`, `debugger.html`) or mounts `#bardeen-root` over the tab,
+        // each behind a sign-in at bardeen.ai; Save Page WE has no popup: its click runs
+        // `content.js` into the tab, which builds the page's single-file HTML and (its default
+        // save method) clicks an `<a download>` on a `blob:` of it – the tab's own download, the
+        // phone's `DownloadListener` → `Downloads.start`, a row in `app.getState().downloads`;
+        // Adaware AdBlock is a uBlock Origin Lite build (43 `declarative_net_request` rulesets,
+        // `default` enabled with the fixture's hosts in it, the rest shipped disabled); EverBee's
+        // content script runs on etsy.com's listing and search pages and mounts its
+        // `#everbee-analytics-btn` beside a listing's carousel once signed in (`h && …` in
+        // `production.js`; auth.everbee.io), its popup a settings page; PDF Viewer (1.0.13)'s
+        // worker registers `webRequest.onHeadersReceived` with `["blocking", "responseHeaders"]`,
+        // which Chrome refuses an MV3 extension without `webRequestBlocking` (the shim throws the
+        // same `You do not have permission to use blocking webRequest listeners`), so a web PDF is
+        // not taken over in Chrome either – its click opens its own pdf.js viewer
+        // (`/bg/helper/web/viewer.html?file=/bg/main/privet.pdf`) as a tab; Auto Tab Discard's
+        // popup (`/data/popup/index.html`) carries `[data-cmd=discard-window]` ("Discard Other Tabs
+        // in This Window"), whose worker runs `discard(tab)` – a title and favicon script, then
+        // `chrome.tabs.discard(tab.id)` – on each other tab; ClickUp's `popup.js` reads the
+        // `cu_chrome_extension_token` cookie on app.clickup.com and, without it, sends the popup
+        // to its Angular `index.html`, whose `LoginComponent` is the sign-in; Twitch Adblock's
+        // content script (every page, `document_start`) appends `<script id="ads-twitch-tw"
+        // src=getURL("js/tw.js")>` on twitch.tv, whose page script sets
+        // `window.twitchAdSolutionsVersion` and wraps `fetch` (its `default_rules.json` allows the
+        // player's ad hosts); LinkedIn Extension has no popup: its worker polls linkedin.com's
+        // badge counts with the session's `JSESSIONID` and, signed out, sets the badge `?` with the
+        // title "Please click here to login into LinkedIn." – its click opens linkedin.com;
+        // Linguist's popup has "Translate page" run its content script over the page's text nodes
+        // (each node's text replaced, `originalText` kept; Google's engine by default); Picture in
+        // Picture - PiP Floating Video's click runs its `script.js` into the tab's MAIN world, which
+        // calls `requestPictureInPicture()` on the playing video; GIPHY for Chrome has no
+        // background: its popup (`index.html`, `#react-target`) lists trending GIFs from
+        // api.giphy.com as `[data-giphy-id]` cells; Image Downloader - Fatkun's popup has "Download
+        // Current Tab" ask its worker, which opens `output.html` as a tab listing the images its
+        // content script collected from the source tab; TTV LOL PRO's worker sets a `pac_script`
+        // proxy (`FindProxyForURL` by Twitch's passport, usher, video-weaver and GraphQL host
+        // patterns) from `onInstalled` / `onStartup`, its content and page scripts on twitch.tv
+        // marking `documentElement.dataset.tlpParams` and wrapping `fetch` – the PAC the WebView's
+        // limit as Yandex Access's is; Discrub's content script (every discord.com page,
+        // `document_end`) mounts `#discrub-floating-button`, whose click (and the action's)
+        // opens its `#discrub-overlay` dialog with the launcher frame, the account's token read
+        // from the page's localStorage.
+        Row("ncldcbhpeplkfijdhnoepdgdnmjkckij", "iGuge", "iguge", account = true, core = popupLogin("iGuge")),
+        Row("cnofkjmkojconhdimlkamdckmidfmoio", "Add to MyRegistry.com Button", "add-to-myregistry", account = true, core = popupLogin("Add to MyRegistry.com Button")),
+        Row("ibkclpciafdglkjkcibmohobjkcfkaef", "META SEO inspector", "meta-seo-inspector", core = popupMarker("META SEO inspector", META_SEO_POPUP, page = "article.html?metaseo", settleMs = 25_000)),
+        Row("cgipcgghboamefelooajpiabilddemlh", "WA Sender - Bulk Messages & Automation", "wa-sender", core = attachedGate("WA Sender", "https://web.whatsapp.com/", "a linked WhatsApp Web session (its bulk sender acts on the chat list; signed out the page is the QR code)")),
+        Row("iebpjdmgckacbodjpijphcplhebcmeop", "Table Capture", "table-capture", core = popupMarker("Table Capture", TABLE_CAPTURE_POPUP, page = "table.html?tablecapture", settleMs = 25_000)),
+        Row("mmpljcghnbpkokhbkmfdmoagllopfmlm", "Allow Copy - Select & Enable Right Click", "allow-copy", core = popupSwitch("Allow Copy", "right-click.html?allowcopy", "[class*=\"_switch_ve\"]", ALLOW_COPY_ENABLED, settleMs = 30_000)),
+        // Magic Eden's content script matches `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`
+        // and `http://[::1]/*` – no plain-http host but the loopback names (round 27's BEFORE on
+        // `10.0.2.2`: no provider, as Chrome would inject none there) – so its fixture is served
+        // under `localhost` through the sweep's `adb reverse`, as Coinbase Wallet's and Trust Wallet's are.
+        Row("mkpegjkblkkefacfnmkajcjmabijhclg", "Magic Eden Wallet", "magic-eden-wallet", core = domMarker("Magic Eden Wallet's providers injected into the page world", "$LOCALHOST_BASE/wallet.html?magiceden", MAGIC_EDEN_PROVIDER, settleMs = 30_000)),
+        Row("geplbbbmdpmdodfmohpikfacgkfpkhec", "Email Finder by Skrapp.io", "skrapp", core = accountGate("Email Finder by Skrapp.io", Regex("skrapp\\.io|linkedin\\.com", RegexOption.IGNORE_CASE), injects = "[id*='skrapp'], [class*='skrapp']", site = "https://www.linkedin.com/in/williamhgates/", gate = "a Skrapp account and a LinkedIn profile page (its click injects `modalContentScript.bundle.js` into a linkedin.com tab alone – `B(url)` –, whose modal signs in at skrapp.io; signed out, linkedin.com serves its sign-in)")),
+        Row("pihphjfnfjmdbhakhjifipfdgbpenobg", "DocsAfterDark", "docsafterdark", core = siteGate("DocsAfterDark", "https://docs.google.com/document/u/0/", "html[class*='DocsAfterDark_'], link[id^='DocsAfterDark_'], link[href*='pihphjfnfjmdbhakhjifipfdgbpenobg']", Regex("^https://docs\\.google\\.com/document/"), "a Google sign-in (its script runs on a document; docs.google.com sends a fresh browser to its sign-in)")),
+        // Simple Translate's button and panel are `position: fixed` and `visibility: hidden` until
+        // their `isShow` class (content.css); the shown ones are the row's.
+        Row("ibplnjkanclpjokhdolnendpplpjiace", "Simple Translate", "simple-translate", core = selectionTranslator("Simple Translate", "editor.html?simpletranslate", ".simple-translate-button.isShow", ".simple-translate-panel.isShow, .simple-translate-result")),
+        Row("hfjngafpndganmdggnapblamgbfjhnof", "RoSeal - Augmented Roblox Experience", "roseal", core = liveMarker("RoSeal", "https://www.roblox.com/games/920587237", injectedAny("roseal"))),
+        Row("akmglodbcihkcgojpdmbocmlpkfjhfof", "Mirror Mode for Google Meet™", "mirror-mode-for-google-meet", core = attachedGate("Mirror Mode for Google Meet", "https://meet.google.com/", "a Google account in a Meet call (its `mirrorVideos` interval turns the call's `<video>` elements by `rotateY(180deg)`; its `#reactions-plugin` sidebar mounts there)")),
+        Row("dkagmnnkfinalebballociekdnlaniem", "Ad Block Genius - stop invasive ads", "ad-block-genius", core = listBlocker("Ad Block Genius", listOf("ads.pubmatic.com", "js.adsrvr.org", "x.bidswitch.net"))),
+        Row("ihhkmalpkhkoedlmcnilbbhhbhnicjga", "Bardeen: Automate Browser Apps with AI", "bardeen", core = accountGate("Bardeen", Regex("bardeen\\.ai|accounts\\.google", RegexOption.IGNORE_CASE), injects = "#bardeen-root, [id*='bardeen'], [class*='bardeen']", gate = "a Bardeen account (its click opens its side panel – `sidePanel.open` with `debugger.html` – or mounts `#bardeen-root` over the tab, each behind a sign-in at bardeen.ai)")),
+        // Save Page WE's gather pass remembers `/favicon.ico` for a page whose head names no icon
+        // (content.js `findOtherResources`, the root icon), the fixture server answers 404, and
+        // its default `options-showwarning` raises "Some resources could not be loaded" in the
+        // page with a Save button (`showMessage`, `#savepage-message-panel-continue`) – the user's
+        // press in Chrome too, so the row presses it. The probe reads the page's frames (its own
+        // `#savepage-download-iframe`, an extension page it appends at load) and the panels it raises.
+        Row("dhhpefjklgkmgeafimnjhojgjamoafof", "Save Page WE", "save-page-we", core = pageDownload("Save Page WE", "article.html?savepagewe", Regex("tramway|probe article|\\.html?$", RegexOption.IGNORE_CASE), probe = SAVE_PAGE_WE_MARKS, press = "#savepage-message-panel-continue")),
+        Row("jdlkkmamiaikhfampledjnhhkbeifokk", "PDF Viewer", "pdf-viewer-2", core = actionPage("PDF Viewer (1.0.13)", Regex("bg/helper/web/viewer\\.html"), PDFJS_VIEWER_PAGE, listOf("page-a.html?pdfviewer"))),
+        Row("jhnleheckmknfcgijgkadoemagpecfol", "Auto Tab Discard (suspend)", "auto-tab-discard", core = discardsOthers("Auto Tab Discard", "[data-cmd=discard-window]")),
+        Row("pliibjocnfmkagafnbkfcimonlnlpghj", "ClickUp: Tasks, Screenshots, Email, Time", "clickup", account = true, core = popupLogin("ClickUp")),
+        Row("hmaahgcbijnfogbgmnnjmlbfjoncneff", "Twitch Adblock", "twitch-adblock", core = liveMarker("Twitch Adblock", "https://www.twitch.tv/directory", TWITCH_ADBLOCK_INJECTED, settleMs = 45_000)),
+        Row("meajfmicibjppdgbjfkpdikfjcflabpk", "LinkedIn Extension", "linkedin-extension", core = badgeThenOpens("LinkedIn Extension", Regex("^\\?$"), Regex("log ?in", RegexOption.IGNORE_CASE), Regex("linkedin\\.com", RegexOption.IGNORE_CASE), "a LinkedIn session (its badge counts the signed-in account's messages, notifications and invitations)")),
+        Row("gbefmodhlophhakmoecijeppjblibmie", "Linguist - web page translator", "linguist", core = pageTranslator("Linguist", "translate.html?linguist", "/^translate page$|translate page|translate this page/i", LINGUIST_TRANSLATED, settleMs = 30_000, tabWords = "/^page translation$/i")),
+        Row("nalkmonnmldhpfcpdlbdpljlaajlaphh", "Picture in Picture - PiP Floating Video", "picture-in-picture-pip-floating-video", core = ::pictureInPicture),
+        Row("jlleokkdhkflpmghiioglgmnminbekdi", "GIPHY for Chrome", "giphy-for-chrome", core = popupMarker("GIPHY for Chrome", GIPHY_POPUP, settleMs = 25_000, gate = "its service (api.giphy.com)", apiHost = "api.giphy.com")),
+        Row("mojcdcedhidldcgaokbelcmffoaengkj", "Image Downloader - Fatkun AI Batch Save", "image-downloader-fatkun", core = imageList("Image Downloader - Fatkun", tap = "/download current tab/i", base = PUBLIC_NAME_BASE)),
+        Row("bpaoeijjlplfjbagceilcgbkcdjbomjd", "TTV LOL PRO", "ttv-lol-pro", core = vpn("TTV LOL PRO", pac = true, hasPopup = false)),
+        // The five largest bundles last (ScreenPal 21.4 MB, EverBee 12.0, Discrub 8.8, AiPrice 8.3,
+        // Adaware AdBlock 8.3), as rounds 19 to 26 ordered their own.
+        Row("eefedolmcildfckjamddopaplfiiankl", "ScreenPal - Screen Recorder & Video Editor", "screenpal", core = actionMarker("ScreenPal", "page-a.html?screenpal", SCREENPAL_MENU, settleMs = 30_000)),
+        Row("oeicpkgdngoghobnbjngekclpcmpgpij", "EverBee - Find Best Selling Products on Etsy", "everbee", core = attachedGate("EverBee", "https://www.etsy.com/", "an EverBee account (its `#everbee-analytics-btn` mounts beside a listing's carousel once signed in at auth.everbee.io – `h && …` in production.js)")),
+        Row("plhdclenpaecffbcefjmpkkbdpkmhhbj", "Discrub - Discord Message Manager", "discrub", core = attachedGate("Discrub", "https://discord.com/login", "a Discord session (its launcher reads the account's token from the page's localStorage; signed out its `#discrub-floating-button` still mounts on the login page)")),
+        Row("lenipkahddombkldhfmcnnjakmcepdlk", "AiPrice(AliPrice)跨境卖家辅助工具", "aiprice", core = popupMarker("AiPrice(AliPrice)", AIPRICE_POPUP, page = "page-a.html?aiprice", settleMs = 25_000, gate = "its service (aiprice.com)", apiHost = "api.aiprice.com")),
+        Row("cmllgdnjnkbapbchnebiedipojhmnjej", "Adaware AdBlock", "adaware-adblock", core = ::adBlocker),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -8514,6 +8779,382 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 27 (ranks 691-720 by installs) --------------------------
+
+    /**
+     * A blocker with a list of its own (Ad Block Genius: 245 hosts from its `json/adDomains.json`
+     * put up as dynamic rules at install, none of them the tracker fixture's eight): its worker
+     * is woken and its dynamic rules counted (`declarativeNetRequest.getDynamicRules`, waited
+     * for while the worker builds them), then the fixture requests a script off each of `hosts`
+     * (a path no server has, so the page's `onerror` says nothing by itself – the verdict is the
+     * layer's own decision log, as [adBlocker] reads it). Every host blocked or redirected is
+     * `P`; some, `PARTIAL`; none, `F` with the rule count beside it (rules present and no
+     * decision is the engine's; no rule at all the install's).
+     */
+    private fun listBlocker(label: String, hosts: List<String>): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val bg = awakeBackground(row.id, factor)
+        var rules = JSONObject().put("error", "no background view")
+        if (bg != null) {
+            rules = poll(scaled(20_000, factor), 2_000) { probe(bg, DNR_DYNAMIC_RULES, "__zenDnr", scaled(8_000, factor)).takeIf { it.optInt("n") > 0 } }
+                ?: probe(bg, DNR_DYNAMIC_RULES, "__zenDnr", scaled(8_000, factor))
+        }
+        extra.put("dynamicRules", rules)
+        val (_, view) = fixture("page-a.html?listblocker", factor, 1_500)
+        extra.put("asked", tabEval(view, LIST_PROBES.replace("__HOSTS__", JSONArray(hosts).toString())))
+        poll(scaled(20_000, factor), 500) { if (tabEval(view, "String(Object.keys(window.__list || {}).length >= ${hosts.size})") == "true") true else null }
+        SystemClock.sleep(scaled(1_500, factor))
+        val page = json(tabEval(view, "JSON.stringify(window.__list || {})"))
+        val all = decisions()
+        val verdicts = JSONObject()
+        val stopped = ArrayList<String>()
+        for (h in hosts) {
+            val decision = all.lastOrNull { it.substringAfterLast(' ').contains("://$h/") }?.substringBefore(' ') ?: "unseen"
+            verdicts.put(h, "$decision/${page.optString(h, "pending")}")
+            if (decision == "block" || decision == "redirect") stopped += h
+        }
+        var ruleSets: JSONArray? = null
+        instrumentation.runOnMainSync { ruleSets = host.extensions.ruleSetStats() }
+        extra.put("page", page).put("verdicts", verdicts).put("decisions", JSONArray(all.takeLast(30))).put("ruleSets", ruleSets ?: JSONArray())
+            .put("badge", extensionAction(row.id)?.optString("badgeText") ?: "")
+        bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        val ruleNote = "dynamic rules ${rules.optInt("n")}" + (rules.optString("error").takeIf { it.isNotEmpty() && it != "null" }?.let { " ($it)" } ?: "")
+        val note = "${stopped.size} of ${hosts.size} of its own hosts stopped (${stopped.joinToString()}); $ruleNote; per host decision/page: $verdicts"
+        when {
+            stopped.size == hosts.size -> Grade("P", "$label: $note", extra)
+            stopped.isNotEmpty() -> Grade("PARTIAL", "$label: $note", extra)
+            rules.optInt("n") > 0 -> Grade("F", "$label: its rules landed but none decided a request: $note", extra)
+            else -> Grade("F", "$label: no dynamic rule and nothing stopped: $note", extra)
+        }
+    }
+
+    /**
+     * A page saver whose default save is the tab's own download (Save Page WE: its click runs
+     * `content.js` into the tab, which builds the page's single-file HTML and clicks an
+     * `<a download>` on a `blob:` of it – the phone's `DownloadListener`, `Downloads.start`, a
+     * row in the core's `downloads`): the fixture settles, the action is clicked, and the core's
+     * download list is polled for a new row whose name matches `name` or whose URL is a `blob:`
+     * – `completed` is `P`, a row that never completes `PARTIAL` with its state, no row `F` with
+     * the fixture's and the worker's console (a tab the click opened instead is named).
+     *
+     * While the download is awaited the fixture's document is sampled every ~2.5 s
+     * ([PAGE_WORK_SAMPLE]: its element count, its markup's length, the script heap where the
+     * WebView reports one, and the saver's own marks when `probe` names an expression for them)
+     * into `samples` – round 27's BEFORE on 113 had Save Page WE's gather pass take the shared
+     * renderer to V8's heap limit 74 s after the click, with nothing in any console; the samples
+     * are the trace of where the work goes. A sample that cannot be read within 4 s (the page's
+     * thread held by the saver, or the renderer gone) is recorded as such; the sampling goes on,
+     * so a thread that frees up again is seen to. The row's bridge since the fixture opened goes
+     * to `bridge-<slug>.txt` – the host's own record, kept when the renderer is lost – with its
+     * `content hello` lines counted (`contentHellos`: the content endpoints that booted during
+     * the row; frames the saver's own pages multiply would show here).
+     *
+     * `press` names a control the saver raises in the page for the user (Save Page WE's "Some
+     * resources could not be loaded" panel's Save, raised on 156 for the fixture's missing
+     * favicon): pressed by a script click once it has a box, as the user would press it in
+     * Chrome, and recorded in `presses` with the panel's text.
+     *
+     * The page's realm as the saver's content script sees it, read before the click (`realm`,
+     * [REALM_SHAPE]; on the 113 lane a content script runs in the page world, so this is its
+     * view too): the document's script, style, link and frame elements, its style sheets and
+     * adopted sheets, its resource timing entries, the runtime's names on the window, and how
+     * often the runtime's own addresses occur in the markup or the resource list – what a saver
+     * that gathers the document's resources would gather of ours (compat round 27, the owner
+     * question of Save Page WE's runaway on 113: a page-world script seeing the runtime's
+     * globals, the runtime's elements or alias addresses in the page's resource lists, or a
+     * loop the extension runs on its own content). Every sample tick also records what the
+     * host can read while the page's thread is held by the saver (a sample the page cannot
+     * answer is `unreadable`): the WebView's renderer processes' resident size (`rendererKb`;
+     * a renderer lost to V8's heap limit comes back as a new pid, `rendererPids` before and
+     * after) and the row's bridge so far (`bridge`: its line count, the saver's resource
+     * requests and the last state it reported). The resources the saver asked its background
+     * for are listed from the bridge at the end (`loadResources`), and the renderer's own
+     * logcat lines of the wait (`rendererLog`: V8's heap-limit line, the chrome's renderer-gone
+     * line) place a crash in time.
+     *
+     * The host-side readings (`rendererKb`, `bridge`) are taken by a thread of their own every
+     * 2.5 s (`hostSamples`, 60 at most): the page samples ride the download poll, and that poll's
+     * own core read stalls with the renderer's thread when a saver holds it – round 27's `[lane]`
+     * run on 113 took one page sample in the 76 s climb to V8's heap limit, and the workflow's
+     * process monitor was what gave the renderer's series. A thread that reads `ps` and the
+     * host's bridge ring needs neither the page nor the core.
+     */
+    private fun pageDownload(label: String, page: String, name: Regex, probe: String? = null, press: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture(page, factor, 2_500)
+        val before = downloadRows().map { it.optString("id") }.toSet()
+        val tabsBefore = tabUrls().keys
+        val since = StepEvidence(row)
+        val sinceEpochMs = System.currentTimeMillis()
+        extra.put("realm", json(runCatching { tabEval(view, REALM_SHAPE, 8) }.getOrDefault("{}")))
+        extra.put("rendererPids", JSONObject().put("before", JSONArray(rendererPids())))
+        val samples = JSONArray()
+        val presses = JSONArray()
+        val started = SystemClock.uptimeMillis()
+        var lastSample = 0L
+        val pressExpr = press?.let {
+            "(function(){var b=document.querySelector(${JSONObject.quote(it)});if(!b||!b.getClientRects().length)return JSON.stringify({pressed:false});" +
+                "var p=document.querySelector('#savepage-message-panel-text, #savepage-message-panel-header');b.click();" +
+                "return JSON.stringify({pressed:true,label:(b.textContent||'').trim().slice(0,40),text:p?(p.textContent||'').replace(/\\s+/g,' ').trim().slice(0,200):''})})()"
+        }
+        val bridgeNow = {
+            val trace = since.trace()
+            JSONObject().put("lines", trace.size)
+                .put("loadResources", trace.count { it.contains("type=loadResource") })
+                .put("lastState", trace.lastOrNull { it.contains("type=stateChanged") }?.substringAfter("type=")?.take(60) ?: JSONObject.NULL)
+        }
+        val sample = {
+            if (samples.length() < 40 && SystemClock.uptimeMillis() - lastSample >= 2_500) {
+                lastSample = SystemClock.uptimeMillis()
+                val read = runCatching { tabEval(view, PAGE_WORK_SAMPLE, 4) }.getOrNull()
+                val entry = JSONObject().put("t", SystemClock.uptimeMillis() - started)
+                if (read == null || read == "null" || read.isEmpty()) {
+                    entry.put("unreadable", true)
+                } else {
+                    entry.put("page", json(read))
+                    if (probe != null) entry.put("probe", json(runCatching { tabEval(view, probe, 4) }.getOrDefault("{}")))
+                    if (pressExpr != null) {
+                        val pressed = json(runCatching { tabEval(view, pressExpr, 4) }.getOrDefault("{}"))
+                        if (pressed.optBoolean("pressed")) presses.put(pressed.put("t", SystemClock.uptimeMillis() - started))
+                    }
+                }
+                entry.put("rendererKb", rendererRssKb()).put("bridge", bridgeNow())
+                samples.put(entry)
+            }
+        }
+        // The host-side series on its own thread: the renderer's resident size and the bridge
+        // every 2.5 s whether or not the page's thread, and with it the poll's core read, is held.
+        val hostSamples = java.util.Collections.synchronizedList(ArrayList<JSONObject>())
+        val sampling = java.util.concurrent.atomic.AtomicBoolean(true)
+        val sampler = Thread({
+            while (sampling.get() && hostSamples.size < 60) {
+                val entry = JSONObject().put("t", SystemClock.uptimeMillis() - started)
+                runCatching { entry.put("rendererKb", rendererRssKb()) }.onFailure { entry.put("rendererKb", JSONObject.NULL) }
+                runCatching { entry.put("bridge", bridgeNow()) }.onFailure { entry.put("bridge", JSONObject.NULL) }
+                hostSamples.add(entry)
+                var waited = 0L
+                while (sampling.get() && waited < 2_500) {
+                    SystemClock.sleep(250)
+                    waited += 250
+                }
+            }
+        }, "compat-sweep-host-sampler").apply { isDaemon = true }
+        sampler.start()
+        var item: JSONObject?
+        try {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            item = poll(scaled(40_000, factor), 700) {
+                sample()
+                downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
+            }
+            // A press late in the wait leaves the saver its own time to build and hand over the file.
+            if (item == null && presses.length() > 0) {
+                item = poll(scaled(20_000, factor), 700) {
+                    sample()
+                    downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
+                }
+            }
+        } finally {
+            sampling.set(false)
+            runCatching { sampler.join(3_000) }
+        }
+        extra.put("samples", samples).put("presses", presses).put("hostSamples", JSONArray(synchronized(hostSamples) { hostSamples.toList() }))
+        if (item != null) {
+            val id = item.optString("id")
+            item = poll(scaled(15_000, factor), 500) { downloadRows().firstOrNull { it.optString("id") == id }?.takeIf { it.optString("state") == "completed" } }
+                ?: downloadRows().firstOrNull { it.optString("id") == id } ?: item
+        }
+        val opened = tabUrls().entries.firstOrNull { it.key !in tabsBefore && it.key != tab }
+        extra.put("download", item ?: JSONObject.NULL).put("downloads", downloadRows().size).put("openedInstead", opened?.value?.take(120) ?: JSONObject.NULL)
+            .put("fixtureConsole", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        since.record(extra, "atEnd")
+        val trace = since.trace()
+        File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+        extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size)
+            .put("contentHellos", trace.count { it.contains("/content hello") })
+            .put("stateChanges", JSONArray(trace.filter { it.contains("type=stateChanged") }.map { it.take(160) }))
+            // The saver's resource requests to its background, each with the address it named
+            // (the bridge prints a message's `location` as it does its `url`).
+            .put("loadResources", JSONArray(trace.filter { it.contains("type=loadResource") }.map { it.substringAfter("url=", "<no address on the line>").take(160) }.take(60)))
+        extra.getJSONObject("rendererPids").put("after", JSONArray(rendererPids()))
+        extra.put(
+            "rendererLog",
+            JSONArray(
+                (logcatSince(sinceEpochMs, "chromium") + logcatSince(sinceEpochMs, "ZenChrome"))
+                    .filter { it.contains("OOM") || it.contains("heap limit") || it.contains("renderer gone") || it.contains("Render process") || it.contains("rebuilding") }
+                    .sorted().takeLast(12).map { it.take(220) }
+            )
+        )
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-saved-download")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val summary = item?.let { "\"${it.optString("finalName").ifEmpty { it.optString("filename") }}\" ${it.optString("state")} ${it.optLong("receivedBytes")}/${it.optLong("totalBytes")} B, ${it.optString("mimeType")}, url ${it.optString("url").take(40)}" }
+        val pressed = if (presses.length() > 0) "; its \"${presses.getJSONObject(0).optString("text").take(80)}\" panel's ${presses.getJSONObject(0).optString("label")} pressed at +${presses.getJSONObject(0).optLong("t") / 1000} s" else ""
+        when {
+            item != null && item.optString("state") == "completed" -> Grade("P", "$label: the page's single-file copy downloaded as the tab's own ($summary)$pressed", extra)
+            item != null -> Grade("PARTIAL", "$label: the download row came but did not complete within ${scaled(15_000, factor) / 1000} s ($summary)$pressed", extra)
+            opened != null -> Grade("F", "$label: the click opened ${opened.value.take(80)} and no download row came within ${scaled(40_000, factor) / 1000} s$pressed", extra)
+            else -> Grade("F", "$label: no download row within ${scaled(40_000, factor) / 1000} s of the click (${downloadRows().size} rows in all)$pressed; ${samples.length()} page samples, ${(0 until samples.length()).count { samples.getJSONObject(it).optBoolean("unreadable") }} unreadable; ${extra.optInt("contentHellos")} content hello(s) on the bridge", extra)
+        }
+    }
+
+    /** The core's download rows (`app.getState().downloads`, the `DownloadItem` shape). */
+    private fun downloadRows(): List<JSONObject> {
+        val list = coreSnapshot().optJSONArray("downloads") ?: JSONArray()
+        return (0 until list.length()).map { list.getJSONObject(it) }
+    }
+
+    /** The core's record of one tab (`app.getState().tabs[id]`), or null once it is gone. */
+    private fun tabState(tabId: String): JSONObject? = coreSnapshot().optJSONObject("tabs")?.optJSONObject(tabId)
+
+    /**
+     * A tab discarder (Auto Tab Discard's "Discard Other Tabs in This Window",
+     * `[data-cmd=discard-window]` in its popup: its worker runs `discard(tab)` on every other
+     * tab – a title and favicon script, then `chrome.tabs.discard(tab.id)`, the phone's
+     * `tabs.discard` dropping the tab's view and marking the core's tab `discarded`): two
+     * fixtures (A, then B on screen), the popup, the control tapped at its centre
+     * ([tapSettled]; a script click when the tap left nothing), and the core's tab A polled for
+     * `discarded` while B stays. A discarded with B kept is `P`; B discarded too `PARTIAL`; A
+     * kept `F` with the worker's console and the control's record.
+     */
+    private fun discardsOthers(label: String, control: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tabA, _) = fixture("page-a.html?discard-a", factor, 1_500)
+        val (tabB, _) = fixture("page-b.html?discard-b", factor, 1_500)
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        var how = "none"
+        if (popup != null) {
+            found = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", control))).takeIf { it.has("x") } } ?: JSONObject()
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (found.has("x") && screenPoint(popup, found) != null && onScreen("$label: the discard control")) {
+                tapSettled(popup, found, factor)?.let { extra.put("tap", it) }
+                how = "tap"
+            }
+        }
+        extra.put("control", found).put("selector", control)
+        val discardedA = { tabState(tabA)?.optBoolean("discarded") == true }
+        var discarded = if (how == "tap") poll(scaled(20_000, factor), 500) { if (discardedA()) true else null } ?: false else false
+        if (!discarded && found.has("x") && popupView()?.takeIf { it.context == "popup" } != null) {
+            extra.put("scriptClick", tabEval(popup!!, "(function(){var e=document.querySelector(${JSONObject.quote(control)});if(!e)return 'gone';e.click();return 'clicked'})()"))
+            how = "script"
+            discarded = poll(scaled(15_000, factor), 500) { if (discardedA()) true else null } ?: false
+        }
+        SystemClock.sleep(scaled(1_000, factor))
+        val a = tabState(tabA)
+        val b = tabState(tabB)
+        extra.put("how", how).put("tabA", a ?: JSONObject.NULL).put("tabB", b ?: JSONObject.NULL)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-discarded")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val bKept = b?.optBoolean("discarded") != true
+        val states = "A discarded=${a?.optBoolean("discarded")}, B discarded=${b?.optBoolean("discarded")}"
+        when {
+            discarded && bKept -> Grade("P", "$label: the other tab was discarded on the control ($how) and the one on screen kept ($states)", extra)
+            discarded -> Grade("PARTIAL", "$label: the other tab was discarded ($how) but so was the one on screen ($states)", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            !found.has("x") -> Grade("F", "$label: no $control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
+            else -> Grade("F", "$label: the control was pressed ($how) and the other tab was not discarded within the wait ($states)", extra)
+        }
+    }
+
+    /**
+     * An action with no popup whose worker sets the badge and, clicked, opens a site (LinkedIn
+     * Extension: signed out its badge is `?` with the title "Please click here to login into
+     * LinkedIn.", its click a `tabs.create` on linkedin.com; the counts behind the badge are a
+     * session's): the action is polled for `badge` or `title`, then clicked and a new tab on
+     * `opens` waited for. Both are `P`; one of them `PARTIAL`; neither `F` with the action's
+     * state and the worker's console. The counts themselves need `gate` (the note names it).
+     */
+    private fun badgeThenOpens(label: String, badge: Regex, title: Regex, opens: Regex, gate: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val action = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.takeIf { badge.containsMatchIn(it.optString("badgeText")) || title.containsMatchIn(it.optString("title")) } }
+            ?: extensionAction(row.id)
+        val marked = action != null && (badge.containsMatchIn(action.optString("badgeText")) || title.containsMatchIn(action.optString("title")))
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(20_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) } }
+        extra.put("action", action ?: JSONObject.NULL).put("opened", opened?.value?.take(120) ?: JSONObject.NULL).put("tabs", JSONArray(tabUrls().values.map { it.take(80) }))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-badge-open")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val state = "badge \"${action?.optString("badgeText")}\", title \"${action?.optString("title")?.take(60)}\""
+        when {
+            marked && opened != null -> Grade("P", "$label: the signed-out badge set ($state) and the click opened ${opened.value.take(60)} – the counts behind it need $gate", extra)
+            marked -> Grade("PARTIAL", "$label: the badge set ($state) but the click opened no tab on ${opens.pattern} within ${scaled(20_000, factor) / 1000} s", extra)
+            opened != null -> Grade("PARTIAL", "$label: the click opened ${opened.value.take(60)} but the badge never set within ${scaled(15_000, factor) / 1000} s ($state)", extra)
+            else -> Grade("F", "$label: no badge or title within ${scaled(15_000, factor) / 1000} s ($state) and the click opened nothing on ${opens.pattern}", extra)
+        }
+    }
+
+    /**
+     * A whole-page translator run from its popup (Linguist's "Translate page" under its "Page
+     * translation" tab: its content script walks the page's text nodes and replaces each one's
+     * text, the original kept on the node; Google's engine by default) – [immersiveTranslate]'s
+     * body with the popup's tab words, its control's words, the page's expression and the wait
+     * as parameters: the Spanish fixture settles, the popup opens, the tab (when named) and then
+     * the control found by their words are tapped (a script click when the tap left nothing),
+     * and `expr` (`{pass, changed, …}`) polled on the fixture – English in the phrase is `P`,
+     * the phrase changed but not read as English `PARTIAL`, nothing `F`.
+     */
+    private fun pageTranslator(label: String, page: String, clickWords: String, expr: String, settleMs: Long = 25_000, tabWords: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 3_000)
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (tabWords != null) {
+                val tabHit = json(tabEval(popup, clickTarget(tabWords)))
+                extra.put("tab", tabHit)
+                if (tabHit.optBoolean("clicked")) {
+                    screenPoint(popup, tabHit)?.let { tap(it.first, it.second) }
+                    SystemClock.sleep(scaled(1_500, factor))
+                }
+            }
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clickTarget(clickWords))).takeIf { it.optBoolean("clicked") } }
+                ?: json(tabEval(popup, clickTarget("/translate/i")))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        var found = pollExpr(view, expr, scaled(settleMs, factor))
+        if (!found.optBoolean("pass") && !found.optBoolean("changed") && click.optBoolean("clicked") && popup != null && popupView() != null) {
+            extra.put("clickedByScript", tabEval(popup, CLICK_TARGET_SYNTH))
+            found = pollExpr(view, expr, scaled(settleMs, factor))
+        }
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-translated")
+        runCatching { coreCall("extension.closePopup", "null") }
+        Grade(
+            when {
+                found.optBoolean("pass") -> "P"
+                found.optBoolean("changed") -> "PARTIAL"
+                else -> "F"
+            },
+            "$label: popup ${if (popup == null) "did not render" else "translate ${click.toString().take(80)}"}; page ${found.toString().take(200)}",
+            extra
+        )
+    }
 
     // --- the core checks of compat round 26 (ranks 661-690 by installs) --------------------------
 
@@ -12919,6 +13560,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return presented.startsWith("chrome-extension://") && (id == null || presented.startsWith("chrome-extension://$id/", ignoreCase = true))
     }
 
+    /** A web page's URL (http or https) that is not an extension page in either spelling: where an options page handed its tab off to (R27-3). */
+    private fun webPage(url: String): Boolean =
+        (url.startsWith("https://") || url.startsWith("http://")) && !extensionPage(url)
+
     /** The path (query and fragment kept) of an extension page's URL in either spelling, for a note; the URL itself for any other. */
     private fun extensionPath(url: String): String {
         val presented = ExtensionUrls.present(url)
@@ -14086,8 +14731,58 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * texts, the backs pressed, what they left), with one still of it. A back is pressed only
      * with such a window on screen, never at the activity itself; a boundary with nothing up
      * costs one read of the window list.
+     *
+     * The native windows first, then the chrome's own surface ([dismissChromeSurface]): a sheet
+     * the chrome draws in its document has no window of its own for the first pass to see.
      */
     private fun dismissSheets(entry: JSONObject?, moment: String) {
+        dismissNativeSheets(entry, moment)
+        dismissChromeSurface(entry, moment)
+    }
+
+    /**
+     * The chrome's own surface down at a row boundary: the phone's Downloads sheet, a panel, a
+     * menu – drawn over the page in the chrome's document, no window of its own, so
+     * [extraWindows] never sees it; the host's `back.update` word ([chromeSurfaceUp]) does. The
+     * phone layout opens its Downloads sheet over the page as any download starts
+     * (`Browser.onDownloadStarted`: `pages.open('downloads', …, { reveal: true })`), and nothing
+     * of a row's own close takes it down. Compat round 27's AFTER on 113 (run 36953432620) had
+     * Save Page WE's save – the first download a row of the sweep completed – leave the sheet up
+     * from row 40 to the last; a tab view the core opens under a sheet is hidden
+     * (`view.setVisible(false)` for the sheet over it, `View.GONE` in `TabHost.setVisible`),
+     * and one created hidden is never laid out: every fixture of the rows after read `body.w` 0
+     * (352 before), the PDF viewer's page drew no canvas (pdf.js draws the pages visible in a
+     * laid-out container), ScreenPal's launcher frame had no width to open in, and the fonts
+     * page probe's taps on Settings landed on the sheet. One back per surface, four at most – the
+     * chrome's back dismisses a sheet as the user's swipe would – with the sheet's title as the
+     * evidence (`chromeSurfacesDismissed`: the moment, the title, the backs, whether one stayed).
+     */
+    private fun dismissChromeSurface(entry: JSONObject?, moment: String) {
+        if (!chromeSurfaceUp()) return
+        val title = chromeSheetTitle()
+        Log.w(TAG, "$moment: the chrome has a surface up over the page (${title ?: "no sheet title"})")
+        snap("chrome-surface-up")
+        var backs = 0
+        while (backs < 4 && chromeSurfaceUp()) {
+            back()
+            backs++
+            awaitSurface(false, 2_000)
+        }
+        val left = chromeSurfaceUp()
+        val report = JSONObject().put("at", moment).put("title", title ?: JSONObject.NULL).put("backs", backs).put("left", left)
+        chromeSurfacesDismissed.put(report)
+        entry?.let { (it.optJSONArray("chromeSurfacesDismissed") ?: JSONArray().also { list -> it.put("chromeSurfacesDismissed", list) }).put(report) }
+        if (left) Log.e(TAG, "$moment: the chrome's surface still up after $backs back(s)")
+        else Log.w(TAG, "$moment: the chrome's surface down after $backs back(s)")
+    }
+
+    /** The title of the chrome sheet up, when one is (`.zen-sheet-title`: Downloads, …); null with none or no answer. */
+    private fun chromeSheetTitle(): String? = runCatching {
+        JSONTokener(chromeJs("(function(){var t=document.querySelector('.zen-sheet-title');return t?(t.textContent||'').trim().slice(0,60):null})()")).nextValue() as? String
+    }.getOrNull()
+
+    /** The native windows over the browser down ([dismissSheets]); nothing with none up. */
+    private fun dismissNativeSheets(entry: JSONObject?, moment: String) {
         val up = extraWindows()
         if (up.isEmpty()) return
         val texts = JSONArray(up.map { windowTexts(it) })
@@ -14133,12 +14828,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return runCatching { JSONObject(json) }.getOrNull() ?: JSONObject.NULL
     }
 
-    /** `VmRSS` (kB) of the WebView's sandboxed renderer processes summed (`ps`, then `/proc/<pid>/status` through the shell); 0 when none is seen. */
-    private fun rendererRssKb(): Long = runCatching {
+    /** The pids of the WebView's sandboxed renderer processes (`ps` through the shell); empty when none is seen. */
+    private fun rendererPids(): List<Long> = runCatching {
         shell("ps -A -o PID,NAME").lineSequence()
             .filter { it.contains("sandboxed_process") }
             .mapNotNull { it.trim().split(Regex("\\s+")).firstOrNull()?.toLongOrNull() }
-            .sumOf { pid -> Regex("""VmRSS:\s+(\d+)\s+kB""").find(shell("cat /proc/$pid/status"))?.groupValues?.get(1)?.toLongOrNull() ?: 0L }
+            .toList()
+    }.getOrDefault(emptyList())
+
+    /** `VmRSS` (kB) of the WebView's sandboxed renderer processes summed ([rendererPids], then `/proc/<pid>/status` through the shell); 0 when none is seen. */
+    private fun rendererRssKb(): Long = runCatching {
+        rendererPids().sumOf { pid -> Regex("""VmRSS:\s+(\d+)\s+kB""").find(shell("cat /proc/$pid/status"))?.groupValues?.get(1)?.toLongOrNull() ?: 0L }
     }.getOrDefault(0L)
 
     private fun shell(command: String): String {
@@ -14677,6 +15377,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** After the action click opened a tab: how long a sheet gets to follow it before the tab is read as the click's whole answer. */
         private const val POPUP_AFTER_TAB_MS = 5_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
+        /** An options page that handed its tab off to the extension's site after it had rendered: how long the landing gets to draw (R27-3). */
+        private const val OPTIONS_HAND_OFF_MS = 10_000L
         /** A userscript manager's install landing: its install tab closing after the Install click. */
         private const val USERSCRIPT_INSTALL_MS = 15_000L
         /** The marker on the target's first document; the rest of [USERSCRIPT_EFFECT_MS] goes to the reload. */
@@ -15331,6 +16033,57 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * "320x240" label – so the shown image's `naturalWidth` is not the fixture's; round 15's
          * AFTER read four items and no size match).
          */
+        /**
+         * A document under a saver's work, as the page itself can read it: its element count, its
+         * markup's length, the number of `blob:` anchors (a save handed to the tab's download), and
+         * the script heap where the WebView exposes `performance.memory` (Chromium's legacy
+         * `MemoryInfo`, in megabytes, rounded) – [pageDownload]'s samples.
+         */
+        private const val PAGE_WORK_SAMPLE =
+            "(function(){var m=(performance&&performance.memory)||null;var d=document.documentElement;return JSON.stringify({els:document.querySelectorAll('*').length,html:d?d.outerHTML.length:0," +
+                "blobs:document.querySelectorAll('a[href^=\"blob:\"], a[download]').length,heapMb:m?Math.round(m.usedJSHeapSize/1048576):null,heapLimitMb:m?Math.round(m.jsHeapSizeLimit/1048576):null,ready:document.readyState})})()"
+
+        /**
+         * A page's realm as a script in its main world reads it, for [pageDownload]'s `realm`: the
+         * document's size (`els`, `html` = `outerHTML`'s length, `inner` = `innerHTML`'s), its
+         * script elements (address, type, an inline body's length), its style sheets (address,
+         * owner element, rule count; -1 where the rules are closed to the page), the sheets adopted
+         * by script (the runtime's CSS injection lands there, outside `document.styleSheets`), its
+         * `style` bodies' lengths, its links and frames, its resource timing entries (the count, and
+         * those naming the runtime's own addresses – the served origin `*.ext.zenium.invalid`, the
+         * page-origin alias `/.zenium-ext/`), how often those addresses or the runtime's names occur
+         * in the markup (`oursInHtml`), the window's own property names that are the runtime's or
+         * double-underscored (`windowExtras`: what a page-world script could enumerate of ours),
+         * the page's `chrome` object's keys, the font set's size and Save Page WE's frame key.
+         */
+        private const val REALM_SHAPE =
+            "(function(){var ours=/zenium|__zen|ext\\.zenium\\.invalid|\\.zenium-ext\\//i;var html=document.documentElement?document.documentElement.outerHTML:'';" +
+                "var scripts=[].slice.call(document.scripts).map(function(s){return {src:(s.src||'').slice(0,120),type:s.type||'',inline:s.src?0:(s.textContent||'').length}});" +
+                "var sheets=[].slice.call(document.styleSheets).map(function(s){var n;try{n=s.cssRules.length}catch(e){n=-1}return {href:(s.href||'').slice(0,120),owner:s.ownerNode?s.ownerNode.localName:'',rules:n}});" +
+                "var styles=[].slice.call(document.querySelectorAll('style')).map(function(e){return (e.textContent||'').length});" +
+                "var links=[].slice.call(document.querySelectorAll('link')).map(function(e){return {rel:e.rel,href:(e.getAttribute('href')||'').slice(0,120)}});" +
+                "var frames=[].slice.call(document.querySelectorAll('iframe, frame')).map(function(e){return {id:e.id,src:(e.getAttribute('src')||'').slice(0,120)}});" +
+                "var res=performance.getEntriesByType('resource').map(function(r){return r.name.slice(0,120)});var ch=window.chrome;" +
+                "return JSON.stringify({els:document.querySelectorAll('*').length,html:html.length,inner:document.documentElement?document.documentElement.innerHTML.length:0," +
+                "scripts:scripts.slice(0,20),sheets:sheets.slice(0,20),adopted:(document.adoptedStyleSheets||[]).length,styles:styles.slice(0,20),links:links.slice(0,20),frames:frames.slice(0,10)," +
+                "resources:res.length,oursResources:res.filter(function(n){return ours.test(n)}).slice(0,20),oursInHtml:(html.match(/zenium|__zen|ext\\.zenium\\.invalid|\\.zenium-ext\\//gi)||[]).length," +
+                "windowExtras:Object.getOwnPropertyNames(window).filter(function(k){return ours.test(k)||k.indexOf('__')===0}).slice(0,24),chromeKeys:ch?Object.keys(ch).slice(0,20):null," +
+                "fonts:document.fonts?document.fonts.size:null,key:document.documentElement?document.documentElement.getAttribute('data-savepage-key'):null})})()"
+
+        /**
+         * Save Page WE's marks in the page under its save: the frames (`iframes`, and whether its
+         * own `#savepage-download-iframe` is among them – the extension page it appends at load,
+         * where its new save method builds the blob), the panels it raises (`savepage-*-panel-container`
+         * ids present), the message panel's text, and the key its frame script writes.
+         */
+        private const val SAVE_PAGE_WE_MARKS =
+            "(function(){var p=[].slice.call(document.querySelectorAll('[id$=\"-panel-container\"]')).map(function(e){return e.id}).filter(function(i){return i.indexOf('savepage-')===0});" +
+                "var t=document.querySelector('#savepage-message-panel-text');var f=document.querySelectorAll('iframe');return JSON.stringify({iframes:f.length,downloadIframe:!!document.getElementById('savepage-download-iframe')," +
+                "frameSrcs:[].slice.call(f).map(function(e){return (e.getAttribute('src')||'').slice(-48)}).slice(0,6),panels:p,message:t?(t.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):'',key:document.documentElement.getAttribute('data-savepage-key')})})()"
+
+        /** The gallery's pictures are 320 by 240; a listing's size label for one, as a card prints it. */
+        private val FIXTURE_PICTURE_SIZE = Regex("\\b320\\s*[x×]\\s*240\\b")
+
         private const val IMAGE_LIST_REPORT =
             "(function(){var imgs=[];var sized=0;var attrs=0;var labels=0;var walk=function(root){var all=root.querySelectorAll('img, [style*=\"background-image\"]');for(var i=0;i<all.length;i++){var e=all[i];var s=e.currentSrc||e.src||(e.style&&e.style.backgroundImage)||'';imgs.push(String(s));if(e.tagName==='IMG'&&e.naturalWidth===320&&e.naturalHeight===240)sized++;if(e.shadowRoot)walk(e.shadowRoot)}" +
                 "attrs+=root.querySelectorAll('[data-width=\"320\"][data-height=\"240\"], [data-resolution=\"320x240\"]').length;var texts=root.querySelectorAll('div, span, small, p, figcaption');for(var k=0;k<texts.length;k++){if(texts[k].children.length===0&&/^\\s*320\\s*[x×]\\s*240\\s*$/i.test(texts[k].textContent||''))labels++}" +
@@ -16597,6 +17350,86 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
 
+        // --- the expressions of compat round 27 (ranks 691-720) ---------------------------------
+
+        /**
+         * META SEO inspector's popup after its content script answered `pageInfo`: `#out` holding
+         * the article fixture's title ("the tramway that outlived its river").
+         */
+        private const val META_SEO_POPUP =
+            "(function(){var o=document.getElementById('out');var x=document.getElementById('outextra');var t=((o?o.innerText:'')+' '+(x?x.innerText:'')).replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:/tramway/i.test(t),out:!!o,text:t.slice(0,200),body:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Table Capture's popup over the table fixture: an `li` per table found with its `.row-actions` (copy, Sheets, CSV); `li.table-not-found` when it saw none. */
+        private const val TABLE_CAPTURE_POPUP =
+            "(function(){var rows=document.querySelectorAll('li .row-actions');var none=document.querySelectorAll('li.table-not-found').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:rows.length>=1,rows:rows.length,notFound:none,text:t.slice(0,160)})})()"
+
+        /**
+         * Allow Copy's effect on the right-click fixture after its popup switch: its content
+         * script's `<style>` with `user-select: text !important` in the document and the
+         * fixture's own `contextmenu` probe (`window.__zenRightClick()`) reading `allowed` – the
+         * page's cancelling listener stopped by the script's capture listener. The script reads
+         * its `storage.local` entry live (`onChanged`), so a reload is the fallback alone (up to
+         * three, 2.5 s apart, the count in `sessionStorage`), as [ECP_ENABLED] takes.
+         */
+        private const val ALLOW_COPY_ENABLED =
+            "(function(){var styled=[].slice.call(document.querySelectorAll('style')).some(function(s){return /user-select:\\s*text\\s*!important/.test(s.textContent||'')});var rc=window.__zenRightClick?window.__zenRightClick():null;var pass=styled&&!!(rc&&rc.allowed);var n=parseInt(sessionStorage.getItem('__allowCopyReloads')||'0',10);" +
+                "if(!pass&&n<3&&performance.now()>2500){sessionStorage.setItem('__allowCopyReloads',String(n+1));location.reload();return JSON.stringify({pass:false,reloading:n+1})}" +
+                "return JSON.stringify({pass:pass,style:styled,contextmenu:rc,reloads:n})})()"
+
+        /**
+         * Magic Eden Wallet's providers in the page world: `window.magicEden.{solana, ethereum,
+         * bitcoin}` from its `document_start` script, `window.solana.isMagicEden` when the slot
+         * was free, the wallet-standard `register-wallet` announcement the fixture records
+         * (`window.__wallet`).
+         */
+        private const val MAGIC_EDEN_PROVIDER =
+            "(function(){var me=window.magicEden;var sol=window.solana;var w=window.__wallet||{};var announced=[].concat(w.announced||[],w.standard||[]).map(function(x){return typeof x==='string'?x:(x&&(x.name||x.rdns||x.info&&x.info.name))||''}).filter(Boolean);" +
+                "return JSON.stringify({pass:!!(me&&(me.solana||me.ethereum||me.bitcoin))||!!(sol&&sol.isMagicEden)||announced.some(function(n){return /magic ?eden/i.test(n)}),magicEden:typeof me,keys:me?Object.keys(me).slice(0,8):[],solana:!!sol,isMagicEden:!!(sol&&sol.isMagicEden),ethereum:!!(window.ethereum&&(window.ethereum.isMagicEden||window.ethereum.providers&&window.ethereum.providers.some(function(p){return p.isMagicEden}))),announced:announced.slice(0,6)})})()"
+
+        /** ScreenPal's launcher menu after the action click: `#som-popup-menu` (a 345x393 frame of its `popup_menu.html`) drawn over the page; its other `som-` elements counted beside it. */
+        private const val SCREENPAL_MENU =
+            "(function(){var m=document.getElementById('som-popup-menu');var r=m?m.getBoundingClientRect():null;var f=m?(m.tagName==='IFRAME'?m:m.querySelector('iframe')):null;var own=document.querySelectorAll('[id^=\"som-\"], [class*=\"som-\"]').length;" +
+                "return JSON.stringify({pass:!!m&&!!r&&r.width>100&&r.height>100,menu:!!m,size:r?[Math.round(r.width),Math.round(r.height)]:null,frame:f?String(f.src).slice(-40):null,own:own,title:document.title})})()"
+
+        /** AiPrice(AliPrice)'s popup: its Vue app mounted under an `ap-root-…` element with its controls and text. */
+        private const val AIPRICE_POPUP =
+            // popup.html's shell is `div.ap-ext > div#ap-root-…`; Vue 2's `$mount` replaces the inner
+            // div with the rendered root (`ap-popup-nav`, `ap-popup-main`, …), so the shell that stays
+            // is `.ap-ext` – round 27's BEFORE read the replaced id as no root.
+            "(function(){var root=document.querySelector('.ap-ext, [id^=\"ap-root\"], [class^=\"ap-root\"], [class*=\"ap-popup\"]');var n=root?root.querySelectorAll('*').length:0;var t=(root||document.body||{}).innerText||'';t=t.replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!root&&n>=10,root:root?(root.id||root.className).slice(0,40):null,nodes:n,text:t.slice(0,160)})})()"
+
+        /** pdf.js's viewer page (PDF Viewer 1.0.13's `bg/helper/web/viewer.html`, its own sample) after the action click: a page canvas drawn or a page marked loaded. */
+        private const val PDFJS_VIEWER_PAGE =
+            "(function(){var pages=document.querySelectorAll('#viewer .page');var canvases=document.querySelectorAll('#viewer .page canvas');var loaded=document.querySelectorAll('#viewer .page[data-loaded=\"true\"]');var n=document.getElementById('numPages');" +
+                "return JSON.stringify({pass:canvases.length>0||loaded.length>0,pages:pages.length,canvases:canvases.length,loaded:loaded.length,numPages:n?n.textContent.trim():null,title:document.title,url:location.href.slice(0,120)})})()"
+
+        /** Twitch Adblock on twitch.tv: its `<script id="ads-twitch-tw">` appended at `document_start` and the page script's `window.twitchAdSolutionsVersion`. */
+        private const val TWITCH_ADBLOCK_INJECTED =
+            "(function(){var s=document.getElementById('ads-twitch-tw');var v=window.twitchAdSolutionsVersion;" +
+                "return JSON.stringify({pass:!!s||typeof v==='string',script:!!s,src:s?String(s.src).slice(-40):null,version:typeof v==='string'?v:null,title:document.title})})()"
+
+        /** Linguist's page translation on the Spanish fixture: the `#phrase` read as English, or changed from its Spanish. */
+        private const val LINGUIST_TRANSLATED =
+            "(function(){var p=document.getElementById('phrase');var t=p?(p.textContent||'').replace(/\\s+/g,' ').trim():'';var h=document.getElementById('title');" +
+                "return JSON.stringify({pass:/good morning|friend|weather|walk/i.test(t),phrase:t.slice(0,120),heading:h?h.textContent.trim().slice(0,60):null,changed:t.length>0&&!/Buenos d/.test(t)})})()"
+
+        /** GIPHY for Chrome's popup: its trending grid from api.giphy.com as `[data-giphy-id]` cells (or the grid's pictures). */
+        private const val GIPHY_POPUP =
+            "(function(){var gifs=document.querySelectorAll('[data-giphy-id]');var imgs=document.querySelectorAll('.giphy-grid img, .giphy-grid picture, .giphy-grid video, [class*=\"giphy\"] img');var t=(document.body&&document.body.innerText||'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:gifs.length>0||imgs.length>=3,gifs:gifs.length,imgs:imgs.length,text:t.slice(0,160)})})()"
+
+        /**
+         * A script requested off each host of `__HOSTS__` (a JSON array) at a path no server has,
+         * the page recording what each came to in `window.__list` – the engine's decision log is
+         * the verdict, the page's `error` alone saying nothing ([listBlocker]).
+         */
+        private const val LIST_PROBES =
+            "(function(){var hosts=__HOSTS__;window.__list={};hosts.forEach(function(h){var s=document.createElement('script');s.src='https://'+h+'/zenium-probe.js?zen='+Date.now();" +
+                "s.onload=function(){window.__list[h]='loaded'};s.onerror=function(){window.__list[h]='error'};document.head.appendChild(s)});return 'asked '+hosts.length})()"
+
         // --- the expressions of compat round 26 (ranks 661-690) ---------------------------------
 
         /**
@@ -16612,14 +17445,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:n>=5,clicks:n,indicator:ind,contextmenu:cm,shown:(document.getElementById('count')||{}).textContent||null})})()"
 
         /**
-         * PDF Editor for Chrome's `.pdffiller-button` after the `pdf-links.html` fixture's PDF
-         * links (served under the nip.io name: `isReachableByUploadApi` offers no button for a
-         * loopback, private-range or single-label host). The buttons drawn with a size, the PDF
-         * links counted, the host the page was read on.
+         * PDF Editor for Chrome's button after the `pdf-links.html` fixture's PDF links (served
+         * under the nip.io name: `isReachableByUploadApi` offers no button for a loopback,
+         * private-range or single-label host). The button's root is a class-less
+         * `<div data-pdffiller-button title="Open with pdfFiller">` (its `js/inject.js`
+         * `buildButton`: Bing strips an injected node that carries any class, so the attribute
+         * identifies and styles the root; its children `img.sendToPdfFiller-logo` and
+         * `span.sendToPdfFiller-label` keep theirs) – compat round 26 read the row F on both
+         * lanes with the button drawn on the stills because the selector asked for a class
+         * (R27-3). The roots counted, those drawn with a size, the logos as the children's
+         * witness, the PDF links, the host the page was read on.
          */
         private const val PDFFILLER_BUTTON =
-            "(function(){var btns=document.querySelectorAll('.pdffiller-button, [class*=\"pdffiller\"], [data-pdffiller-variant]');var shown=0;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}" +
-                "return JSON.stringify({pass:btns.length>0,buttons:btns.length,visible:shown,links:document.querySelectorAll('a[href*=\".pdf\"]').length,host:location.host})})()"
+            "(function(){var btns=document.querySelectorAll('[data-pdffiller-button], .pdffiller-button, [class*=\"pdffiller\"], [data-pdffiller-variant]');var shown=0;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}" +
+                "return JSON.stringify({pass:btns.length>0,buttons:btns.length,visible:shown,logos:document.querySelectorAll('.sendToPdfFiller-logo').length,links:document.querySelectorAll('a[href*=\".pdf\"]').length,host:location.host})})()"
 
         /**
          * SwiftRead's in-page menu after the action click: `#__swiftread_menu_host__` with an open
@@ -16669,17 +17508,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:!!ta&&ta.tagName==='TEXTAREA'&&!!r&&r.height>20,textarea:!!ta,size:r?[Math.round(r.width),Math.round(r.height)]:null,value:ta?String(ta.value).slice(0,40):null,placeholder:ta?String(ta.placeholder||'').slice(0,40):null})})()"
 
         /**
-         * Quick Javascript Switcher's effect on the fixture after the action click: its worker sets
-         * `contentSettings.javascript` to block for the site and reloads the tab, after which the
-         * page runs no script – a reading the page cannot make of itself, so `pass` is never true
-         * from here; the fields say whether the page is still running scripts and whether a reload
-         * came (`navigation`: the Navigation Timing entry's type). The row's expected reading is F
-         * with the worker's `contentSettings` refusal in `bgAtEnd.console` (§7 of round 26's
-         * report: the namespace the Android runtime has not).
+         * Quick Javascript Switcher's effect on the fixture after the action click: its worker
+         * builds the site's pattern from the tab's host (every scheme, `*.nip.io:8765`, every
+         * path in its domain mode – it builds none for an IP address, a loopback name or a file
+         * URL, so the fixture is served under the public name), sets `contentSettings.javascript`
+         * to `block` for it
+         * and reloads the tab, after which the page's own scripts do not run. `scripts.html`'s
+         * inline script marks the document (`data-page-script="ran"` on the root and the
+         * `#status` line) on every load whose scripts run, so a document without the mark after
+         * a reload is the effect (`jsRunning`), and `navigation` is the Navigation Timing entry's
+         * type. The probe runs through `evaluateJavascript`, which answers null from a view whose
+         * `javaScriptEnabled` is off – so after the effect the probe reads nothing, and
+         * [actionMarker] grades the row from the view's setting and the fixture's status line on
+         * the accessibility tree instead. Round 26 read F here with the worker's `contentSettings`
+         * refusal (the namespace the Android runtime had not); the runtime answers it from round
+         * 27 (`AndroidContentSettings`, the permission store's override, the view's
+         * `javaScriptEnabled` flipped before the reload).
          */
         private const val QJS_PAGE_SCRIPTS =
-            "(function(){var nav=(performance.getEntriesByType?performance.getEntriesByType('navigation'):[])[0];" +
-                "return JSON.stringify({pass:false,jsRunning:true,navigation:nav?nav.type:null,title:document.title,host:location.host})})()"
+            "(function(){var nav=(performance.getEntriesByType?performance.getEntriesByType('navigation'):[])[0];var ran=document.documentElement.getAttribute('data-page-script')==='ran';var status=document.getElementById('status');var text=status?String(status.textContent):'';" +
+                "return JSON.stringify({pass:!!status&&!ran&&text.indexOf('did not run')>=0,jsRunning:ran,navigation:nav?nav.type:null,status:text.slice(0,48),title:document.title,host:location.host})})()"
 
         /**
          * SEO Minion's sidebar after the action click: `#smin-widget` is the container its
