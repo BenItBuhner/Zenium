@@ -15,6 +15,8 @@
   #later { background: #52796f; }
   #arm { background: #7b5ea7; }
   #arm[data-armed] { background: #c9184a; }
+  #arm-slow { background: #5e548e; }
+  #arm-slow[data-armed] { background: #c9184a; }
   #frame { display: block; width: calc(100% - 48px); height: 52px; margin: 8px 24px; border: 0; border-radius: 12px; }
   #link { display: block; padding: 12px 24px; font-size: 20px; color: #1b4332; }
   #log { margin: 0; padding: 4px 24px 24px; font: 14px/1.4 monospace; color: #444; white-space: pre-wrap; }
@@ -30,12 +32,13 @@
 <iframe id="frame" src="" title="An embedded frame"></iframe>
 <button id="later">alert() in 12 s</button>
 <button id="arm">Arm beforeunload</button>
+<button id="arm-slow">Arm a slow beforeunload</button>
 <a id="link" href="/second.html">A link to the second page</a>
 <pre id="log"></pre>
 <script>
   // What the page's calls returned, for the driver to read once the dialog has gone (the page
   // is blocked inside each call while its dialog is up).
-  var log = window.__log = { alerts: 0, confirms: 0, prompts: 0, confirm: null, prompt: null, armed: false };
+  var log = window.__log = { alerts: 0, confirms: 0, prompts: 0, confirm: null, prompt: null, armed: false, slow: false };
   function show() { document.getElementById('log').textContent = JSON.stringify(log, null, 1); }
   document.getElementById('alert').onclick = function () { alert('Hello from the page.'); log.alerts++; show(); };
   document.getElementById('confirm').onclick = function () { log.confirm = confirm('Delete the draft?'); log.confirms++; show(); };
@@ -65,6 +68,24 @@
     this.setAttribute('data-armed', '');
     this.textContent = 'beforeunload armed';
     window.addEventListener('beforeunload', function (e) { e.preventDefault(); e.returnValue = 'unsaved'; return 'unsaved'; });
+    show();
+  };
+  // A handler busy past Chromium's beforeunload budget (500 ms) before it objects: the renderer's
+  // answer always comes after the browser's hang monitor has given up on it, the way a busy
+  // renderer's does – the race scene 13 judges without a timing window.
+  document.getElementById('arm-slow').onclick = function () {
+    if (log.slow) return;
+    log.slow = true;
+    log.armed = true;
+    this.setAttribute('data-armed', '');
+    this.textContent = 'slow beforeunload armed';
+    window.addEventListener('beforeunload', function (e) {
+      var until = performance.now() + 800;
+      while (performance.now() < until) {}
+      e.preventDefault();
+      e.returnValue = 'unsaved';
+      return 'unsaved';
+    });
     show();
   };
   // The frame's origin is the page's host one port up (the driver's second server).

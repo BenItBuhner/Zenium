@@ -515,17 +515,21 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     /**
      * 13. A typed address over an armed page asks "Leave site?": the tab in front asks though
      * its view stood hidden under the URL field as the load was asked – the word is the tab's,
-     * not the view's ([UnloadObjection.inFront]); Cancel keeps the page. The page's own address
-     * says whether it stayed: the core took the typed address as the tab's as it asked. The
-     * Cancel is judged only where the navigation had not gone before the sheet's answer (the
-     * demo server's count of other.html answers): where Chromium's beforeunload timeout had let
-     * it go first, a NOTE names the race – pre-existing on main, W6-S27-d's to fix – and no
-     * verdict is given on the Cancel.
+     * not the view's ([UnloadObjection.inFront]); Cancel keeps the page, UNCONDITIONALLY. The
+     * page's handler is the slow one (busy past Chromium's 500 ms beforeunload budget before it
+     * objects), so the renderer's answer always comes after the browser's hang monitor has
+     * given up on it – the busy renderer of debug run 36898943391 made deterministic – and the
+     * view stands hidden under the URL field as the load is asked, as it did there. The verdict
+     * has no timing window: the document is still second.html with its handler armed, the demo
+     * server answered other.html NOT ONCE since ENTER (nothing left for the typed address), and
+     * the core's word on the tab is the page's address again (the core took the typed address
+     * as the tab's as it asked; the omnibox shows the page's). Then the same address with Leave:
+     * the page leaves once – other.html answered once, no second sheet.
      */
     private fun leaveOnTypedAddress() {
-        finding("\n13. A typed address over an armed page: 'Leave site?' (the tab in front asks, its view under the URL field or not); Cancel keeps the page")
-        tapPage("#arm")
-        expect("the page armed its handler again", awaitLog { it.optBoolean("armed") })
+        finding("\n13. A typed address over an armed page: 'Leave site?' (the tab in front asks, its view under the URL field or not); Cancel keeps the page – unconditionally")
+        tapPage("#arm-slow")
+        expect("the page armed its slow handler (busy past Chromium's beforeunload budget before it objects)", awaitLog { it.optBoolean("slow") })
         val typed = typeAddress("$ORIGIN/other.html")
         expect("the address went into the URL field: '$typed'", typed == "$ORIGIN/other.html")
         if (typed.isEmpty()) {
@@ -533,11 +537,6 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             awaitIme(false, 4_000)
             return
         }
-        // The server's count of other.html answers says whether the navigation had gone before
-        // the sheet's answer: Chromium's beforeunload hang monitor lets a navigation go when the
-        // page's handler has not answered within its timeout (the renderer is one for every
-        // page and the chrome, and the typed address finds it busy now and then), and a sheet
-        // that rises afterwards no longer governs it – pre-existing on main, W6-S27-d's to fix.
         val hitsBefore = server.hits("/other.html")
         val enterAt = SystemClock.uptimeMillis()
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
@@ -547,27 +546,18 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         if (sheet == null) {
             if (urlbarOpen()) back()
             awaitIme(false, 4_000)
-            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()})")
+            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()}; other.html answered ${server.hits("/other.html") - hitsBefore} time(s) since ENTER)")
             return
         }
         expect("with Chrome's line and Cancel | Leave", sheet.text(LEAVE_LINE) != null && sheet.peer(CANCEL) != null && sheet.peer("Leave") != null)
         still("typed-leave-site")
-        val wentBeforeCancel = server.hits("/other.html") - hitsBefore
         answer(sheet, CANCEL)
-        SystemClock.sleep(2_000)
-        val stayed = pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed")
-        if (wentBeforeCancel == 0) {
-            expect("the page stayed: ${pageUrl()}, its handler still armed", stayed)
-        } else {
-            finding(
-                "  NOTE: other.html was answered $wentBeforeCancel time(s) before Cancel was given – Chromium's beforeunload timeout had let " +
-                    "the typed address's navigation go while the renderer was busy, and the sheet's Cancel no longer governs it " +
-                    "(the page ${if (stayed) "stayed" else "went to ${pageUrl()}"}). Pre-existing on main (baseline run 36899085323, " +
-                    "debug run 36898943391); no verdict here – the fix and the unconditional \"Cancel keeps the page\" verdict are " +
-                    "W6-S27-d's (seed A7, \"Cancel on 'Leave site?' keeps the page\")."
-            )
-        }
-        finding("  (the core's word on the tab after the Cancel: ${activeUrl()}; the URL field ${if (urlbarOpen()) "open" else "closed"})")
+        SystemClock.sleep(2_500)
+        expect("Cancel keeps the page: the document is second.html with its handler armed (${pageUrl()}, armed ${pageLog().optBoolean("armed")})", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+        val hits = server.hits("/other.html") - hitsBefore
+        expect("and nothing left for the typed address: other.html answered $hits time(s) since ENTER", hits == 0)
+        expect("the core's word on the tab is the page's address again: ${activeUrl()}", activeUrl() == "$ORIGIN/second.html")
+        finding("  (the URL field ${if (urlbarOpen()) "open" else "closed"} after the Cancel)")
         if (urlbarOpen()) {
             back()
             awaitUntil(4_000) { !urlbarOpen() }
@@ -575,6 +565,45 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         awaitIme(false, 4_000)
         SystemClock.sleep(1_000)
         still("typed-cancelled")
+        leaveOnTypedAddressGoes()
+    }
+
+    /** 13, Leave: the same typed address over the armed page, Leave – the page leaves once, no second sheet. */
+    private fun leaveOnTypedAddressGoes() {
+        finding("  Leave: the same typed address, Leave – the page leaves once")
+        armedSecondPage(slow = true)
+        expect("the page stands armed on second.html", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+        val typed = typeAddress("$ORIGIN/other.html")
+        expect("the address went into the URL field: '$typed'", typed == "$ORIGIN/other.html")
+        if (typed.isEmpty()) {
+            back()
+            awaitIme(false, 4_000)
+            return
+        }
+        val hitsBefore = server.hits("/other.html")
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+        val sheet = awaitSheet(LEAVE)
+        expect("'Leave site?' rises for the typed address", sheet != null)
+        if (sheet == null) {
+            if (urlbarOpen()) back()
+            awaitIme(false, 4_000)
+            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()}; other.html answered ${server.hits("/other.html") - hitsBefore} time(s) since ENTER)")
+            return
+        }
+        answer(sheet, "Leave")
+        expect("the page leaves for the typed address", awaitUntil(15_000) { pageUrl() == "$ORIGIN/other.html" })
+        awaitLoaded(DEMO, "$ORIGIN/other.html")
+        val seen = sheetsSeenFor(2_500)
+        val hits = server.hits("/other.html") - hitsBefore
+        expect("once: other.html answered $hits time(s), no second sheet ($seen seen)", hits == 1 && seen == 0)
+        expect("the core's word on the tab: ${activeUrl()}", activeUrl() == "$ORIGIN/other.html")
+        if (urlbarOpen()) {
+            back()
+            awaitUntil(4_000) { !urlbarOpen() }
+        }
+        awaitIme(false, 4_000)
+        SystemClock.sleep(1_000)
+        still("typed-left")
     }
 
     /**
@@ -647,12 +676,13 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     }
 
     /**
-     * Scenes 14 and 15 read the armed second page, and each scene's precondition is its own:
-     * where scene 13's race left the demo tab on other.html, the tab is taken back to
-     * second.html first (a clean navigation – other.html has no handler), and the page is armed
-     * again where it is not. Nothing is done where the page stands armed on second.html already.
+     * Scene 13's Leave half and scenes 14 and 15 read the armed second page, and each one's
+     * precondition is its own: where the scene before left the demo tab on other.html, the tab
+     * is taken back to second.html first (a clean navigation – other.html has no handler), and
+     * the page is armed again where it is not (`slow`: with the slow handler, scene 13's).
+     * Nothing is done where the page stands armed on second.html already.
      */
-    private fun armedSecondPage() {
+    private fun armedSecondPage(slow: Boolean = false) {
         if (pageUrl() != "$ORIGIN/second.html") {
             finding("  (the page stands at ${pageUrl()}: the demo tab goes back to second.html first)")
             fireCore("tab.navigate", JSONObject().put("tabId", DEMO).put("input", "$ORIGIN/second.html").toString())
@@ -661,7 +691,7 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             SystemClock.sleep(1_000)
         }
         if (!pageLog().optBoolean("armed")) {
-            tapPage("#arm")
+            tapPage(if (slow) "#arm-slow" else "#arm")
             awaitLog { it.optBoolean("armed") }
         }
     }
