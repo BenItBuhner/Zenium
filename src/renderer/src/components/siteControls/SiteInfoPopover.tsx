@@ -57,7 +57,7 @@ import { pushToast } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { Favicon } from '../sidebar/Favicon'
-import { V2_GLYPH, V2Button } from '../v2/controls'
+import { V2_TRAILING_GLYPH, V2Button } from '../v2/controls'
 import { TrackersPopover } from './TrackersPopover'
 import {
   BarHeader,
@@ -386,7 +386,7 @@ export function SiteInfoPopover({
                       label="Site settings"
                       trailing={
                         <ExternalLink
-                          className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
+                          className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
                           aria-hidden
                         />
                       }

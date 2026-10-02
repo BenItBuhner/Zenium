@@ -37,7 +37,7 @@ import { cn } from '@renderer/lib/utils'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { useScrolled } from '../bookmarks/popover'
 import { Favicon, type FaviconSource } from '../sidebar/Favicon'
-import { V2_GLYPH } from '../v2/controls'
+import { V2_GLYPH, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
 
 /**
@@ -419,9 +419,9 @@ function TabRow({
       </span>
       {(tab.audible || tab.muted) &&
         (tab.muted ? (
-          <VolumeX className={cn(V2_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
+          <VolumeX className={cn(V2_TRAILING_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
         ) : (
-          <Volume2 className={cn(V2_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
+          <Volume2 className={cn(V2_TRAILING_GLYPH, 'zen-tab-search-glyph')} aria-hidden />
         ))}
       {tab.windowLabel && (
         <span
@@ -429,7 +429,7 @@ function TabRow({
           data-tooltip={`In another window: ${tab.windowLabel}`}
           aria-hidden
         >
-          <AppWindow className={V2_GLYPH} />
+          <AppWindow className={V2_TRAILING_GLYPH} />
         </span>
       )}
       {closable && (

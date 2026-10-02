@@ -17,7 +17,7 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 Object.assign(window, { zen: { invoke: async () => null, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-function candidate(id: string): TabSearchCandidate {
+function candidate(id: string, over: Partial<TabSearchCandidate> = {}): TabSearchCandidate {
   return {
     id,
     title: id.toUpperCase(),
@@ -31,13 +31,16 @@ function candidate(id: string): TabSearchCandidate {
     muted: false,
     loading: false,
     discarded: false,
-    lastActiveAt: 0
+    lastActiveAt: 0,
+    ...over
   }
 }
 
 vi.mock('@renderer/lib/api', () => ({
   cmd: vi.fn(async (name: string) =>
-    name === 'tab.searchCandidates' ? [candidate('a'), candidate('b')] : null
+    name === 'tab.searchCandidates'
+      ? [candidate('a'), candidate('b'), candidate('c', { muted: true, windowLabel: 'Window 2' })]
+      : null
   ),
   run: vi.fn(),
   onEvent: vi.fn(() => () => undefined)
@@ -142,5 +145,40 @@ describe("the tab search popover's × (TabSearchPopover.tsx)", () => {
     act(() => closeOf('a').click())
     expect(vi.mocked(closeTabFromChrome).mock.calls).toEqual([['a']])
     expect(vi.mocked(run).mock.calls.map(([name]) => name)).not.toContain('tab.close')
+  })
+})
+
+/*
+ * A row's trailing slot is 16 on every platform (§9.3; the Lead's ruling on #787's nit 3, A9):
+ * the mute and other-window status badges follow the chevron and the check, not the leading
+ * glyph token, which grows to 20 on a touch layout. The favicon in the lead keeps its own size.
+ */
+describe("the tab search row's trailing status badges (TabSearchPopover.tsx, A9)", () => {
+  function badgesOf(id: string): SVGElement[] {
+    const row = document.querySelector<HTMLElement>(`[data-tab-search-row="${id}"]`)
+    if (!row) throw new Error(`no row for ${id}`)
+    return Array.from(
+      row.querySelectorAll<SVGElement>('svg.zen-tab-search-glyph, span.zen-tab-search-glyph > svg')
+    )
+  }
+
+  it('draws the mute badge and the other-window badge at 16 on the tablet, where the leading glyph token is 20', async () => {
+    await open(true)
+    const badges = badgesOf('c')
+    expect(badges).toHaveLength(2)
+    for (const svg of badges) {
+      const classes = svg.getAttribute('class') ?? ''
+      expect(classes).toContain('h-4 w-4')
+      expect(classes).not.toContain('var(--v2-icon)')
+    }
+    expect(badgesOf('a')).toHaveLength(0)
+  })
+
+  it('on the desktop the same 16: nothing changes there, where the glyph token is 16 already', async () => {
+    await open()
+    for (const svg of badgesOf('c')) {
+      expect(svg.getAttribute('class') ?? '').toContain('h-4 w-4')
+    }
+    expect(badgesOf('c')).toHaveLength(2)
   })
 })

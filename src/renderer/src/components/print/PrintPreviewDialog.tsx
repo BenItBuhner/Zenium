@@ -17,7 +17,7 @@ import { formatBinding } from '@shared/shortcuts'
 import type { DataAttributes } from '@renderer/lib/surfaces'
 import { closePrintPreview, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { V2_GLYPH, V2Button } from '../v2/controls'
+import { V2_GLYPH, V2_TRAILING_GLYPH, V2Button } from '../v2/controls'
 import {
   BusyButton,
   Checkbox,
@@ -294,10 +294,13 @@ function Options({
         onClick={() => form.setMore(!form.more)}
         trailing={
           form.more ? (
-            <ChevronUp className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')} aria-hidden />
+            <ChevronUp
+              className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
+              aria-hidden
+            />
           ) : (
             <ChevronDown
-              className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
+              className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
               aria-hidden
             />
           )
