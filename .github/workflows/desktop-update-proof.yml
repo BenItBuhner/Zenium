@@ -4,7 +4,8 @@ name: Desktop update proof
 # Restart to update / Install – on every desktop OS, with REAL builds:
 #
 #   published   An older PUBLISHED release (`from_version`; a bisect matrix of older ones on a
-#               dispatch with `bisect`, and nightly) is installed on the runner the way a user
+#               dispatch with `bisect`, on a pull request labelled `update-proof: bisect`, and
+#               nightly) is installed on the runner the way a user
 #               installs it – NSIS /S, the AppImage made executable, `dpkg -i`, the DMG mounted
 #               and the app copied to /Applications – and driven to the newest published release
 #               (`to_version`, default: GitHub's latest) over the renderer's own command bridge
@@ -102,7 +103,8 @@ jobs:
         env:
           FROM_INPUT: ${{ inputs.from_version }}
           TO_INPUT: ${{ inputs.to_version }}
-          BISECT: ${{ inputs.bisect }}
+          # A pull request labelled `update-proof: bisect` runs the bisect matrix too.
+          BISECT: "${{ inputs.bisect || contains(github.event.pull_request.labels.*.name, 'update-proof: bisect') }}"
           PAIR_INPUT: ${{ inputs.pair }}
           EVENT: ${{ github.event_name }}
         run: |
