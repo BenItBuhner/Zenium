@@ -622,6 +622,51 @@ describe('the response stage of a relayed media request (ext.response → webReq
     expect(names()).toHaveLength(all)
   })
 
+  it("a document's same-URL hop as WebView lets the app see it (seed #46): the navigation hook's `redirected` notice with `from == to` is told as onBeforeRedirect of the tab's open main-frame request at that URL, redirectUrl the same, and as the target's onBeforeRequest under the hop's id", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    await sniffer(h, 'bg1')
+    const page = (path: string): string => `https://shop.example${path}`
+    const document = (over: Partial<ExtRequestEvent>): ExtRequestEvent =>
+      requestEvent({ type: 'main_frame', mainFrame: true, initiator: null, ...over })
+    const names = (): string[] =>
+      h.kt
+        .to('bg1')
+        .filter((m) => m.t === 'event' && m.ns === 'webRequest')
+        .map((m) => String(m.name))
+    const a = page('/same.html')
+    h.runtime.onRequest(document({ requestId: '50', url: a }))
+    h.runtime.onViewEvent('t1', 'redirected', { from: a, to: a })
+    const redirected = heard(h, 'bg1', 'onBeforeRedirect')
+    expect(redirected).toHaveLength(1)
+    expect(redirected[0]).toMatchObject({
+      requestId: '50',
+      url: a,
+      method: 'GET',
+      type: 'main_frame',
+      frameId: 0,
+      parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
+      statusCode: 302,
+      statusLine: 'HTTP/1.1 302 Found',
+      redirectUrl: a,
+      fromCache: false
+    })
+    expect(redirected[0].responseHeaders).toBeUndefined()
+    const before = heard(h, 'bg1', 'onBeforeRequest')
+    expect(before).toHaveLength(2)
+    expect(before[1]).toMatchObject({
+      requestId: '50',
+      url: a,
+      method: 'GET',
+      type: 'main_frame',
+      frameType: 'outermost_frame',
+      tabId: before[0].tabId
+    })
+    expect(names()).toEqual(['onBeforeRequest', 'onBeforeRedirect', 'onBeforeRequest'])
+  })
+
   it("a 3xx without a Location (a 304) is one the relay closed too: onHeadersReceived, onResponseStarted and onCompleted at once, as the relay's observation of it ended", async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
