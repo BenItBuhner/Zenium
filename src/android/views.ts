@@ -118,6 +118,13 @@ export interface ViewEventPayloads {
   /** A failed load; a refused certificate (`ERR_CERT_*`) comes with what the interstitial shows of it. */
   failLoad: { code: number; description: string; url: string; certificate?: unknown }
   /**
+   * The page objected to a navigation the core asked for (`beforeunload`) and stays – the
+   * user's Cancel at "Leave site?", a hidden tab's rule, an agent's policy (`TabWebView.kt`
+   * `stayedOnPage`): the core takes the tab back to the page (`tabs.stayedOnPage`, the address
+   * it wrote as it asked undone).
+   */
+  stayed: void
+  /**
    * The WebView's navigation listener reported a phase of a main-frame navigation (only on a
    * WebView with `NAVIGATION_LISTENER`); the extension runtime derives `webNavigation` from it.
    */
@@ -352,6 +359,9 @@ export class AndroidTabView implements TabView {
         )
         return
       }
+      case 'stayed':
+        ev.onStayedOnPage?.()
+        return
       case 'upgraded': {
         const p = payload as ViewEventPayloads['upgraded']
         if (typeof p.from === 'string' && typeof p.to === 'string') ev.onUpgraded(p.from, p.to)

@@ -93,4 +93,33 @@ class LeaveCarryTest {
         carry.leaveChosen(now = 1_000L)
         assertFalse(carry.holds(now = 900L))
     }
+
+    @Test
+    fun aProbesLeaveAnswersTheProbedLoadsOwnAskingOnceWheneverItComes() {
+        // The user chose Leave at the probe's sheet; the load went out at the ack. The page's
+        // handler runs long before it objects again: no window stands between the two.
+        carry.probeLeft()
+        assertTrue(carry.answers(now = 10_000L))
+        // Spent: a later objection is the sheet's.
+        assertFalse(carry.answers(now = 10_001L))
+    }
+
+    @Test
+    fun aProbesLeaveIsDroppedWithTheRest() {
+        carry.probeLeft()
+        // The document started, another load was asked, the user stayed: nothing carries over.
+        carry.reset()
+        assertFalse(carry.answers(now = 100L))
+    }
+
+    @Test
+    fun aProbesLeaveAndAHoldsAreEachSpentByTheOneAsking() {
+        // Both standing at once (a held navigation's resume, then a probed load within the
+        // window): the one objection spends both – a second asking is the sheet's.
+        carry.leaveChosen(now = 0L)
+        carry.resumed(now = 50L, letGo = carry.holds(now = 20L))
+        carry.probeLeft()
+        assertTrue(carry.answers(now = 100L))
+        assertFalse(carry.answers(now = 110L))
+    }
 }

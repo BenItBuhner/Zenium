@@ -63,6 +63,7 @@ import app.zen.chromium.privacy.PrivacyFlags
 import app.zen.chromium.privacy.SaverModes
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URLDecoder
@@ -431,7 +432,10 @@ class TabWebView(
         // it; the extension runtime infers the family from the client callbacks otherwise.
         if (host.extensions != null) {
             // The unload check's own navigation (see [confirmUnload]) is not the page's news.
-            navigationListener = NavigationReports.attach(this) { if (unloadCheck == null) host.viewEvent(tabId, "navigation", it) }
+            navigationListener = NavigationReports.attach(this) {
+                // Neither the unload check's blank document nor the unload probe's address is a navigation of the tab's.
+                if (unloadCheck == null && !UnloadProbeRules.isProbeUrl(it.optString("url"))) host.viewEvent(tabId, "navigation", it)
+            }
         }
         applyPrivacy()
         // The renderer stopping to answer an input to this page (the unresponsive-page prompt).
@@ -449,6 +453,8 @@ class TabWebView(
             up.result.cancel()
         }
         unloadCheck?.settle(leave = true, destroyView = false)
+        // A load still waiting on its probe lands nowhere: the view goes.
+        cancelUnloadProbe()
         cancelHeldFileChoosers()
         clearAgentUploads()
         // An image search still waiting on a frame hears that the page went ([ImageOwner]).
@@ -1895,6 +1901,7 @@ class TabWebView(
         val history = copyBackForwardList()
         val steps = NavigationState.stepsTo(index, history.currentIndex, history.size) ?: return
         if (steps == 0) return
+        cancelUnloadProbe()
         rememberCurrentPage()
         goBackOrForward(steps)
     }
@@ -2073,20 +2080,37 @@ class TabWebView(
     }
 
     /**
-     * The user stayed on the page that objected to the core's own navigation. [loadUrl] wrote
-     * the destination into the document mirror as the load was asked for (the requests of the
-     * page that is coming are its own from the first); with the navigation cancelled before it
-     * started, the document is the one that stayed – the WebView's word, the committed page's URL.
+     * The user stayed on the page that objected to the core's own navigation: `document`, the
+     * page that is still there – the WebView's word (the committed page's URL) for a reload or
+     * a history step, the probe's remembered document for a load the probe stood for
+     * ([UnloadProbe.settle]). [loadRequested] wrote the destination into the document mirror
+     * as the load was asked for (the requests of the page that is coming are its own from the
+     * first); with the navigation refused, the mirror and the settings go back to the page. The
+     * core hears `stayed`: it wrote the destination into the tab as it asked (the pill shows
+     * where the tab is going, as Chrome's omnibox does), and takes the tab back to the page
+     * (`tabs.stayedOnPage`), the omnibox reading the page's address again.
      */
-    private fun stayedOnPage() {
+    private fun stayedOnPage(document: String? = url) {
         // The user stays: no Leave of theirs carries to any load.
         leaveCarry.reset()
-        val stayed = url?.takeIf(PageRules::isWebPage) ?: return
+        host.viewEvent(tabId, "stayed", null)
+        val stayed = document?.takeIf(PageRules::isWebPage) ?: return
         currentDocument = stayed
         switchDesktopModeFor(stayed)
         val flags = host.privacy.flags
         applyMixedContentPolicy(flags, stayed)
         applyCookiePolicy(flags, stayed)
+    }
+
+    /**
+     * The page's objection to a navigation outside a check was answered with a stay – at the
+     * sheet, by the hidden tab's rule, by an agent's policy: written on the probe in flight,
+     * whose settling runs [stayedOnPage] ([UnloadProbe.settle]), or run here for a reload or a
+     * history step, which no probe stands for.
+     */
+    private fun stayChosen() {
+        val probe = unloadProbe
+        if (probe != null) probe.answered(leave = false) else stayedOnPage()
     }
 
     /**
@@ -2338,14 +2362,150 @@ class TabWebView(
      */
     private fun pdfDocumentUrl(): String? = pdfPage?.baseUrl
 
-    // A load the core asked for: the user agent follows the rules for the URL before it leaves.
-    override fun loadUrl(requested: String) = loadRequested(requested, emptyMap())
+    // A load the core asked for: the page is asked first ([probeThenLoad]), then the user agent
+    // follows the rules for the URL before it leaves ([loadRequested]).
+    override fun loadUrl(requested: String) = probeThenLoad(requested)
+
+    // --- the unload probe (seed A7: Cancel on "Leave site?" keeps the page) ---------------------
 
     /**
-     * [loadUrl]'s body, for a load the core asked for and for a navigation the page started that
-     * was held for the core's content-settings answer and now goes on ([resumeHeld], `extra` its
-     * referrer): the user agent, the content settings and the policies follow the rules for the
-     * URL before its request leaves.
+     * A load the core asked for – a typed address, a bookmark, a history row, a tile – over a web
+     * document: the page's `beforeunload` is asked FIRST, by a probe navigation, and the load
+     * itself is issued only once the page, or the user at the sheet, has let it go.
+     *
+     * Why: WebView's `loadUrl` is a browser-initiated navigation, for which Chromium sends the
+     * page's frame `BeforeUnload` and waits 500 ms (`RenderViewHostImpl::kUnloadTimeoutMS`); a
+     * renderer busy past that – the one renderer serves every page and the chrome, and the
+     * omnibox closing over a typed address is work of its own – is taken to have let the
+     * navigation go, and the request leaves. The page's objection then reaches the sheet late,
+     * and the user's Cancel answers a question Chromium stopped waiting for: the second page
+     * commits under it (debug run 36898943391; pre-existing on main). Nothing of that timing
+     * is the host's to change; what the host can change is WHICH navigation Chromium hurries.
+     *
+     * The probe: the WebView's own `loadUrl` of [UnloadProbeRules.probeUrl] – an `.invalid`
+     * host: no site, no service worker, nothing to resolve – answered first in
+     * `shouldInterceptRequest` ([Client.interceptUnloadProbe]) with an empty 204, which Chromium
+     * drops without committing (the request engine's answer for a blocked document) and which
+     * never leaves the device. The page's `beforeunload` runs for it exactly as it would for
+     * the load, and `onJsBeforeUnload`'s table answers it as it always has – the sheet for the
+     * tab in front, the carry, the agent's policy, the hidden tab's stay – the answer written
+     * on the probe ([UnloadProbe.answered]). Right behind the probe goes `evaluateJavascript`
+     * of a constant: the same `LocalFrame` pipe as `BeforeUnload`, in order, so its result
+     * comes back only once the renderer has run the dispatch – and, where the page objected,
+     * only once the sync dialog was answered, the renderer waiting inside it. At that ack the
+     * probe settles ([UnloadProbe.settle]): a Stay, and the load is never issued – the page as
+     * it was ([stayedOnPage]), the core told to take the tab's address back; otherwise the load
+     * goes out ([loadRequested]), a Leave carried to its own asking ([LeaveCarry.probeLeft]:
+     * Chrome asks once). A probe Chromium hurried (the renderer busy past the budget) costs
+     * nothing: its request is the 204, its late objection still reaches the sheet, and the
+     * sheet's answer – not the timer – decides whether the load is ever issued. A renderer
+     * that never answers has the load issued at [UNLOAD_PROBE_TIMEOUT_MS] (Chrome navigates a
+     * hung page), the watchdog held while the sheet is up.
+     *
+     * No probe for a view with no document, the blank document, an internal or error page, the
+     * viewer page (nothing of theirs objects) or under an unload check ([UnloadProbeRules.needsProbe],
+     * [confirmUnload]'s list); a second load asked while a probe is up retargets it (the later
+     * word is the load's), and a reload, a history step, Stop or the view going cancels it.
+     * [resumeHeld]'s re-issued load never comes here: the renderer asked its page before the
+     * hold, and its second asking is the carry's. Nothing of the probe is the page's news: the
+     * WebView's words about its address are dropped ([UnloadProbeRules.isProbeUrl]), as the
+     * check's blank document's are.
+     */
+    private fun probeThenLoad(requested: String) {
+        unloadProbe?.let { probe ->
+            probe.retarget(requested)
+            return
+        }
+        val document = currentDocument
+        if (!UnloadProbeRules.needsProbe(document, failed = failedUrl != null, interstitial = interstitial, viewer = pdfPage != null, checkInFlight = unloadCheck != null)) {
+            loadRequested(requested, emptyMap())
+            return
+        }
+        // Superseded ahead of the question, as loadRequested has them: a navigation held for the
+        // core's answer, a reload asked just before (an objection now is to leaving, not
+        // reloading), a Leave given for a navigation still on its way.
+        heldNavigation = null
+        reloadAskedAt = 0L
+        leaveCarry.reset()
+        UnloadProbe(requested, checkNotNull(document)).start()
+    }
+
+    /** The probe in flight for a load the core asked for ([probeThenLoad]), or null. */
+    private var unloadProbe: UnloadProbe? = null
+    private var unloadProbeSeq = 0
+
+    /** The probe's own navigation: the WebView's `loadUrl`, past this view's. */
+    private fun navigateToProbe(url: String) = super.loadUrl(url)
+
+    /**
+     * One probe ([probeThenLoad]): the load it stands for, the page it asks, what the page
+     * answered, and the watchdog. Settled once, by the renderer's ack or the watchdog.
+     */
+    private inner class UnloadProbe(private var requested: String, val document: String) {
+        val url = UnloadProbeRules.probeUrl(++unloadProbeSeq)
+        private var stayed = false
+        private var letGo = false
+        private var done = false
+        private val watchdog = Runnable { settle() }
+
+        fun start() {
+            unloadProbe = this
+            postDelayed(watchdog, UNLOAD_PROBE_TIMEOUT_MS)
+            navigateToProbe(url)
+            evaluateJavascript("0") { settle() }
+        }
+
+        /** The page objected and the sheet is up: the user's answer takes as long as it takes. */
+        fun asking() {
+            removeCallbacks(watchdog)
+        }
+
+        /** The page's objection was answered – at the sheet, by the table, by a carry: written on the probe. */
+        fun answered(leave: Boolean) {
+            if (done) return
+            if (leave) letGo = true else stayed = true
+            // The ack follows the answer closely; a renderer that still never answers is given the window once more.
+            removeCallbacks(watchdog)
+            postDelayed(watchdog, UNLOAD_PROBE_TIMEOUT_MS)
+        }
+
+        /** A second load asked while the probe is up: the later word is the load's. */
+        fun retarget(url: String) {
+            requested = url
+        }
+
+        /** Another word superseded the load (a reload, a history step, Stop, the view going). */
+        fun cancel() {
+            if (done) return
+            done = true
+            removeCallbacks(watchdog)
+            if (unloadProbe === this) unloadProbe = null
+        }
+
+        private fun settle() {
+            if (done) return
+            cancel()
+            if (stayed) {
+                // The remembered document, not getUrl(): that is the probe's address until
+                // Chromium has dropped the navigation, and the watchdog may come before it has.
+                stayedOnPage(document)
+                return
+            }
+            loadRequested(requested, emptyMap())
+            if (letGo) leaveCarry.probeLeft()
+        }
+    }
+
+    /** The probe in flight, if any, is superseded: a reload, a history step, Stop, the view going. */
+    private fun cancelUnloadProbe() {
+        unloadProbe?.cancel()
+    }
+
+    /**
+     * [loadUrl]'s body, for a load the core asked for (past its probe, [probeThenLoad]) and for
+     * a navigation the page started that was held for the core's content-settings answer and
+     * now goes on ([resumeHeld], `extra` its referrer): the user agent, the content settings and
+     * the policies follow the rules for the URL before its request leaves.
      */
     private fun loadRequested(requested: String, extra: Map<String, String>) {
         // A local document still being read for this view lands nowhere: the tab has moved on
@@ -2553,7 +2713,14 @@ class TabWebView(
         host.backChanged()
     }
 
+    /** Stop (the core's `view.stop`): a load still waiting on its probe is given up with the rest. */
+    override fun stopLoading() {
+        cancelUnloadProbe()
+        super.stopLoading()
+    }
+
     override fun reload() {
+        cancelUnloadProbe()
         rememberCurrentPage()
         reloadAskedAt = SystemClock.uptimeMillis()
         leaveCarry.reset()
@@ -2595,6 +2762,7 @@ class TabWebView(
     override fun canGoBack(): Boolean = backIndex() >= 0
 
     override fun goBack() {
+        cancelUnloadProbe()
         rememberCurrentPage()
         reloadAskedAt = 0L
         leaveCarry.reset()
@@ -2616,6 +2784,7 @@ class TabWebView(
     }
 
     override fun goForward() {
+        cancelUnloadProbe()
         rememberCurrentPage()
         reloadAskedAt = 0L
         leaveCarry.reset()
@@ -3145,19 +3314,39 @@ class TabWebView(
         }
 
         /**
-         * Network thread. The served new tab page's own icons come first, on that view alone
-         * ([newTabFavicon]; one boolean read on every other); then the viewer page's files; the
-         * extension layer next: it serves the extension origins and the CORS proxy of extension
-         * pages; then Preload pages `none`, or the system's Data Saver or Battery Saver, refuses a
-         * prefetch ([refusePreload]); anything left goes to the request engine, whose rule sets
-         * include the extensions' declarativeNetRequest rules.
+         * Network thread. The unload probe's request is answered before anything
+         * ([interceptUnloadProbe]: the host's own address, nobody else's to see). The served new
+         * tab page's own icons come next, on that view alone ([newTabFavicon]; one boolean read
+         * on every other); then the viewer page's files; the extension layer next: it serves the
+         * extension origins and the CORS proxy of extension pages; then Preload pages `none`, or
+         * the system's Data Saver or Battery Saver, refuses a prefetch ([refusePreload]); anything
+         * left goes to the request engine, whose rule sets include the extensions'
+         * declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            (if (servesNewTabPage) newTabFavicon(request) else null)
+            interceptUnloadProbe(request)
+                ?: (if (servesNewTabPage) newTabFavicon(request) else null)
                 ?: PdfViewer.intercept(context, request, pdfPage)
                 ?: host.extensions?.intercept(request, this@TabWebView, null)
                 ?: refusePreload(request)
                 ?: host.blocking.intercept(this@TabWebView, request)
+
+        /**
+         * The unload probe's request ([probeThenLoad]): an empty 204 – Chromium drops a 204
+         * navigation without committing – marked `no-store`, so no cache ever stands in for the
+         * answer; nothing leaves the device for it. Stateless (a network thread, no field read):
+         * the probe origin is the host's alone, and any request to it is a probe's.
+         */
+        private fun interceptUnloadProbe(request: WebResourceRequest): WebResourceResponse? =
+            if (UnloadProbeRules.isProbeUrl(request.url.toString())) {
+                WebResourceResponse(
+                    "text/plain", "utf-8", 204, "No Content",
+                    mapOf("Cache-Control" to "no-store", "Content-Length" to "0"),
+                    ByteArrayInputStream(ByteArray(0))
+                )
+            } else {
+                null
+            }
 
         /**
          * The served new tab page's tile icons (NTP-35): `zen://favicon/<hash>`, the address the
@@ -3220,6 +3409,9 @@ class TabWebView(
 
         override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
             val url = pageUrlFor(rawUrl)
+            // The unload probe's address commits nothing (its answer is a 204); should a word
+            // about it come all the same, it is not the tab's (see probeThenLoad).
+            if (UnloadProbeRules.isProbeUrl(url)) return
             unloadCheck?.let { check ->
                 // The check's blank document started: the page did not object (or the user chose
                 // to leave) and is on its way out; the view goes with it (see confirmUnload).
@@ -3294,8 +3486,8 @@ class TabWebView(
          */
         override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
             val url = pageUrlFor(rawUrl)
-            // The unload check's blank document is not the tab's (see confirmUnload).
-            if (isUnloadCheckDocument(url)) return
+            // The unload check's blank document is not the tab's (see confirmUnload); nor the probe's address.
+            if (isUnloadCheckDocument(url) || UnloadProbeRules.isProbeUrl(url)) return
             onHistoryCommitted(shown = url, reload = isReload)
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (failedUrl != null && url == failedUrl) {
@@ -3340,7 +3532,7 @@ class TabWebView(
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
-            if (isUnloadCheckDocument(url)) return
+            if (isUnloadCheckDocument(url) || UnloadProbeRules.isProbeUrl(url)) return
             // WebView's word that nothing of the page before is drawn any more: from here the
             // pixels are this document's, and so may its card picture be.
             documentPainted(url)
@@ -3349,6 +3541,9 @@ class TabWebView(
 
         override fun onPageFinished(view: WebView, url: String) {
             if (isUnloadCheckDocument(url)) return
+            // The probe's navigation ended (its 204 is an aborted load, for which WebView raises
+            // this and nothing else): the page's own loading is whatever it was.
+            if (UnloadProbeRules.isProbeUrl(url)) return
             loading = false
             // A document that finished has drawn (the word for one whose commit-visible never came).
             documentPainted(url)
@@ -3366,8 +3561,10 @@ class TabWebView(
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
             val url = request.url.toString()
+            // The probe's 204 is an abort WebView does not report; any other word about its address is nobody's.
+            if (UnloadProbeRules.isProbeUrl(url)) return
+            host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
             if (!request.isForMainFrame) {
                 refusedCertificates.remove(url)
                 return
@@ -3523,6 +3720,7 @@ class TabWebView(
             // for. Chrome asks once: the user's word stands, no second sheet.
             if (check == null && leaveCarry.answers(now)) {
                 result.confirm()
+                unloadProbe?.answered(leave = true)
                 return true
             }
             val reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
@@ -3547,7 +3745,7 @@ class TabWebView(
                     leaveChosen(askedAt = now, chosenAt = now, reload = reloadAsked)
                 } else {
                     result.cancel()
-                    stayedOnPage()
+                    stayChosen()
                 }
                 host.viewEvent(tabId, "pageDialogAnswered", policyAnswer.report.toJson())
                 return true
@@ -3571,13 +3769,15 @@ class TabWebView(
                 is UnloadObjection.StayHidden -> {
                     // A page behind another tab or under the overview: the page stays, as a Stay would leave it.
                     result.cancel()
-                    stayedOnPage()
+                    stayChosen()
                 }
                 is UnloadObjection.Sheet -> {
                     // Never under a check (a check settles above): the question is the tab in front's own navigation's.
                     val reload = decision.reload
+                    // A probe's watchdog waits with the sheet: the user's answer takes as long as it takes.
+                    unloadProbe?.asking()
                     showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
-                        if (!leave) stayedOnPage()
+                        if (!leave) stayChosen()
                         else leaveChosen(askedAt = now, chosenAt = SystemClock.uptimeMillis(), reload = reload)
                     }
                 }
@@ -3596,6 +3796,9 @@ class TabWebView(
          * live for the hold past the Leave.
          */
         private fun leaveChosen(askedAt: Long, chosenAt: Long, reload: Boolean) {
+            // The Leave is the probe's where one stands for the load: its settling issues the
+            // load, this Leave carried to the load's own asking (LeaveCarry.probeLeft).
+            unloadProbe?.answered(leave = true)
             if (reload) return
             leaveCarry.leaveChosen(chosenAt)
             referrerPolicyWord.leaveChosen(askedAt = askedAt, now = chosenAt)
@@ -3619,7 +3822,7 @@ class TabWebView(
          * through so the bar fills before it fades.
          */
         override fun onProgressChanged(view: WebView, newProgress: Int) {
-            if (!loading || unloadCheck != null) return
+            if (!loading || unloadCheck != null || unloadProbe != null) return
             val now = SystemClock.uptimeMillis()
             if (newProgress < 100 && now - lastProgressAt < PROGRESS_THROTTLE_MS) return
             lastProgressAt = now
@@ -3833,6 +4036,13 @@ class TabWebView(
 
         /** A `beforeunload` check whose page neither goes nor objects by then may go (Electron's, `UNLOAD_CHECK_TIMEOUT_MS`). */
         private const val UNLOAD_CHECK_TIMEOUT_MS = 5_000L
+        /**
+         * An unload probe whose renderer never acks by then has its load issued all the same
+         * (a hung page holds no typed address up: Chrome navigates one past its own budget);
+         * held while the sheet is up, and given once more past its answer ([UnloadProbe]). The
+         * check's window, by the Design Lead's word: the two never drift apart.
+         */
+        private const val UNLOAD_PROBE_TIMEOUT_MS = UNLOAD_CHECK_TIMEOUT_MS
 
         /** A `beforeunload` objection this soon after the core asked for a reload is "Reload site?". */
         private const val RELOAD_ASK_WINDOW_MS = 2_000L
