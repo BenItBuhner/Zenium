@@ -9,5 +9,5 @@
     "DEMO_THEME": "light"
   },
   "estimate": 3,
-  "note": "An AI agent's dialog policy on a hidden tab (browser_dialog_policy, the Android half): six scenes on the page dialogs demo's page and profile, two tab switches, two sheets for the tab in front and none for the hidden one. On phone-c for the room (44 of its 68 minutes without it). The estimate is the author's, from the page dialogs driver's fifteen scenes in about five: not yet a nightly's measure."
+  "note": "An AI agent's dialog policy on a hidden tab (browser_dialog_policy, the Android half): six scenes on the page dialogs demo's page and profile, two tab switches, three sheets for the tab in front and none for the hidden one. On phone-c for the room (44 of its 68 minutes without it). The estimate is the author's, from the page dialogs driver's fifteen scenes in about five: not yet a nightly's measure."
 }
