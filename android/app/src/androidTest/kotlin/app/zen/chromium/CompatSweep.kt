@@ -121,8 +121,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val dialogsDismissed = JSONArray()
     /** Each time something else had the screen when a finger was due (the launcher, Overview) and the browser was brought back. */
     private val screenRestored = JSONArray()
-    /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissSheets]). */
+    /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissNativeSheets]). */
     private val sheetsDismissed = JSONArray()
+    /** Each row boundary the chrome had a surface of its own up at (the Downloads sheet, a panel), with its title and what the backs left ([dismissChromeSurface]). */
+    private val chromeSurfacesDismissed = JSONArray()
     /** Each chrome document found without the sweep's hooks – its renderer gone and the chrome rebuilt by the host ([chromeHooksLost]). */
     private val chromeRebuilds = JSONArray()
     /** When the hooks were last found gone (uptime), so a `zen()` call that saw it answers the prompt the old document took with it. */
@@ -211,6 +213,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
             results.put("sheetsDismissed", sheetsDismissed)
+            results.put("chromeSurfacesDismissed", chromeSurfacesDismissed)
             results.put("chromeRebuilds", chromeRebuilds)
             write()
         }
@@ -14728,8 +14731,58 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * texts, the backs pressed, what they left), with one still of it. A back is pressed only
      * with such a window on screen, never at the activity itself; a boundary with nothing up
      * costs one read of the window list.
+     *
+     * The native windows first, then the chrome's own surface ([dismissChromeSurface]): a sheet
+     * the chrome draws in its document has no window of its own for the first pass to see.
      */
     private fun dismissSheets(entry: JSONObject?, moment: String) {
+        dismissNativeSheets(entry, moment)
+        dismissChromeSurface(entry, moment)
+    }
+
+    /**
+     * The chrome's own surface down at a row boundary: the phone's Downloads sheet, a panel, a
+     * menu – drawn over the page in the chrome's document, no window of its own, so
+     * [extraWindows] never sees it; the host's `back.update` word ([chromeSurfaceUp]) does. The
+     * phone layout opens its Downloads sheet over the page as any download starts
+     * (`Browser.onDownloadStarted`: `pages.open('downloads', …, { reveal: true })`), and nothing
+     * of a row's own close takes it down. Compat round 27's AFTER on 113 (run 36953432620) had
+     * Save Page WE's save – the first download a row of the sweep completed – leave the sheet up
+     * from row 40 to the last; a tab view the core opens under a sheet is hidden
+     * (`view.setVisible(false)` for the sheet over it, `View.GONE` in `TabHost.setVisible`),
+     * and one created hidden is never laid out: every fixture of the rows after read `body.w` 0
+     * (352 before), the PDF viewer's page drew no canvas (pdf.js draws the pages visible in a
+     * laid-out container), ScreenPal's launcher frame had no width to open in, and the fonts
+     * page probe's taps on Settings landed on the sheet. One back per surface, four at most – the
+     * chrome's back dismisses a sheet as the user's swipe would – with the sheet's title as the
+     * evidence (`chromeSurfacesDismissed`: the moment, the title, the backs, whether one stayed).
+     */
+    private fun dismissChromeSurface(entry: JSONObject?, moment: String) {
+        if (!chromeSurfaceUp()) return
+        val title = chromeSheetTitle()
+        Log.w(TAG, "$moment: the chrome has a surface up over the page (${title ?: "no sheet title"})")
+        snap("chrome-surface-up")
+        var backs = 0
+        while (backs < 4 && chromeSurfaceUp()) {
+            back()
+            backs++
+            awaitSurface(false, 2_000)
+        }
+        val left = chromeSurfaceUp()
+        val report = JSONObject().put("at", moment).put("title", title ?: JSONObject.NULL).put("backs", backs).put("left", left)
+        chromeSurfacesDismissed.put(report)
+        entry?.let { (it.optJSONArray("chromeSurfacesDismissed") ?: JSONArray().also { list -> it.put("chromeSurfacesDismissed", list) }).put(report) }
+        if (left) Log.e(TAG, "$moment: the chrome's surface still up after $backs back(s)")
+        else Log.w(TAG, "$moment: the chrome's surface down after $backs back(s)")
+    }
+
+    /** The title of the chrome sheet up, when one is (`.zen-sheet-title`: Downloads, …); null with none or no answer. */
+    private fun chromeSheetTitle(): String? = runCatching {
+        JSONTokener(chromeJs("(function(){var t=document.querySelector('.zen-sheet-title');return t?(t.textContent||'').trim().slice(0,60):null})()")).nextValue() as? String
+    }.getOrNull()
+
+    /** The native windows over the browser down ([dismissSheets]); nothing with none up. */
+    private fun dismissNativeSheets(entry: JSONObject?, moment: String) {
         val up = extraWindows()
         if (up.isEmpty()) return
         val texts = JSONArray(up.map { windowTexts(it) })
