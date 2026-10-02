@@ -376,7 +376,7 @@ describe('the merged table', () => {
     expect(tableValues().get('Add-ons and Themes')).toBeUndefined()
   })
 
-  it('reads the copy-and-share family's faces (PR-3a): Copy Link Address once; the page’s own stays Copy Link', () => {
+  it('reads the copy-and-share family’s faces (PR-3a): Copy Link Address once; the page’s own stays Copy Link', () => {
     expect(S.menu('link.copyAddress')).toBe('Copy Link Address')
     expect(S.title('link.copyAddress')).toBe('Copy link address')
     expect(S.row('link.copyAddress')).toBe('Copy link address')
