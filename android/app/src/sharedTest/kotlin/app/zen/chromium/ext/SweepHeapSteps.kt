@@ -114,4 +114,22 @@ object SweepHeapSteps {
         }
         return out
     }
+
+    /**
+     * A row whose Java heap peak comes within a tenth of the cap, or twenty mebibytes above
+     * its BEFORE, is a regression line of its own. The sweep's log already says
+     * `WITHIN A TENTH OF THE CAP` when `peak * 10 >= cap * 9`; this is that inequality on
+     * bytes, plus the +20 MiB growth. A non-positive peak or cap is neither.
+     */
+    data class PeakGate(val withinTenthOfCap: Boolean, val grown20MiB: Boolean) {
+        val regression: Boolean get() = withinTenthOfCap || grown20MiB
+    }
+
+    fun peakGate(peakBytes: Long, maxBytes: Long, beforePeakBytes: Long? = null): PeakGate {
+        if (peakBytes <= 0L || maxBytes <= 0L) return PeakGate(false, false)
+        return PeakGate(
+            withinTenthOfCap = peakBytes * 10 >= maxBytes * 9,
+            grown20MiB = beforePeakBytes != null && peakBytes >= beforePeakBytes + 20L * 1_048_576L
+        )
+    }
 }
