@@ -1409,6 +1409,24 @@ export class Browser {
   async requestQuit(from?: ZenWindow, { held = false }: { held?: boolean } = {}): Promise<boolean> {
     if (this.quitting) return true
     if (!held && this.quitHold.engaged) return false
+    if (!(await this.prepareQuit(from, held))) return false
+    // Every request that waited on the same check quits once.
+    if (this.quitting) return true
+    this.shutdown()
+    await this.settled()
+    this.platform.app.quit()
+    return true
+  }
+
+  /**
+   * The quit's checks without the quit: the open-tabs warning, every page's "Leave site?",
+   * then the clear-on-exit – true once everything agreed, false on the first "Cancel" or
+   * "Stay". `requestQuit`'s first half, and on its own what a restart that is a quit (an
+   * in-place update, `UpdateService.install`) runs before the host swaps the installation and
+   * ends the process itself.
+   */
+  async prepareQuit(from?: ZenWindow, held = false): Promise<boolean> {
+    if (this.quitting) return true
     if (!this.quitCheck) {
       // Clear browsing data on exit once the quit is agreed, with a budget: what does not
       // finish in time is owed to the next launch (`SiteDataService.runOnExit` writes the
@@ -1424,13 +1442,7 @@ export class Browser {
           this.quitCheck = null
         })
     }
-    if (!(await this.quitCheck)) return false
-    // Every request that waited on the same check quits once.
-    if (this.quitting) return true
-    this.shutdown()
-    await this.settled()
-    this.platform.app.quit()
-    return true
+    return this.quitCheck
   }
 
   /** Whether a document of the profile is still being written (`settled` waits for it). */
@@ -4437,7 +4449,7 @@ export class Browser {
 
       'updates.check': () => this.updates.check({ manual: true }),
       'updates.download': () => this.updates.download(),
-      'updates.install': () => this.updates.install(),
+      'updates.install': (_a, win) => this.updates.install(win),
       'updates.cancel': () => this.updates.cancel(),
       'updates.openRelease': (_a, win) => this.updates.openRelease(win),
 

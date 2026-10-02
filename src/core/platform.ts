@@ -88,7 +88,13 @@ import type {
   EngineRelayResponse,
   EngineTransport
 } from '../shared/translateEngine'
-import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type {
+  UpdateAsset,
+  UpdateProgress,
+  UpdateRelease,
+  UpdateSourceOverride,
+  UpdateTarget
+} from '../shared/updates'
 import type { ManagedStatus } from '../shared/managed'
 import type { QrStartOutcome } from '../shared/qrScan'
 import type { InterstitialAction } from '../shared/interstitial'
@@ -2721,9 +2727,24 @@ export interface UpdateHost {
     asset: UpdateAsset,
     onProgress: (progress: UpdateProgress) => void
   ): Promise<string | null>
-  /** Apply the downloaded update: restart into it, or hand the file to the system installer. */
-  install(release: UpdateRelease, downloadedPath: string | null): Promise<void>
+  /**
+   * Apply the downloaded update: hand the file to the system installer, or – an in-place
+   * install, `restart` given – swap the installation and restart into it. The core has asked
+   * the quit's questions by then; the host calls `restart.quit()` once nothing can fail any
+   * more and ends the process right after it, without going through the app's quit request
+   * again.
+   */
+  install(
+    release: UpdateRelease,
+    downloadedPath: string | null,
+    restart?: UpdateRestart
+  ): Promise<void>
   cancel(): void
+  /**
+   * A release folder standing in for GitHub (`UpdateSourceOverride`), or null – every build a
+   * user runs. Only the desktop reads one, from its own environment, for the update proof.
+   */
+  sourceOverride?(): UpdateSourceOverride | null
   /**
    * The host's standing word on an update outside the chrome (Android's shade, NOT-17): the
    * release found (`available`), the one downloaded and waiting to be applied (`ready`), or null
@@ -2731,6 +2752,15 @@ export interface UpdateHost {
    * per edge, not per progress tick. Optional: a host without a shade leaves it out.
    */
   notify?(notice: UpdateNotice | null): void
+}
+
+/**
+ * The core's side of the restart an in-place update is. `quit()` is the browser's shutdown –
+ * the services stopped, the profile written one last time with its clean-exit marker – and
+ * resolves once those writes have landed; from then on the process only has to go away.
+ */
+export interface UpdateRestart {
+  quit(): Promise<void>
 }
 
 /** What the host's shade says of an update: which edge, and the release's version. */

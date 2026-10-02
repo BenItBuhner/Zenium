@@ -17,6 +17,9 @@
 //   PUBLISHED_AT                         ISO timestamp (default: now)
 //   UPDATE_MANIFEST_SIGNING_KEY          ed25519 private key, PKCS#8 PEM (or base64 of it); optional
 //   ALLOW_INCOMPLETE                     "true" to tolerate missing packages
+//   ASSET_BASE_URL                       where the packages and feeds are served from instead of the
+//                                        release's download folder (the desktop update proof's local
+//                                        folder); releaseUrl and notesUrl stay on GitHub
 // notes reads:
 //   ASSETS_DIR                           where update-manifest.json (and .sig) live (default release/assets)
 //   NOTES_FILE                           the release body as markdown (default release/notes.md)
@@ -236,7 +239,9 @@ async function build() {
   const publishedAt = (process.env.PUBLISHED_AT ?? '').trim() || new Date().toISOString()
   if (tag !== `v${version}`) fail(`RELEASE_TAG ${tag} does not match RELEASE_VERSION ${version}`)
 
-  const downloadBase = `${serverUrl}/${repo}/releases/download/${encodeURIComponent(tag)}`
+  const downloadBase =
+    (process.env.ASSET_BASE_URL ?? '').trim().replace(/\/+$/, '') ||
+    `${serverUrl}/${repo}/releases/download/${encodeURIComponent(tag)}`
   const meta = {}
   if (existsSync(metaDir)) {
     for (const file of readdirSync(metaDir)) {

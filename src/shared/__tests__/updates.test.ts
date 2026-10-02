@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   ANDROID_DEBUG_ID_SUFFIX,
   compareVersions,
+  describeUpdateTarget,
+  downloadPrefixFor,
   effectiveChannel,
   isDebugApplicationId,
   isNewerVersion,
   manifestSource,
+  parseUpdateBaseUrl,
   parseUpdateManifest,
   parseVersion,
   pickUpdateAsset,
@@ -112,6 +115,39 @@ describe('manifest sources', () => {
       kind: 'list',
       url: `https://api.github.com/repos/${REPO}/releases?per_page=30`
     })
+  })
+
+  it('reads a release folder on either channel under a source override', () => {
+    const override = { baseUrl: 'http://localhost:8765' }
+    const expected = {
+      kind: 'latest',
+      manifestUrl: 'http://localhost:8765/update-manifest.json',
+      signatureUrl: 'http://localhost:8765/update-manifest.json.sig'
+    }
+    expect(manifestSource('stable', REPO, override)).toEqual(expected)
+    expect(manifestSource('beta', REPO, override)).toEqual(expected)
+    expect(downloadPrefixFor(REPO, 'v0.2.0', override)).toBe('http://localhost:8765/')
+    expect(downloadPrefixFor(REPO, 'v0.2.0')).toBe(`${BASE}/`)
+  })
+
+  it('takes ZEN_UPDATE_BASE_URL only as loopback http or https', () => {
+    expect(parseUpdateBaseUrl('http://127.0.0.1:8765/')).toEqual({
+      baseUrl: 'http://127.0.0.1:8765'
+    })
+    expect(parseUpdateBaseUrl(' http://localhost:8765 ')).toEqual({
+      baseUrl: 'http://localhost:8765'
+    })
+    expect(parseUpdateBaseUrl('https://updates.example.com/zenium/')).toEqual({
+      baseUrl: 'https://updates.example.com/zenium'
+    })
+    expect(parseUpdateBaseUrl('http://updates.example.com')).toBeNull()
+    expect(parseUpdateBaseUrl('http://10.0.0.1:8765')).toBeNull()
+    expect(parseUpdateBaseUrl('ftp://127.0.0.1/x')).toBeNull()
+    expect(parseUpdateBaseUrl('http://127.0.0.1:8765/?x=1')).toBeNull()
+    expect(parseUpdateBaseUrl('http://u:p@127.0.0.1:8765')).toBeNull()
+    expect(parseUpdateBaseUrl('not a url')).toBeNull()
+    expect(parseUpdateBaseUrl('')).toBeNull()
+    expect(parseUpdateBaseUrl(undefined)).toBeNull()
   })
 
   it('picks the newest release that carries a manifest', () => {
@@ -245,6 +281,31 @@ describe('parseUpdateManifest', () => {
     expect(() => parseUpdateManifest(page, REPO)).toThrow(/outside the repository/)
   })
 
+  it('reads packages and feeds from a release folder under a source override, nothing else', () => {
+    const override = { baseUrl: 'http://127.0.0.1:8765' }
+    const local = manifest({
+      assets: [asset({ url: 'http://127.0.0.1:8765/zen-chromium-0.2.0-x64-setup.exe' })],
+      feeds: {
+        'windows-x64': 'http://127.0.0.1:8765/latest.yml',
+        'linux-x64': `${BASE}/latest-linux.yml`
+      }
+    })
+    const parsed = parseUpdateManifest(local, REPO, override)
+    expect(parsed.assets[0].url).toBe('http://127.0.0.1:8765/zen-chromium-0.2.0-x64-setup.exe')
+    expect(parsed.feeds).toEqual({ 'windows-x64': 'http://127.0.0.1:8765/latest.yml' })
+    expect(parsed.checksumsUrl).toBe('http://127.0.0.1:8765/SHA256SUMS.txt')
+    // The release page stays on GitHub even then.
+    expect(parsed.releaseUrl).toBe(`https://github.com/${REPO}/releases/tag/v0.2.0`)
+    // GitHub's own download is "somewhere else" under the override; so is any other http host.
+    expect(() => parseUpdateManifest(manifest(), REPO, override)).toThrow(/not a download/)
+    const elsewhere = manifest({
+      assets: [asset({ url: 'http://127.0.0.1:9999/zen-chromium-0.2.0-x64-setup.exe' })]
+    })
+    expect(() => parseUpdateManifest(elsewhere, REPO, override)).toThrow(/https/)
+    // And without the override the same manifest is refused as before.
+    expect(() => parseUpdateManifest(local, REPO)).toThrow(/https/)
+  })
+
   it('rejects malformed fields', () => {
     expect(() => parseUpdateManifest('{', REPO)).toThrow(/valid JSON/)
     expect(() => parseUpdateManifest(manifest({ schemaVersion: 2 }), REPO)).toThrow(/schema/)
@@ -274,6 +335,7 @@ describe('asset selection', () => {
     [{ os: 'windows', arch: 'x64', kind: 'portable' }, 'zen-chromium-0.2.0-x64-setup.exe'],
     [{ os: 'macos', arch: 'arm64', kind: 'mac-unsigned' }, 'z.dmg'],
     [{ os: 'macos', arch: 'arm64', kind: 'mac-signed' }, 'z.zip'],
+    [{ os: 'macos', arch: 'arm64', kind: 'mac-adhoc' }, 'z.zip'],
     [{ os: 'macos', arch: 'x64', kind: 'mac-unsigned' }, null],
     [{ os: 'linux', arch: 'x64', kind: 'appimage' }, 'z.AppImage'],
     [{ os: 'linux', arch: 'x64', kind: 'deb' }, 'z.deb'],
@@ -294,7 +356,14 @@ describe('asset selection', () => {
     expect(updateModeFor('appimage')).toBe('in-place')
     expect(updateModeFor('deb')).toBe('in-place')
     expect(updateModeFor('mac-signed')).toBe('in-place')
+    expect(updateModeFor('mac-adhoc')).toBe('in-place')
     expect(updateModeFor('mac-unsigned')).toBe('installer')
+    expect(describeUpdateTarget({ os: 'macos', arch: 'arm64', kind: 'mac-adhoc' })).toMatch(
+      /install when Zenium restarts/
+    )
+    expect(describeUpdateTarget({ os: 'macos', arch: 'arm64', kind: 'mac-unsigned' })).toMatch(
+      /can't replace this copy where it is/
+    )
     expect(updateModeFor('apk')).toBe('installer')
     expect(updateModeFor('portable')).toBe('manual')
     expect(updateModeFor('unpacked')).toBe('manual')

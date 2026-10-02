@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 // eslint-disable-next-line no-restricted-imports
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { UpdateService, updateNoticeFor, verifyManifestSignature } from '../updates'
-import type { UpdateHost, UpdateNotice } from '../platform'
+import type { UpdateHost, UpdateNotice, UpdateRestart } from '../platform'
 import type { Browser } from '../browser'
 import {
   UPDATE_REPOSITORY,
@@ -162,8 +162,20 @@ class FakeHost implements UpdateHost {
     })
   }
 
-  async install(_r: unknown, path: string | null): Promise<void> {
+  /** What an in-place install does once the core hands it the restart; null = the default. */
+  installImpl: ((restart: UpdateRestart | undefined) => Promise<void>) | null = null
+  /** Whether the host was handed the restart, and whether it called `quit()`. */
+  restarts: Array<{ given: boolean; quit: boolean }> = []
+
+  async install(_r: unknown, path: string | null, restart?: UpdateRestart): Promise<void> {
     this.installs.push(path)
+    const record = { given: Boolean(restart), quit: false }
+    this.restarts.push(record)
+    if (this.installImpl) return this.installImpl(restart)
+    if (restart) {
+      await restart.quit()
+      record.quit = true
+    }
   }
 
   cancel(): void {
@@ -205,7 +217,12 @@ function fakeBrowser(
     openExternalUrl: (url: string) => {
       opened.push(url)
     },
-    flushSync: vi.fn()
+    flushSync: vi.fn(),
+    // The quit's questions, agreed unless a test says otherwise; then the shutdown.
+    prepareQuit: vi.fn(async () => true),
+    quitting: false,
+    shutdown: vi.fn(),
+    settled: vi.fn(async () => undefined)
   }
   return { browser: browser as unknown as Browser, toasts, opened, fetched }
 }
@@ -238,7 +255,70 @@ describe('UpdateService', () => {
     expect(toasts.at(-1)).toMatch(/ready – restart/)
     await service.install()
     expect(host.installs).toEqual([null])
-    expect(browser.flushSync).toHaveBeenCalled()
+    // Restart to update is a quit: the questions first, then the host is handed the shutdown.
+    expect(browser.prepareQuit).toHaveBeenCalledTimes(1)
+    expect(host.restarts).toEqual([{ given: true, quit: true }])
+    expect(browser.shutdown).toHaveBeenCalledTimes(1)
+    expect(browser.settled).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the update staged when the user cancels the quit question', async () => {
+    const host = new FakeHost(NSIS)
+    const { browser, toasts } = fakeBrowser('0.1.0', {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: manifestFor('0.2.0') }
+    })
+    ;(browser.prepareQuit as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+    const service = new UpdateService(browser, host)
+    await service.check({ manual: false })
+    await until(() => service.status().phase === 'ready')
+    await service.install()
+    expect(host.installs).toEqual([])
+    expect(browser.shutdown).not.toHaveBeenCalled()
+    expect(service.status().phase).toBe('ready')
+    expect(toasts.some((t) => t.startsWith('Could not install'))).toBe(false)
+    // Agreed the second time: the install goes ahead.
+    await service.install()
+    expect(host.installs).toEqual([null])
+    expect(browser.shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the swap to a quit that was asked for while the question stood', async () => {
+    const host = new FakeHost(NSIS)
+    const { browser } = fakeBrowser('0.1.0', {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: manifestFor('0.2.0') }
+    })
+    // ⌘Q joined the update's quit check and is quitting on its own once it agreed.
+    ;(browser.prepareQuit as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async () => {
+        ;(browser as unknown as { quitting: boolean }).quitting = true
+        return true
+      }
+    )
+    const service = new UpdateService(browser, host)
+    await service.check({ manual: false })
+    await until(() => service.status().phase === 'ready')
+    await service.install()
+    expect(host.restarts).toEqual([])
+    expect(browser.shutdown).not.toHaveBeenCalled()
+    expect(service.status().phase).toBe('ready')
+  })
+
+  it('reports a host that could not install, before it quit anything', async () => {
+    const host = new FakeHost(NSIS)
+    host.installImpl = async () => {
+      throw new Error('the downloaded installer is gone')
+    }
+    const { browser, toasts } = fakeBrowser('0.1.0', {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: manifestFor('0.2.0') }
+    })
+    const service = new UpdateService(browser, host)
+    await service.check({ manual: false })
+    await until(() => service.status().phase === 'ready')
+    await service.install()
+    expect(service.status().phase).toBe('error')
+    expect(service.status().error).toBe('the downloaded installer is gone')
+    expect(toasts.at(-1)).toBe('Could not install the update: the downloaded installer is gone')
+    expect(browser.shutdown).not.toHaveBeenCalled()
   })
 
   it('reports up to date and a friendly error when nothing was released yet', async () => {

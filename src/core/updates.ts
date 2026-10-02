@@ -56,6 +56,8 @@ export class UpdateService {
   private timer: ReturnType<typeof setTimeout> | null = null
   private checking: Promise<void> | null = null
   private cancelRequested = false
+  /** An install in progress – its questions open, or the host swapping – so a second click waits on it. */
+  private installing = false
   private lastProgressAt = 0
   /** The notice the host's shade last heard (`kind:version`; '' for none), so an edge is told once. */
   private noticed = ''
@@ -165,18 +167,42 @@ export class UpdateService {
     }
   }
 
-  /** Apply the downloaded update. In-place hosts restart into the new version from here. */
-  async install(): Promise<void> {
-    const { release, downloadedPath, phase } = this.current
+  /**
+   * Apply the downloaded update. An in-place install is a restart, and a restart is a quit:
+   * the quit's own questions come first – the open-tabs warning, every page's "Leave site?",
+   * the clear-on-exit (`Browser.prepareQuit`) – and a "Cancel" keeps the update staged. Then
+   * the host swaps the installation and ends the process through `restart.quit()`
+   * (`shutdown`, the profile's final write) – never through the app's quit request, which
+   * would ask the same questions over again while the new version is already on its way
+   * (what left the old app standing with a question in its window, and the new one started
+   * beside it, before the fix).
+   */
+  async install(from?: ZenWindow): Promise<void> {
+    const { release, downloadedPath, phase, mode } = this.current
     if (phase !== 'ready' || !release) return
+    if (this.installing) return
+    this.installing = true
     try {
-      // Anything unsaved must hit the disk before an in-place install restarts the app.
-      if (this.current.mode === 'in-place') this.browser.flushSync()
-      await this.host.install(release, downloadedPath)
+      if (mode !== 'in-place') {
+        await this.host.install(release, downloadedPath)
+        return
+      }
+      if (!(await this.browser.prepareQuit(from))) return
+      // A quit asked for while the question stood (⌘Q joins the same check) is ending the
+      // process on its own: the swap must not start under it.
+      if (this.browser.quitting) return
+      await this.host.install(release, downloadedPath, {
+        quit: async () => {
+          this.browser.shutdown()
+          await this.browser.settled()
+        }
+      })
     } catch (error) {
       const message = describeError(error)
       this.set({ phase: 'error', error: message })
       this.browser.toast(`Could not install the update: ${message}`, 'error')
+    } finally {
+      this.installing = false
     }
   }
 
@@ -308,7 +334,8 @@ export class UpdateService {
     signature: UpdateSignatureState
     notes: UpdateNotes | null
   }> {
-    const source = manifestSource(channel, UPDATE_REPOSITORY)
+    const override = this.host.sourceOverride?.() ?? null
+    const source = manifestSource(channel, UPDATE_REPOSITORY, override)
     const version = this.current.currentVersion
     let manifestUrl: string
     let signatureUrl: string | null
@@ -329,7 +356,7 @@ export class UpdateService {
       notes = notesOf(version, releaseNotesFromList(parsed, version))
     }
     const manifestText = await this.fetchText(manifestUrl)
-    const manifest = parseUpdateManifest(manifestText, UPDATE_REPOSITORY)
+    const manifest = parseUpdateManifest(manifestText, UPDATE_REPOSITORY, override)
     if (!notes && manifest.version === version) notes = notesOf(version, manifest.notes ?? null)
     const keys = this.host.publicKeys()
     if (keys.length === 0) return { manifest, signature: 'unenforced', notes }
