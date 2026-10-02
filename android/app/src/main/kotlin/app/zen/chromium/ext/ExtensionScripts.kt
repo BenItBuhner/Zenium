@@ -344,7 +344,7 @@ object ExtensionScripts {
 
     /** Exactly what [appendGroupFunction] writes for `group` with `mirror` as its mirror tail, in characters. */
     fun groupFunctionChars(group: Group, mirror: String): Int {
-        var count = FUNCTION_KEYWORD.length + group.frameName.length + FUNCTION_PARAMS.length + mirror.length + FUNCTION_TAIL.length
+        var count = functionHead(group.frameName).length + FUNCTION_PARAMS.length + mirror.length + FUNCTION_TAIL.length
         if (group.isolation == "with") count += WITH_HEAD.length + 1
         for (source in group.sources) count += SOURCE_JOIN_HEAD.length + source.length + SOURCE_JOIN_TAIL.length
         return count
@@ -393,7 +393,7 @@ object ExtensionScripts {
 
     /** [appendGroupFunction] with the group's mirror ([mirrorOf]) computed by the caller – the layout counts it first. */
     fun appendGroupFunction(out: Appendable, group: Group, mirror: String) {
-        out.append(FUNCTION_KEYWORD).append(group.frameName).append(FUNCTION_PARAMS)
+        out.append(functionHead(group.frameName)).append(FUNCTION_PARAMS)
         if (group.isolation == "with") out.append(WITH_HEAD)
         for (source in group.sources) {
             out.append(SOURCE_JOIN_HEAD)
@@ -415,6 +415,19 @@ object ExtensionScripts {
 
     /** A function literal's keyword; its name ([FrameIdioms]), when it has one, goes between this and the parameters. */
     private const val FUNCTION_KEYWORD = "function"
+
+    /**
+     * The literal's text up to its parameters: the keyword alone for an anonymous one, the
+     * keyword, a space and the name otherwise – `function __zenScopeFrames`. The space is the
+     * syntax: glued on, `function__zenScopeFrames(window,…){` is an identifier and a call, and
+     * the whole script a SyntaxError (round 27's first `[savepagewe]` run lost `content-frame.js`
+     * to "missing ) after argument list" that way, and every idiom extension's document-start
+     * script would have gone with it).
+     */
+    private fun functionHead(name: String): String = if (name.isEmpty()) FUNCTION_KEYWORD else "$FUNCTION_KEYWORD $name"
+
+    /** The most [functionHead] adds past the keyword: the space and the longest name. */
+    private val FUNCTION_NAME_ROOM: Int = 1 + FrameIdioms.MAX_NAME_LENGTH
 
     /** The parameters of a content-script function literal; the bootstrap's `runGroup` calls it with these. */
     private const val FUNCTION_PARAMS = "(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM}){"
@@ -502,9 +515,9 @@ object ExtensionScripts {
     private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject, scoped: Boolean, name: String): String =
         "(typeof __zenExtExec===\"function\"?__zenExtExec:function(){throw new Error(${JSONObject.quote(NO_ACCESS)})})" +
             "(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
-            FUNCTION_KEYWORD + name + EXEC_FUNCTION_PARAMS + (if (scoped) WITH_HEAD else "") + "\n"
+            functionHead(name) + EXEC_FUNCTION_PARAMS + (if (scoped) WITH_HEAD else "") + "\n"
 
-    /** Where the literal's name sits in an [execHead] written with an empty one: before the parameters, the `with` head and the newline. */
+    /** Where the literal's space and name go in an [execHead] written anonymous: after the keyword – before the parameters, the `with` head and the newline. */
     private fun execNameOffsetFromEnd(scoped: Boolean): Int = EXEC_FUNCTION_PARAMS.length + (if (scoped) WITH_HEAD.length else 0) + 1
 
     private fun execTail(scoped: Boolean): String = if (scoped) EXEC_TAIL_SCOPED else EXEC_TAIL
@@ -564,7 +577,7 @@ object ExtensionScripts {
         val mirrored = mirror && funcSource == null && (code != null || files.isNotEmpty())
         val capacity = (prefix?.length ?: -1) + 1 + GUARD_HEAD.length + head.length + body.length +
             files.sumOf { it.length().toInt() + FILE_JOIN.length } + tail.length + GUARD_TAIL.length +
-            (if (named) SOURCE_URL_TAIL.length else 0) + FrameIdioms.MAX_NAME_LENGTH +
+            (if (named) SOURCE_URL_TAIL.length else 0) + FUNCTION_NAME_ROOM +
             (if (mirrored) TopLevelDeclarations.MIRROR_ROOM + COMPLETION_ASSIGN.length + COMPLETION_RETURN.length else 0)
         val sb = StringBuilder(capacity)
         if (prefix != null) sb.append(prefix).append('\n')
@@ -600,7 +613,7 @@ object ExtensionScripts {
         sb.append(tail).append(GUARD_TAIL)
         if (named) sb.append(SOURCE_URL_TAIL)
         val name = FrameIdioms.nameOf(frames)
-        if (name.isNotEmpty()) sb.insert(nameAt, name)
+        if (name.isNotEmpty()) sb.insert(nameAt, functionHead(name).substring(FUNCTION_KEYWORD.length))
         return sb.toString()
     }
 
