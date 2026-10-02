@@ -10,6 +10,7 @@
 //   node update-proof.mjs drive --exe <executable> --out <dir> --label <name> --expect <version>
 //        [--extra-args "--no-sandbox --disable-gpu"] [--env KEY=VALUE]... [--app-names a,b]
 //        [--verify-exe <path>] [--install-timeout <s>] [--relaunch-timeout <s>] [--keep-relaunched]
+//        [--quit-answer-delay <s>] [--profile-dir <dir>]
 //      Writes <out>/<label>/result.json (the facts and the verdict), drive.log, app-stdio.log,
 //      toasts.json and OS screenshots at each stage. Exit 0 when the relaunched process runs
 //      <version>; 1 otherwise, with the exact refusal text (the toast's, the state's error) in
@@ -35,6 +36,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  QUIT_ANSWER_DELAY_MS,
   bareVersion,
   binaryVersion,
   defaultUserDataDir,
@@ -255,6 +257,9 @@ async function drive() {
   const installTimeoutMs = Number(argv['install-timeout'] ?? 180) * 1000
   const relaunchTimeoutMs = Number(argv['relaunch-timeout'] ?? 300) * 1000
   const downloadTimeoutMs = Number(argv['download-timeout'] ?? 900) * 1000
+  // How long a person takes to read "Quit Zenium?" and press Quit. Long enough for the new
+  // version to have started beside the old one where the install spawns it at once.
+  const quitAnswerDelayMs = Number(argv['quit-answer-delay'] ?? QUIT_ANSWER_DELAY_MS / 1000) * 1000
 
   // A fresh profile past onboarding, with automatic checks off so the drive is the only actor.
   // It lives where the app keeps its profile by default (Linux: under an XDG_CONFIG_HOME of
@@ -506,6 +511,20 @@ async function drive() {
   let windowPrompt = null
   let besideOld = null
   let lastProcessScan = 0
+  const scanBeside = () => {
+    lastProcessScan = Date.now()
+    const fresh = newAppProcesses(listProcesses(), knownPids, appNames)
+    if (fresh.length > 0 && !besideOld) {
+      const p = fresh[0]
+      besideOld = {
+        pid: p.pid,
+        exe: p.exe,
+        version: binaryVersion(p.exe, process.platform, fs).version,
+        at: Date.now() - t0
+      }
+      log(`a second app process came up beside the running one: ${JSON.stringify(besideOld)}`)
+    }
+  }
   while (Date.now() < installDeadline) {
     if (exit) break
     const toasts = await readToasts()
@@ -518,30 +537,24 @@ async function drive() {
       windowPrompt = { ...whole.window.prompt, at: Date.now() - t0, answered: false }
       log(`window prompt up: ${JSON.stringify(windowPrompt)}`)
       shot('03b-quit-question')
-      // A user who asked to restart answers "Quit" here; the same command the button sends.
+      // A user who asked to restart reads the question and answers "Quit" (the same command the
+      // button sends) – after the time that takes, with an eye on what starts meanwhile.
       if (windowPrompt.kind === 'quit') {
+        const answerAt = Date.now() + quitAnswerDelayMs
+        while (Date.now() < answerAt && !exit) {
+          await delay(Math.min(500, answerAt - Date.now()))
+          if (Date.now() - lastProcessScan > (IS_WIN ? 2500 : 1000)) scanBeside()
+        }
         await invoke('window.respondPrompt', { id: windowPrompt.id, accepted: true }, 10000)
           .then(() => {
             windowPrompt.answered = true
-            log('answered the quit question: yes')
+            windowPrompt.answeredAt = Date.now() - t0
+            log(`answered the quit question: yes (${Math.round(quitAnswerDelayMs / 1000)} s in)`)
           })
           .catch((e) => log(`could not answer the quit question: ${e.message}`))
       }
     }
-    if (Date.now() - lastProcessScan > (IS_WIN ? 5000 : 2000)) {
-      lastProcessScan = Date.now()
-      const fresh = newAppProcesses(listProcesses(), knownPids, appNames)
-      if (fresh.length > 0 && !besideOld) {
-        const p = fresh[0]
-        besideOld = {
-          pid: p.pid,
-          exe: p.exe,
-          version: binaryVersion(p.exe, process.platform, fs).version,
-          at: Date.now() - t0
-        }
-        log(`a second app process came up beside the running one: ${JSON.stringify(besideOld)}`)
-      }
-    }
+    if (Date.now() - lastProcessScan > (IS_WIN ? 5000 : 2000)) scanBeside()
     const outcome = await Promise.race([installCall, delay(1000).then(() => null)])
     if (outcome && !installOutcome) {
       installOutcome = outcome
@@ -568,7 +581,7 @@ async function drive() {
   mark('install-settled', install)
   if (!exit) {
     shot('04-install-did-not-quit')
-    if (besideOld) {
+    if (besideOld && alive(besideOld.pid)) {
       log(`terminating the second instance ${besideOld.pid}`)
       await terminate(besideOld.pid, log)
     }
@@ -580,6 +593,13 @@ async function drive() {
   const relaunchDeadline = Date.now() + relaunchTimeoutMs
   let relaunched = { found: false }
   while (Date.now() < relaunchDeadline) {
+    if (besideOld && !besideOld.gone && !alive(besideOld.pid)) {
+      // The instance that started beside the old app did not outlive it: one profile, one
+      // single-instance lock. Noted for the verdict, and the scan goes on for anything else.
+      besideOld.gone = true
+      besideOld.goneAt = Date.now() - t0
+      log(`the second instance ${besideOld.pid} is gone`)
+    }
     const fresh = newAppProcesses(listProcesses(), knownPids, appNames)
     if (fresh.length > 0) {
       const p = fresh[0]

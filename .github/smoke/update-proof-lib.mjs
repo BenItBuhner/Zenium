@@ -232,6 +232,8 @@ export function defaultUserDataDir(env, platform = process.platform, home = env.
 
 /** A new process seen this close to the old one's exit is the relaunch, not a second instance. */
 export const BESIDE_GRACE_MS = 3000
+/** How long the drive takes to answer the quit question – a person reading it (ms). */
+export const QUIT_ANSWER_DELAY_MS = 5000
 
 export function judge(facts) {
   const { expected, oldVersion, check, download, install, relaunched, verified } = facts
@@ -298,7 +300,9 @@ export function judge(facts) {
     return {
       ok: false,
       stage: 'relaunch',
-      reason: 'no new app process appeared after the install'
+      reason: beside?.gone
+        ? `no new app process appeared after the install: the instance (${beside.version ?? 'unknown version'}, pid ${beside.pid}) that started beside the old app while the quit question stood did not outlive it – one profile, one single-instance lock`
+        : 'no new app process appeared after the install'
     }
   if (relaunched.version !== expected)
     return {

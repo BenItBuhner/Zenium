@@ -351,6 +351,28 @@ describe('toasts and the verdict', () => {
         relaunched
       }).ok
     ).toBe(true)
+    // The second instance was there while the question stood, and gone once it was answered.
+    expect(
+      judge({
+        expected: '0.5.81',
+        oldVersion: '0.5.70',
+        check,
+        download,
+        install: {
+          exited: true,
+          exit: { code: 0, at: 14000 },
+          errorToast: null,
+          windowPrompt: { kind: 'quit', count: 2, answered: true },
+          besideOld: { pid: 77, version: '0.5.81', at: 12000, gone: true, goneAt: 15000 }
+        },
+        relaunched: { found: false }
+      })
+    ).toEqual({
+      ok: false,
+      stage: 'relaunch',
+      reason:
+        'no new app process appeared after the install: the instance (0.5.81, pid 77) that started beside the old app while the quit question stood did not outlive it – one profile, one single-instance lock'
+    })
     expect(
       judge({
         expected: '0.5.81',
