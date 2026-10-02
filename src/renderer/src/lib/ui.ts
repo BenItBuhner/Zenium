@@ -1191,13 +1191,22 @@ export function showBanner(opts: BannerOptions): number {
   const staying = live.filter((b) => !(opts.key && b.key === opts.key))
   for (const b of staying.slice(MAX_BANNERS - 1)) dismissBanner(b.id, 'replaced')
   uiStore.set((s) => ({ banners: [banner, ...s.banners] }))
-  if (banner.duration !== null) armClock(id, banner.duration, () => dismissBanner(id, 'timeout'))
+  if (banner.duration !== null) {
+    if (bannersCovered) {
+      // Arriving under the cover: it waits unseen, and its clock starts when the cover lifts.
+      heldRemaining.set(id, banner.duration)
+      coverHeld.add(id)
+    } else {
+      armClock(id, banner.duration, () => dismissBanner(id, 'timeout'))
+    }
+  }
   return id
 }
 
 /** Send a banner off; its `onDismiss` hears why, once. */
 export function dismissBanner(id: number, reason: BannerDismissReason = 'program'): void {
   disarmClock(id)
+  coverHeld.delete(id)
   const banner = uiStore.get().banners.find((b) => b.id === id)
   if (!banner || banner.leaving) return
   if (onCards()) {
@@ -1213,6 +1222,9 @@ export function dismissBanner(id: number, reason: BannerDismissReason = 'program
 
 export function forgetBanner(id: number): void {
   disarmClock(id)
+  coverHeld.delete(id)
+  fingerHeld.delete(id)
+  heldRemaining.delete(id)
   if (!uiStore.get().banners.some((b) => b.id === id)) return
   uiStore.set((s) => ({ banners: s.banners.filter((b) => b.id !== id) }))
 }
@@ -1229,17 +1241,66 @@ export function pickBannerAction(id: number): void {
 }
 
 const heldRemaining = new Map<number, number>()
+/** Messages under a finger right now: the cover lifting does not start a clock a finger holds. */
+const fingerHeld = new Set<number>()
 
 function holdMessage(id: number, held: boolean, fire: () => void): void {
   if (held) {
+    fingerHeld.add(id)
     const left = disarmClock(id)
     if (left !== null) heldRemaining.set(id, left)
     return
   }
+  fingerHeld.delete(id)
+  // A banner the cover still holds waits for the cover to lift, not for the finger.
+  if (coverHeld.has(id)) return
+  resumeMessage(id, fire)
+}
+
+function resumeMessage(id: number, fire: () => void): void {
   const left = heldRemaining.get(id)
   heldRemaining.delete(id)
   // A message that was let go gets at least a moment before it leaves.
   if (left !== undefined) armClock(id, Math.max(left, 1000), fire)
+}
+
+/**
+ * The cover over the banner stack (§9.33): on a touch host the open tab overview stands where
+ * the page was, the stack under the toolbar with it, and no card may draw over the overview's
+ * own header (the Design Lead's ruling on #731, matrix row A4). The reading is the band's
+ * (`lib/band/signals.ts` `covered`, the stage's `overviewIsOpen()`: first dragging frame to
+ * close): while covered a standing banner keeps its place in the stack with its clock paused
+ * and one arriving waits with its clock unarmed; the cover lifting starts them again, a resumed
+ * clock getting at least the moment a let-go one gets. The surface that draws the stack says
+ * when it is covered (`components/messages/MessageLayer`, `components/messages/cover.ts`), and
+ * it draws the held cards folded away by their edge; the desktop has no stage and never covers.
+ */
+let bannersCovered = false
+/** Banners whose clock the cover holds; `heldRemaining` carries the time left for both holds. */
+const coverHeld = new Set<number>()
+
+/** The banner stack went under (or came out from under) the open overview. */
+export function coverBanners(covered: boolean): void {
+  if (covered === bannersCovered) return
+  bannersCovered = covered
+  if (covered) {
+    for (const b of uiStore.get().banners) {
+      if (b.leaving || b.duration === null) continue
+      const left = disarmClock(b.id)
+      if (left !== null) heldRemaining.set(b.id, left)
+      coverHeld.add(b.id)
+    }
+    return
+  }
+  for (const id of coverHeld) {
+    if (!fingerHeld.has(id)) resumeMessage(id, () => dismissBanner(id, 'timeout'))
+  }
+  coverHeld.clear()
+}
+
+/** Whether the banner stack is under the cover right now (tests and the preview host). */
+export function bannersCoveredNow(): boolean {
+  return bannersCovered
 }
 
 /**

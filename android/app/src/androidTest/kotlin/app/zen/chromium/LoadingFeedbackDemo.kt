@@ -20,8 +20,9 @@ import java.io.FileInputStream
  * its action tapped with a finger (the page hands the touch through the strip the card covers),
  * the next one swiped off sideways; a toast held under a finger past its time; three stacked
  * banners, one replaced by its key, the top one swiped up, one closed, the last one's action
- * taken; and, when the WebView follows the animator scale, a toast and a load with motion
- * reduced. What it measures goes to `loading-findings.txt` next to the screenshots (`PASS` or
+ * taken; the stack under the open tab overview (a standing banner folding away as it opens, one
+ * posted while it is open waiting unseen, both back on close – matrix row A4); and, when the
+ * WebView follows the animator scale, a toast and a load with motion reduced. What it measures goes to `loading-findings.txt` next to the screenshots (`PASS` or
  * `FAIL` per check; the test itself only fails when the driver could not run).
  *
  * The pages come from a loopback server inside this process ([DemoServer]). The messages are
@@ -100,6 +101,7 @@ class LoadingFeedbackDemo : DemoHarness("loading-demo-state.json", "loading-$THE
         toastSwipedOff()
         toastHeld()
         bannersStacked()
+        bannerUnderOverview()
         reducedMotion()
         SystemClock.sleep(1_000)
         shot("20-end")
@@ -299,6 +301,101 @@ class LoadingFeedbackDemo : DemoHarness("loading-demo-state.json", "loading-$THE
                 "icon: ${if (icon != null) "window.__zenMessages.icons.$icon" else "undefined"}, key: ${JSONObject.quote(key)}, " +
                 "action: {label: ${JSONObject.quote(action)}, onPick: () => { window.__demoPicked = ${JSONObject.quote(key)} }}})"
         )
+    }
+
+    // --- the stack under the open tab overview ---------------------------------------------------
+
+    /**
+     * The banner stack counts the open tab overview as a cover (§9.33, matrix row A4; the Design
+     * Lead's ruling (f) on #731, where a "Show Reader View?" card drew over the overview's
+     * header): a banner standing as the overview opens folds back up under the toolbar, inert,
+     * with its clock paused; one posted while the overview is open waits there unseen; both come
+     * down when the overview closes. The cards are read from the document (`data-covered`,
+     * `inert`, the transform and opacity `useMessageMotion` writes) and the overview from the
+     * stage store, the band's reading (`overview.phase`, anything but `closed`).
+     */
+    private fun bannerUnderOverview() {
+        finding("\nBanners under the open tab overview: one standing as it opens, one posted while it is open")
+        banner("Show Reader View?", "This page has an article", null, "Show", "reader")
+        SystemClock.sleep(1_600)
+        var cards = bannerCards()
+        finding("  standing before the overview: ${describe(cards)} ${verdict(cards.size == 1 && !cards[0].covered)}")
+        val tabs = tabsButton()
+        if (tabs == null) {
+            finding("  no Tabs button on the bar FAIL")
+            return
+        }
+        Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
+        val opened = awaitOverviewPhase("open", 8_000)
+        finding("  the overview opened (stage phase ${overviewPhase()}) ${verdict(opened)}")
+        if (!opened) {
+            shot("18-overview-did-not-open")
+            return
+        }
+        SystemClock.sleep(1_200)
+        cards = bannerCards()
+        finding("  the standing card folded away as it opened: ${describe(cards)} ${verdict(cards.size == 1 && cards[0].folded)}")
+        // Posted while the overview stands: it waits at the edge, inert, unseen.
+        banner("Translate this page?", "French to English", null, "Translate", "translate")
+        SystemClock.sleep(1_600)
+        shot("18-overview-open-banners-held")
+        cards = bannerCards()
+        val held = cards.size == 2 && cards.all { it.folded }
+        finding("  posted under the overview: ${describe(cards)}")
+        finding("  nothing of the stack over the overview – both cards folded away, inert, out of sight ${verdict(held)}")
+        finding("  both still live in the store (held, not dismissed): ${bannerTitles()} ${verdict(bannerTitles().size == 2)}")
+        // The system back takes the overview away; the cards come down with their clocks running.
+        back()
+        val closed = awaitOverviewPhase("closed", 8_000)
+        finding("  the overview closed (stage phase ${overviewPhase()}) ${verdict(closed)}")
+        SystemClock.sleep(1_800)
+        shot("19-overview-closed-banners-back")
+        cards = bannerCards()
+        val back = cards.size == 2 && cards.none { it.covered || it.inert } && cards.all { it.y >= -0.5f && it.opacity.isEmpty() }
+        finding("  back under the toolbar on close: ${describe(cards)} ${verdict(back)}")
+        val cover = cover()
+        finding("  the page view clips ${"%.0f".format(cover.first)} CSS px off its top under the two ${verdict(cover.first >= 80f)}")
+        chromeJs("window.__zenStores.ui.get().banners.forEach(b => window.__zenMessages.dismissBanner(b.id))")
+        SystemClock.sleep(1_600)
+        finding("  both dismissed again: banners left ${banners().length()} ${verdict(banners().length() == 0)}")
+    }
+
+    private class BannerCardState(val covered: Boolean, val inert: Boolean, val y: Float, val opacity: String) {
+        /** Folded away by its edge: marked covered and inert, above its slot and thinned to nothing. */
+        val folded get() = covered && inert && y < -0.5f && (opacity.toFloatOrNull() ?: 1f) < 0.02f
+    }
+
+    /** The banner cards in the document, top of the stack first, as `useMessageMotion` paints them. */
+    private fun bannerCards(): List<BannerCardState> {
+        val arr = JSONArray(
+            json(
+                "JSON.stringify(Array.from(document.querySelectorAll('.zen-banner')).map(c => {" +
+                    "const m = /translate3d\\([-\\d.]+px, ([-\\d.]+)px/.exec(c.style.transform);" +
+                    "return {covered: c.hasAttribute('data-covered'), inert: c.hasAttribute('inert'), " +
+                    "y: m ? Number(m[1]) : 0, opacity: c.style.opacity}}))"
+            )
+        )
+        return (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            BannerCardState(o.optBoolean("covered"), o.optBoolean("inert"), o.optDouble("y", 0.0).toFloat(), o.optString("opacity"))
+        }
+    }
+
+    private fun describe(cards: List<BannerCardState>): String =
+        if (cards.isEmpty()) "no cards" else cards.joinToString(", ") {
+            "[covered ${it.covered}, inert ${it.inert}, y ${"%.0f".format(it.y)}, opacity '${it.opacity}']"
+        }
+
+    /** The stage's word on the overview, the band's reading (`lib/gestures/stage.ts`). */
+    private fun overviewPhase(): String = json("window.__zenStores.stage.get().overview.phase")
+
+    private fun awaitOverviewPhase(phase: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (overviewPhase() == phase) return true
+            SystemClock.sleep(150)
+        }
+        return overviewPhase() == phase
     }
 
     // --- reduced motion --------------------------------------------------------------------------
