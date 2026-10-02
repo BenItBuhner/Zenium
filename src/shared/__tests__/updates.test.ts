@@ -362,7 +362,7 @@ describe('asset selection', () => {
       /install when Zenium restarts/
     )
     expect(describeUpdateTarget({ os: 'macos', arch: 'arm64', kind: 'mac-unsigned' })).toMatch(
-      /cannot replace this copy where it runs/
+      /can't replace this copy where it is/
     )
     expect(updateModeFor('apk')).toBe('installer')
     expect(updateModeFor('portable')).toBe('manual')

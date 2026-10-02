@@ -706,7 +706,7 @@ export function describeUpdateTarget(target: UpdateTarget): string {
     case 'mac-adhoc':
       return 'Updates download in the background and install when Zenium restarts.'
     case 'mac-unsigned':
-      return 'Zenium cannot replace this copy where it runs – it is on a disk image or in a folder you cannot change. It downloads and opens the disk image instead, and you drag the new Zenium over the old one.'
+      return "Zenium can't replace this copy where it is, because it's running from a disk image or a folder you can't change. It downloads and opens the disk image instead, so you can drag the new Zenium over the old one."
     case 'apk':
       return 'Zenium downloads the APK and hands it to Android, which asks you to confirm the install.'
     case 'portable':

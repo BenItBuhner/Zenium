@@ -96,9 +96,9 @@ export function detail(u: UpdateStatus): string {
       return u.target.kind === 'deb'
         ? 'Verified and staged. Restart to update runs dpkg, which asks for your password.'
         : u.target.kind === 'nsis'
-          ? 'Verified and staged. It installs when Zenium restarts – now, or the next time you quit.'
+          ? 'Downloaded and verified. It installs when Zenium restarts, now or the next time you quit.'
           : u.mode === 'in-place'
-            ? 'Verified and staged. Restart to update installs it and brings Zenium back.'
+            ? 'Downloaded and verified. Restart to update installs it and reopens Zenium.'
             : u.target.kind === 'apk'
               ? u.packageChange
                 ? 'Verified. Install hands the APK to Android; it installs as a new app next to this one, and this app can be uninstalled afterwards.'

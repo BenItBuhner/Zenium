@@ -152,7 +152,7 @@ export class ElectronUpdateHost implements UpdateHost {
       if (error) throw new Error(error)
       return
     }
-    if (!restart) throw new Error('an in-place install needs the restart')
+    if (!restart) throw new Error('the update can only install on restart')
     switch (this.resolvedTarget.kind) {
       case 'nsis':
         return this.installNsis(restart)
