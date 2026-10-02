@@ -13,7 +13,8 @@ import { PROTECTED, sentence, tableEntries, tableValues } from '../strings'
  * The string table's sweep (spec §9 item 10; the D7 proposal §C, built on the casing sweep's
  * `literalsOf` / `strays` – `src/android/__tests__/casingSweep.test.ts`,
  * `src/renderer/src/lib/__tests__/casingSweep.test.ts`). A family lands with its module, its call
- * sites and its root here (§D); within a swept root:
+ * sites and its root here (§D) – a file, a directory, or one method of a file whose other
+ * methods are later families' (the app menu in `menus.ts`); within a swept root:
  *
  * 1. a quoted literal or JSX text equal to a table value – any face of any entry, with or
  *    without the ellipsis, every side of an axis – fails: the surface reads `S.menu(id)`. A value
@@ -38,14 +39,27 @@ import { PROTECTED, sentence, tableEntries, tableValues } from '../strings'
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 
 /**
- * The roots walked (files or directories; tests left out): a family's call sites once it has
- * landed – the action tables first (PR-2: the key table, the palette, the mac menu bar).
+ * A root: a file or a directory (repo-relative; tests left out), or one method of a file whose
+ * other methods are later families' – the lines from the first `from` to the first `to` after
+ * it, the rest of the file blanked so a stray's line number stays the file's.
  */
-const SWEPT: readonly string[] = [
+type Root = string | { file: string; region: string; from: RegExp; to: RegExp }
+
+/**
+ * The roots walked: a family's call sites once it has landed – the action tables first (PR-2:
+ * the key table, the palette, the mac menu bar), then the app menu (PR-2b: `Menus.showAppMenu`,
+ * one method of `menus.ts`, whose row menus are PR-3's, PR-4's and PR-8's).
+ */
+const SWEPT: readonly Root[] = [
   'src/shared/shortcuts.ts',
   'src/shared/commands.ts',
-  'src/core/menuBar.ts'
+  'src/core/menuBar.ts',
+  { file: 'src/core/menus.ts', region: 'showAppMenu', from: /^  showAppMenu\(/, to: /^  }$/ }
 ]
+
+/** A root's name in the assertions: the path, with the region after `#` for a method. */
+const rootName = (root: Root): string =>
+  typeof root === 'string' ? root : `${root.file}#${root.region}`
 
 /** The table's own modules: the one place its values are typed, never swept. */
 const TABLE_DIR = 'src/shared/strings'
@@ -59,7 +73,19 @@ const PENDING: ReadonlyArray<readonly [file: string, text: string, until: string
   ['src/core/menuBar.ts', 'Import Bookmarks and Settings…', 'PR-8'],
   ['src/core/menuBar.ts', 'Export Bookmarks…', 'PR-8'],
   // The Tab menu's folder row: the noun axis (P-11, PR-4).
-  ['src/core/menuBar.ts', 'New Folder…', 'PR-4']
+  ['src/core/menuBar.ts', 'New Folder…', 'PR-4'],
+  // The app menu's Share… row: `share.open`'s entry is the copy and share family's (PR-3).
+  ['src/core/menus.ts', 'Share…', 'PR-3'],
+  // The app menu's Bookmarks ▸ import and export rows (PR-8, with the menu bar's).
+  ['src/core/menus.ts', 'Import Bookmarks…', 'PR-8'],
+  ['src/core/menus.ts', 'Import Bookmarks and Settings…', 'PR-8'],
+  ['src/core/menus.ts', 'Export Bookmarks…', 'PR-8'],
+  // The app menu's two library rows say Chrome's app-menu words – the mac bar's faces of
+  // `history.sidebar` and `downloads.open` – where the key table and the palette say "Show
+  // History" and "Show Downloads"; no D7 pair names them, so they wait on the history and
+  // downloads family (PR-8) and the root's ruling.
+  ['src/core/menus.ts', 'Show Full History', 'PR-8'],
+  ['src/core/menus.ts', 'Downloads', 'PR-8']
 ]
 
 /**
@@ -106,6 +132,24 @@ function walk(path: string): string[] {
     else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name)) out.push(full)
   }
   return out
+}
+
+interface Source {
+  file: string
+  text: string
+}
+
+/** The sources a root yields: each file of a path with its text; a region's file with the rest blanked. */
+function sourcesOf(root: Root): Source[] {
+  if (typeof root === 'string')
+    return walk(join(repo, root)).map((file) => ({ file, text: readFileSync(file, 'utf8') }))
+  const file = join(repo, root.file)
+  const lines = readFileSync(file, 'utf8').split('\n')
+  const start = lines.findIndex((line) => root.from.test(line))
+  const end = lines.findIndex((line, i) => i > start && root.to.test(line))
+  if (start < 0 || end < 0)
+    throw new Error(`${root.file}: the region ${root.region} is not where the root says`)
+  return [{ file, text: lines.map((line, i) => (i >= start && i <= end ? line : '')).join('\n') }]
 }
 
 /** A line that is a comment, a log or a thrown message: the words there are not the user's. */
@@ -217,20 +261,46 @@ export function strays(literals: Literal[], rules: SweepRules): string[] {
 }
 
 describe('the string table sweep (§9 item 10)', () => {
-  const files = SWEPT.flatMap((p) => walk(join(repo, p)))
-  const literals = files.flatMap((f) => literalsOf(f, readFileSync(f, 'utf8')))
+  const sources = SWEPT.flatMap(sourcesOf)
+  const files = sources.map((s) => s.file)
+  const literals = sources.flatMap((s) => literalsOf(s.file, s.text))
   const values = tableValues()
 
-  it('sweeps the roots of the families that have landed: the action tables', () => {
-    expect(SWEPT).toEqual([
+  it('sweeps the roots of the families that have landed: the action tables, the app menu', () => {
+    expect(SWEPT.map(rootName)).toEqual([
       'src/shared/shortcuts.ts',
       'src/shared/commands.ts',
-      'src/core/menuBar.ts'
+      'src/core/menuBar.ts',
+      'src/core/menus.ts#showAppMenu'
     ])
-    expect(files.map(rel)).toEqual(SWEPT)
+    expect(files.map(rel)).toEqual([
+      'src/shared/shortcuts.ts',
+      'src/shared/commands.ts',
+      'src/core/menuBar.ts',
+      'src/core/menus.ts'
+    ])
     expect(literals.length).toBeGreaterThan(100)
     expect(files.some((f) => rel(f).startsWith(`${TABLE_DIR}/`))).toBe(false)
     expect(files.some((f) => f.includes('__tests__') || /\.test\.tsx?$/.test(f))).toBe(false)
+  })
+
+  it('reads the app menu alone of menus.ts: the method, whole, and none of the row menus around it', () => {
+    const region = sources.find((s) => rel(s.file) === 'src/core/menus.ts')!
+    const lines = region.text.split('\n')
+    const kept = lines.filter((line) => line !== '')
+    // The method's head and its last line, the popup's close; the lines before and after blank.
+    expect(kept[0]).toMatch(/^  showAppMenu\(/)
+    expect(kept[kept.length - 1]).toBe('  }')
+    expect(kept.length).toBeGreaterThan(500)
+    expect(lines.length).toBeGreaterThan(kept.length + 1000)
+    expect(region.text).toContain("'app',")
+    expect(region.text).not.toContain('showExtensionActionMenu(')
+    expect(region.text).not.toContain('private managedRow(')
+    // Line numbers are the file's: the region's first kept line is the method's line in the file.
+    const file = readFileSync(region.file, 'utf8').split('\n')
+    const at = lines.findIndex((line) => line !== '')
+    expect(file[at]).toBe(kept[0])
+    expect(literals.filter((l) => rel(l.file) === 'src/core/menus.ts').length).toBeGreaterThan(60)
   })
 
   it('carries no stray: no table value typed as a literal, no "…", no typographic quote, no US spelling', () => {

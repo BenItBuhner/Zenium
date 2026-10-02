@@ -106,7 +106,7 @@ function appMenuFolded(h: Harness, win = h.win): string[] {
  */
 const DESKTOP_APP_MENU = [
   'New Tab',
-  'Search Tabs…',
+  'Search Tabs',
   'New Window',
   'New Private Window',
   '-',
@@ -131,7 +131,7 @@ const DESKTOP_APP_MENU = [
   'Passwords and Autofill > Passwords',
   'Passwords and Autofill > Payment Methods',
   'Passwords and Autofill > Addresses',
-  'Add-ons and Themes',
+  'Extensions and Mods',
   'Delete Browsing Data…',
   '-',
   'Find and Edit',
@@ -145,7 +145,7 @@ const DESKTOP_APP_MENU = [
   'Zoom > Zoom Out',
   'Zoom > Reset Zoom',
   'Zoom > -',
-  'Zoom > Fullscreen',
+  'Zoom > Full Screen',
   'Reader View',
   'Save and Share',
   'Save and Share > Save Page As',
@@ -199,14 +199,14 @@ const TABLET_CAPTURES = [
 ]
 
 const DESKTOP_ONLY = [
-  'Search Tabs…',
+  'Search Tabs',
   'Screenshot…',
   'Help > Keyboard Shortcuts',
   'More Tools > Compact Mode',
   'More Tools > Split View',
   'More Tools > Name Window…',
   'More Tools > Task Manager',
-  'Zoom > Fullscreen',
+  'Zoom > Full Screen',
   'Quit'
 ]
 
@@ -1017,7 +1017,7 @@ describe('the app menu', () => {
   it('carries Chrome’s Delete Browsing Data… row at the top level, closing the library group with its chord, and runs the dialog’s request from it', () => {
     const h = harness(DESKTOP)
     const menu = appMenu(h)
-    expect(menu.indexOf('Delete Browsing Data…')).toBe(menu.indexOf('Add-ons and Themes') + 1)
+    expect(menu.indexOf('Delete Browsing Data…')).toBe(menu.indexOf('Extensions and Mods') + 1)
     expect(menu[menu.indexOf('Delete Browsing Data…') + 1]).toBe('-')
     const row = item(h.shown(), 'Delete Browsing Data…')
     expect(row.action).toBe('privacy.clearBrowsingData')
@@ -1309,10 +1309,15 @@ describe('the app menu', () => {
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
     // The flat menu's disabled version line is Help's About Zenium row now, which opens the
     // About page the version is on (shortcuts-menus-152).
-    // The flat menu's Save Page As… is the formats' submenu on this host (CT-27).
+    // The flat menu's Save Page As… is the formats' submenu on this host (CT-27). The string
+    // table's words for three rows (the D7 pairs P-10, P-6, P-22; PR-2b): the tab search's
+    // popover is the act, not an ask; §9.10's name for the page; Chrome's two words.
     const renamed: Record<string, string> = {
       'About Zenium 1.2.3': 'About Zenium',
-      'Save Page As…': 'Save Page As'
+      'Save Page As…': 'Save Page As',
+      'Search Tabs…': 'Search Tabs',
+      'Add-ons and Themes': 'Extensions and Mods',
+      Fullscreen: 'Full Screen'
     }
     for (const label of before)
       expect(everywhere, label).toContain(
@@ -1377,7 +1382,7 @@ describe('the app menu', () => {
     // The sidebar layouts' items the phone drops stay: the tablet has the sidebar and a toolbar
     // whose popovers they open – in the submenus Firefox's groups put them (§6).
     for (const label of [
-      'Search Tabs…',
+      'Search Tabs',
       'History > No recently closed tabs',
       'Help > Keyboard Shortcuts',
       'Save and Share > Save Page As…'
@@ -1398,12 +1403,12 @@ describe('the app menu', () => {
     expect(menu.indexOf('Listen to This Page')).toBe(menu.indexOf('Reader View') + 1)
   })
 
-  it("on a tablet with page controls keeps Fullscreen with the window's toggles under More Tools, the zoom being the sheet", () => {
+  it("on a tablet with page controls keeps Full Screen with the window's toggles under More Tools, the zoom being the sheet", () => {
     const menu = appMenu(harness(ANDROID, 'tablet'))
     expect(menu).toContain('Zoom…')
-    expect(menu).not.toContain('Zoom > Fullscreen')
-    expect(menu).toContain('More Tools > Fullscreen')
-    expect(menu.indexOf('More Tools > Fullscreen')).toBe(
+    expect(menu).not.toContain('Zoom > Full Screen')
+    expect(menu).toContain('More Tools > Full Screen')
+    expect(menu.indexOf('More Tools > Full Screen')).toBe(
       menu.indexOf('More Tools > Change Theme…') + 1
     )
   })
@@ -1594,7 +1599,7 @@ describe('the app menu', () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const menu = appMenu(h)
       expect(menu.indexOf('Passwords and Autofill')).toBe(menu.indexOf('Downloads') + 1)
-      expect(menu.indexOf('Add-ons and Themes')).toBe(menu.indexOf('Passwords and Autofill') + 4)
+      expect(menu.indexOf('Extensions and Mods')).toBe(menu.indexOf('Passwords and Autofill') + 4)
       const submenu = deepItem(h.shown(), 'Passwords and Autofill').submenu ?? []
       // Chrome's Password Manager · Payments · Contact info; its Identity documents and Travel
       // have no Zenium page and are left out, not greyed.
@@ -1622,7 +1627,7 @@ describe('the app menu', () => {
       const menu = appMenu(harness({ ...DESKTOP, passwords: false }))
       expect(menu).not.toContain('Passwords and Autofill')
       expect(menu.some((l) => /Passwords/.test(l))).toBe(false)
-      expect(menu.indexOf('Add-ons and Themes')).toBe(menu.indexOf('Downloads') + 1)
+      expect(menu.indexOf('Extensions and Mods')).toBe(menu.indexOf('Downloads') + 1)
     })
 
     it('is the desktop layout’s alone: the tablet keeps the flat Passwords row in the seat, the phone its list', () => {
@@ -2036,11 +2041,11 @@ describe('the app menu', () => {
     const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
     for (const label of [
-      'Search Tabs…',
+      'Search Tabs',
       'Keyboard Shortcuts',
       'Compact Mode',
       'Split View',
-      'Fullscreen',
+      'Full Screen',
       'Name Window…',
       'Quit',
       // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it –
@@ -2059,7 +2064,7 @@ describe('the app menu', () => {
       'New Blank Window',
       'Duplicate Window',
       'New Private Window',
-      'Add-ons and Themes',
+      'Extensions and Mods',
       'Developer Tools',
       'Resources'
     ])
@@ -2363,7 +2368,7 @@ describe('the app menu', () => {
       const menu = top(h, priv)
       expect(menu.slice(0, 6)).toEqual([
         'New Tab',
-        'Search Tabs…',
+        'Search Tabs',
         'New Window',
         'New Private Window',
         'Close Private Window',
@@ -2413,7 +2418,7 @@ describe('the app menu', () => {
     // A desktop window narrowed to the phone layout: no Share sheet, but extensions exist.
     const menu = appMenu(harness(DESKTOP, 'phone'))
     expect(menu).not.toContain('Share…')
-    expect(menu).toContain('Add-ons and Themes')
+    expect(menu).toContain('Extensions and Mods')
     for (const label of DESKTOP_ONLY) if (label !== 'Quit') expect(menu).not.toContain(label)
     // Quit is the host's, not the layout's: an Electron window narrowed to the phone layout still
     // quits the app; an Android app (no windows) is left to the system at every layout.
@@ -2429,7 +2434,7 @@ describe('the app menu', () => {
       'Downloads',
       'Passwords',
       'Extensions',
-      'Add-ons and Themes'
+      'Extensions and Mods'
     ])
   })
 
@@ -2443,7 +2448,7 @@ describe('the app menu', () => {
     const h = harness({ ...ANDROID, extensions: true }, 'phone')
     const menu = appMenu(h)
     expect(menu).toContain('Extensions')
-    expect(menu.indexOf('Extensions')).toBeLessThan(menu.indexOf('Add-ons and Themes'))
+    expect(menu.indexOf('Extensions')).toBeLessThan(menu.indexOf('Extensions and Mods'))
     h.sent.length = 0
     h.shown()
       .find((item) => item.label === 'Extensions')

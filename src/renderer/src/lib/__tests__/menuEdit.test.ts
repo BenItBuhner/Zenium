@@ -148,7 +148,7 @@ describe('the sections', () => {
       item('Update Zenium', { key: 'menu.update' }),
       sep(),
       item('New Tab'),
-      item('Search Tabs…'),
+      item('Search Tabs'),
       item('New Private Tab', { key: 'row.newPrivateTab' }),
       sep(),
       item('Bookmarks'),
