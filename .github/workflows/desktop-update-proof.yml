@@ -446,6 +446,11 @@ jobs:
           mkdir -p pair/b
           shopt -s nullglob
           mv dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.blockmap dist/latest*.yml pair/b/
+          if [[ "${{ matrix.name }}" == windows-arm64 && -f pair/b/latest.yml ]]; then
+            # As release.yml does: electron-builder names the Windows feed latest.yml for every
+            # arch, and the app asks for latest-arm64.yml on ARM Windows.
+            mv pair/b/latest.yml pair/b/latest-arm64.yml
+          fi
           ls -la pair/b
       - name: B's update manifest, signed, pointing at the local release folder
         env:
