@@ -27,6 +27,13 @@ export interface MessageMotionOptions {
   dirs: DismissDirections
   /** The message is on its way out: the card leaves by its home edge. */
   leaving: boolean
+  /**
+   * The card is under a cover (the open tab overview on a touch host, §9.33): it folds away by
+   * its home edge – the way it leaves, without going – and comes back to its slot when the cover
+   * lifts; one that arrives under a cover waits at its edge and comes in when the cover lifts.
+   * Its clock is the caller's to pause (`lib/ui.ts` `coverBanners`).
+   */
+  hidden?: boolean
   /** A finger is on the card (its clock pauses) or has left it. */
   onHold(held: boolean): void
   /** A swipe committed: the card is on its way off; the message should be marked leaving. */
@@ -42,7 +49,7 @@ export interface MessageMotionOptions {
   onTravel?(progress: number, axis: Axis): void
 }
 
-type Phase = 'entering' | 'resting' | 'dragging' | 'leaving'
+type Phase = 'entering' | 'resting' | 'dragging' | 'leaving' | 'hidden'
 
 /**
  * Motion of one message card: it springs in from its home edge (`SPRING_GENTLE`, a hair of
@@ -56,6 +63,13 @@ type Phase = 'entering' | 'resting' | 'dragging' | 'leaving'
  * `data-uncover` marks on the card. With motion reduced (v2 §11.3) nothing travels: the card
  * appears in its slot and leaves from it on a 120 ms opacity fade, a finger still drags it 1:1
  * and a release jumps to its outcome.
+ *
+ * Under a cover (`hidden`) the card folds away by its home edge on the exit spring and stays
+ * there, its travel held at the far end (thinned to nothing, the corners it uncovered rounded,
+ * `data-covered` on it); the cover lifting brings it back to its slot on the arrival spring,
+ * the travel running back with it. A card that arrives under a cover is parked at its edge
+ * from the first frame and comes in when the cover lifts. With motion reduced it fades in
+ * place instead, as it arrives and leaves.
  */
 export function useMessageMotion(options: MessageMotionOptions): {
   ref: RefObject<HTMLDivElement | null>
@@ -162,6 +176,12 @@ export function useMessageMotion(options: MessageMotionOptions): {
     if (phase.current === 'dragging') return
     const other = axis === 'x' ? 'y' : 'x'
     if (!ensureSprings()[other].running) {
+      if (phase.current === 'hidden') {
+        // Folded away: its travel stays at the far end until the cover lifts; nothing promotes it.
+        const el = ref.current
+        if (el) delete el.dataset.moving
+        return
+      }
       setPhase('resting')
       settled()
     }
@@ -216,15 +236,83 @@ export function useMessageMotion(options: MessageMotionOptions): {
     }
   }
 
+  /** Where the card is out of sight by its home edge, for a given slot. */
+  const edgeOf = (slot: number): number => slot + latest.current.home * reach('y')
+
+  /**
+   * Under the cover: fold away by the home edge and stay there (the way `leave` goes, without
+   * going). The travel runs out with it – opacity to nothing, the stack's corners rounded – and
+   * holds at the far end. With motion reduced the card fades in place.
+   */
+  const hide = (): void => {
+    const s = ensureSprings()
+    cancelFade()
+    const el = ref.current
+    if (el) el.dataset.covered = ''
+    setPhase('hidden')
+    if (reducedMotion()) {
+      s.x.stop()
+      s.y.stop()
+      settled()
+      fade(0, () => {
+        const card = ref.current
+        if (card) delete card.dataset.moving
+      })
+      return
+    }
+    travelAxis.current = 'y'
+    // A card caught sideways (mid spring-back from a swipe) straightens as it folds.
+    if (pos.current.x !== 0) s.x.start(pos.current.x, 0, 0, SPRING_SNAPPY)
+    else s.x.stop()
+    s.y.start(pos.current.y, 0, edgeOf(latest.current.slot), SPRING_SNAPPY)
+  }
+
+  /** The cover lifted: back to the slot on the arrival spring, the travel running back with it. */
+  const show = (): void => {
+    const s = ensureSprings()
+    cancelFade()
+    const el = ref.current
+    if (el) delete el.dataset.covered
+    setPhase('entering')
+    if (reducedMotion()) {
+      s.x.stop()
+      s.y.stop()
+      pos.current = { x: 0, y: latest.current.slot }
+      paint()
+      fade(1, () => {
+        const card = ref.current
+        if (card) card.style.opacity = ''
+        if (phase.current === 'entering' && !s.y.running) setPhase('resting')
+      })
+      return
+    }
+    travelAxis.current ??= 'y'
+    s.y.start(pos.current.y, 0, latest.current.slot, SPRING_GENTLE)
+  }
+
   // Arrival: measured before the first paint, the card starts a card's length off its edge.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     size.current = { width: el.offsetWidth, height: el.offsetHeight }
-    const { home, slot } = latest.current
+    const { home, slot, hidden } = latest.current
     const s = ensureSprings()
-    setPhase('entering')
-    if (reducedMotion()) {
+    if (hidden) {
+      // Under the cover from the first frame: parked at its edge (in its slot unseen, with
+      // motion reduced), nothing moving until the cover lifts.
+      el.dataset.covered = ''
+      phase.current = 'hidden'
+      if (reducedMotion()) {
+        pos.current = { x: 0, y: slot }
+        paint()
+        el.style.opacity = '0'
+      } else {
+        travelAxis.current = 'y'
+        pos.current = { x: 0, y: slot + home * reach('y') }
+        paint()
+      }
+    } else if (reducedMotion()) {
+      setPhase('entering')
       // §11.3: in its slot from the first frame, fading in.
       pos.current = { x: 0, y: slot }
       paint()
@@ -233,6 +321,7 @@ export function useMessageMotion(options: MessageMotionOptions): {
         if (phase.current === 'entering' && !s.y.running) setPhase('resting')
       })
     } else {
+      setPhase('entering')
       pos.current = { x: 0, y: slot + home * reach('y') }
       paint()
       s.y.start(pos.current.y, 0, slot, SPRING_GENTLE)
@@ -254,11 +343,37 @@ export function useMessageMotion(options: MessageMotionOptions): {
   useEffect(() => {
     if (phase.current === 'dragging' || phase.current === 'leaving') return
     const s = ensureSprings()
+    if (phase.current === 'hidden') {
+      // Folded away (or on its way): the edge it waits at moves with the slot, unseen.
+      if (reducedMotion()) {
+        pos.current.y = options.slot
+        paint()
+      } else if (s.y.running) {
+        s.y.retarget(edgeOf(options.slot))
+      } else {
+        pos.current.y = edgeOf(options.slot)
+        paint()
+      }
+      return
+    }
     if (pos.current.y === options.slot && !s.y.running) return
     if (phase.current === 'resting') setPhase('entering')
     s.y.retarget(options.slot)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options.slot])
+
+  // The cover came over the stack (the open overview on a touch host), or lifted.
+  useEffect(() => {
+    if (phase.current === 'leaving') return
+    if (options.hidden) {
+      if (phase.current === 'hidden') return
+      if (phase.current === 'dragging') return // the release folds it away
+      hide()
+    } else if (phase.current === 'hidden') {
+      show()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.hidden])
 
   // Dismissed from outside (timed out, replaced, programmatic): off by the home edge.
   useEffect(() => {
@@ -272,7 +387,7 @@ export function useMessageMotion(options: MessageMotionOptions): {
     dirs: options.dirs,
     onHold: (held) => latest.current.onHold(held),
     onDragStart: (axis) => {
-      if (phase.current === 'leaving') return
+      if (phase.current === 'leaving' || phase.current === 'hidden') return
       const s = ensureSprings()
       s.x.stop()
       s.y.stop()
@@ -301,6 +416,11 @@ export function useMessageMotion(options: MessageMotionOptions): {
       if (leaving) {
         // It timed out while held: it goes now, by its own edge.
         leave('y', home, 0)
+        return
+      }
+      if (latest.current.hidden) {
+        // The cover came over the stack while the finger had it: it folds away now.
+        hide()
         return
       }
       // Back to the slot along the way it came: the travel (opacity, uncovered corners) runs

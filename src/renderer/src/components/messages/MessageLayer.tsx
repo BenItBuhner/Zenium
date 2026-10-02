@@ -3,8 +3,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { hintBubbleEdge, hintBubbleStore } from '@renderer/lib/iph'
-import { claimBannerSurface, claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
+import {
+  claimBannerSurface,
+  claimMessageCards,
+  coverBanners,
+  coverBandStore,
+  uiStore
+} from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
+import { useBannerStackCovered } from './cover'
 import { HintBubbleCard } from './HintBubbleCard'
 import { ScreenshotCard } from './ScreenshotCard'
 import { bannerSlots, coverFor, hintCoverFor } from './stack'
@@ -77,6 +84,16 @@ export function MessageLayer({ toastSeat = null }: Props = {}): JSX.Element | nu
   // The one surface that draws `banners`: a banner shown while this stands is drawn with the
   // next frame (`bannerSurfaceMounted`, the install prompt's word to the core).
   useEffect(() => claimBannerSurface(), [])
+  // The open tab overview over the stack on a touch host (§9.33, matrix row A4; `cover.ts`):
+  // the model holds the clocks (`coverBanners`) and the cards fold away and come back
+  // (`hidden` below). The strips the stack reports stay as they are – the page under the
+  // overview is not laid out again, and the cards come back into their own strips. The toast's
+  // slot is not covered: a toast stays reachable over the overview (Close-all's Undo).
+  const covered = useBannerStackCovered()
+  useEffect(() => {
+    coverBanners(covered)
+    return () => coverBanners(false)
+  }, [covered])
 
   const live = banners.filter((b) => !b.leaving)
   const { y, height: stackHeight } = bannerSlots(banners.map((b) => heights[b.id] ?? 0))
@@ -126,6 +143,7 @@ export function MessageLayer({ toastSeat = null }: Props = {}): JSX.Element | nu
               slot={y[i] ?? 0}
               stackTop={i === 0}
               stackBottom={i === banners.length - 1}
+              hidden={covered}
               onMeasure={measure}
               onTravel={travel}
             />
