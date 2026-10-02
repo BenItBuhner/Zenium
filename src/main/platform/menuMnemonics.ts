@@ -213,7 +213,7 @@ export const ZENIUM_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   // no `&`): the rule's first letters, stated so the star's menu – its own rows first – keeps them.
   ['Pin', 'P'],
   ['Unpin', 'U'],
-  ['Customise Toolbar', 'C']
+  ['Customise Toolbar…', 'C']
 ])
 
 /** Every `&` doubled: Chromium's menus read a lone `&` as the mnemonic marker. */

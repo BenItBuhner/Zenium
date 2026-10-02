@@ -347,7 +347,7 @@ describe('the merged table', () => {
     expect(S.menu('search.manageEngines')).toBe('Manage Search Engines')
     expect(S.menu('newTab.customise')).toBe('Customise New Tab Page')
     expect(S.row('newTab.customise')).toBe('Customise New Tab page')
-    expect(S.menu('toolbar.customise')).toBe('Customise Toolbar')
+    expect(S.menu('toolbar.customise')).toBe('Customise Toolbar…')
     expect(S.menu('languages.open')).toBe('Language Settings')
     // `space.new`: one label for the key table, the palette and the menus; the dialog asks.
     expect(S.menu('space.new')).toBe('New Space…')

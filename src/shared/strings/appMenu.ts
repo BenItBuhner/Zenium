@@ -32,6 +32,8 @@ export const APP_MENU = {
 
   // --- Rows that open a settings page (P-36) --------------------------------------------------
   'newTab.customise': { menu: 'Customise New Tab Page' },
-  'toolbar.customise': { menu: 'Customise Toolbar' },
-  'languages.open': { menu: 'Language Settings' }
+  'languages.open': { menu: 'Language Settings' },
+  // Not P-36's: the pinned control's row opens the Customise Toolbar dialog, not a settings
+  // page, so the dialog rule keeps its ellipsis (the Design Lead's ruling on #784).
+  'toolbar.customise': { menu: 'Customise Toolbar', ask: true }
 } satisfies Partial<Record<ActId, Entry>>

@@ -5382,13 +5382,13 @@ describe('the chrome context menus', () => {
     it('offers Chrome’s two rows in Chrome’s order on a desktop control: Unpin folds the control by settings.update, Pin (the folded state’s row) pins it back, Customise Toolbar opens Settings › Look and Feel on the row with its form', async () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const reader = chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'reader' })
-      expect(await show(h, reader)).toEqual(['Unpin', 'Customise Toolbar'])
+      expect(await show(h, reader)).toEqual(['Unpin', 'Customise Toolbar…'])
       // The words are Chrome's: no "from Toolbar" (that is the extension button's menu, #104)
       // and no ellipsis on a row that acts; the ellipsis on the dialog opener alone (§9.1).
       expect(h.shown().map((i) => i.type ?? 'normal')).toEqual(['normal', 'normal'])
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ reader: false })
-      expect(await show(h, reader)).toEqual(['Pin', 'Customise Toolbar'])
+      expect(await show(h, reader)).toEqual(['Pin', 'Customise Toolbar…'])
       h.click('Pin')
       expect(h.browser.state.settings.toolbarPins).toEqual({})
       // Another control's pin is its own key; the rest of the record stands.
@@ -5397,7 +5397,7 @@ describe('the chrome context menus', () => {
       await show(h, chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'translate' }))
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ media: false, translate: false })
-      h.click('Customise Toolbar')
+      h.click('Customise Toolbar…')
       expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(CUSTOMISE)
     })
 
@@ -5409,7 +5409,7 @@ describe('the chrome context menus', () => {
         h,
         chromeParams({ target: 'star', tabId: h.tabId, control: 'star' })
       )
-      expect(marked).toEqual([...plain, '-', 'Unpin', 'Customise Toolbar'])
+      expect(marked).toEqual([...plain, '-', 'Unpin', 'Customise Toolbar…'])
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ star: false })
     })
@@ -5433,10 +5433,10 @@ describe('the chrome context menus', () => {
     it('opens on the Install-app chip as on the other pinned controls (W8-6, the seam with W8-1): Unpin folds `install`, Pin brings it back, and the host’s read of the chip’s marks reaches the same rows', async () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const install = chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'install' })
-      expect(await show(h, install)).toEqual(['Unpin', 'Customise Toolbar'])
+      expect(await show(h, install)).toEqual(['Unpin', 'Customise Toolbar…'])
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ install: false })
-      expect(await show(h, install)).toEqual(['Pin', 'Customise Toolbar'])
+      expect(await show(h, install)).toEqual(['Pin', 'Customise Toolbar…'])
       h.click('Pin')
       expect(h.browser.state.settings.toolbarPins).toEqual({})
       // The chip's marks are `toolbarMenuMarks('install')`'s – `data-zen-menu="toolbar"` with
@@ -5446,7 +5446,7 @@ describe('the chrome context menus', () => {
       })
       marked.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()
-      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar'])
+      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
     })
 
     it('reaches the core from the host’s read of the chrome document: the control under the pointer (`data-zen-menu-control`), an unknown one reading as none', async () => {
@@ -5455,7 +5455,7 @@ describe('the chrome context menus', () => {
       })
       marked.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()
-      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar'])
+      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
       marked.click('Unpin')
       expect(marked.browser.state.settings.toolbarPins).toEqual({ translate: false })
       // Home (W8-3, settings-32) is a pin too – the one folded by default, so its rows read Pin
@@ -5465,7 +5465,7 @@ describe('the chrome context menus', () => {
       })
       home.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()
-      expect(topLabels(home.shown())).toEqual(['Pin', 'Customise Toolbar'])
+      expect(topLabels(home.shown())).toEqual(['Pin', 'Customise Toolbar…'])
       home.click('Pin')
       expect(home.browser.state.settings.toolbarPins).toEqual({ home: true })
       // A control that is no pin – the Share chip, a hover-only utility (W8-6) – reads as none.
