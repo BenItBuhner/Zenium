@@ -54,7 +54,7 @@ const SWEPT: readonly Root[] = [
   'src/shared/shortcuts.ts',
   'src/shared/commands.ts',
   'src/core/menuBar.ts',
-  { file: 'src/core/menus.ts', region: 'showAppMenu', from: /^  showAppMenu\(/, to: /^  }$/ }
+  { file: 'src/core/menus.ts', region: 'showAppMenu', from: /^ {2}showAppMenu\(/, to: /^ {2}}$/ }
 ]
 
 /** A root's name in the assertions: the path, with the region after `#` for a method. */
@@ -289,7 +289,7 @@ describe('the string table sweep (§9 item 10)', () => {
     const lines = region.text.split('\n')
     const kept = lines.filter((line) => line !== '')
     // The method's head and its last line, the popup's close; the lines before and after blank.
-    expect(kept[0]).toMatch(/^  showAppMenu\(/)
+    expect(kept[0]).toMatch(/^ {2}showAppMenu\(/)
     expect(kept[kept.length - 1]).toBe('  }')
     expect(kept.length).toBeGreaterThan(500)
     expect(lines.length).toBeGreaterThan(kept.length + 1000)
