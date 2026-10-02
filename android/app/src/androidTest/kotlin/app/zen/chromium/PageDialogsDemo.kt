@@ -167,6 +167,7 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         reloadSite()
         closeWithUndo()
         leaveOnTypedAddress()
+        probeLatencyScene()
         reloadFromMenu()
         backgroundObjection()
         still("end")
@@ -681,6 +682,59 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         SystemClock.sleep(1_000)
         still("typed-left")
     }
+
+    /**
+     * TEMPORARY (W6-S27-d measurement, removed before READY). The probe's cost on a load over a
+     * page with no beforeunload handler: [LATENCY_LOADS] core-asked loads (`tab.navigate`, the
+     * typed address's own path past the field) alternating third.html and second.html with the
+     * probe, then as many without (`UnloadProbeRules.measurementEnabled`), each timed in the
+     * host's logcat from the load's receipt (`TabWebView.loadUrl`) to the target's
+     * `onPageStarted`; the median and the p95 of each arm into the findings.
+     */
+    private fun probeLatencyScene() {
+        finding("\n13m. TEMPORARY: the probe's cost on a load over the page with no handler – $LATENCY_LOADS loads with the probe, $LATENCY_LOADS without (host logcat, loadUrl to onPageStarted)")
+        fireCore("tab.navigate", JSONObject().put("tabId", DEMO).put("input", "$ORIGIN/second.html").toString())
+        awaitLoaded(DEMO, "$ORIGIN/second.html")
+        SystemClock.sleep(1_000)
+        shellCommand("logcat -c")
+        val arms = listOf(true, false)
+        for (probe in arms) {
+            onMain { UnloadProbeRules.measurementEnabled = probe }
+            repeat(LATENCY_LOADS) { i ->
+                val target = if (i % 2 == 0) "$ORIGIN/third.html" else "$ORIGIN/second.html"
+                fireCore("tab.navigate", JSONObject().put("tabId", DEMO).put("input", target).toString())
+                awaitLoaded(DEMO, target, 10_000)
+                SystemClock.sleep(400)
+            }
+        }
+        onMain { UnloadProbeRules.measurementEnabled = true }
+        val load = Regex("load url=(\\S+) probe=(true|false) at=(\\d+)")
+        val started = Regex("started url=(\\S+) at=(\\d+)")
+        val samples = mapOf(true to mutableListOf<Long>(), false to mutableListOf<Long>())
+        var pending: Triple<String, Boolean, Long>? = null
+        for (line in shellCommand("logcat -d -s ZenUnloadProbe:I").lines()) {
+            val l = load.find(line)
+            if (l != null) {
+                pending = Triple(l.groupValues[1], l.groupValues[2].toBoolean(), l.groupValues[3].toLong())
+                continue
+            }
+            val s = started.find(line) ?: continue
+            val p = pending ?: continue
+            if (s.groupValues[1] == p.first) {
+                samples.getValue(p.second) += s.groupValues[2].toLong() - p.third
+                pending = null
+            }
+        }
+        for (probe in arms) {
+            val s = samples.getValue(probe).sorted()
+            finding("  ${if (probe) "with the probe" else "without the probe"}: n=${s.size}, median ${percentile(s, 50)} ms, p95 ${percentile(s, 95)} ms, min ${s.firstOrNull()} ms, max ${s.lastOrNull()} ms; all: ${s.joinToString(" ")}")
+        }
+        expect("both arms measured (${samples.getValue(true).size} with, ${samples.getValue(false).size} without)", samples.getValue(true).size >= LATENCY_LOADS - 2 && samples.getValue(false).size >= LATENCY_LOADS - 2)
+    }
+
+    /** TEMPORARY (W6-S27-d measurement): the nearest-rank percentile of a sorted sample, null for none. */
+    private fun percentile(sorted: List<Long>, p: Int): Long? =
+        if (sorted.isEmpty()) null else sorted[((p / 100.0) * (sorted.size - 1)).roundToInt().coerceIn(0, sorted.size - 1)]
 
     /** How many entries the demo tab's view holds in its back/forward list – committed documents only; a pending navigation is none. */
     private fun historySize(): Int = onMain { host.tabs.get(DEMO)?.copyBackForwardList()?.size ?: -1 }
@@ -1422,6 +1476,8 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val THIRD_TITLE = "Third page"
         /** The host's unload probe ahead of a load the core asked for (`UnloadProbeRules.ORIGIN`): never a word of the tab's. */
         private const val PROBE_ORIGIN = "http://unload-probe.zen.invalid"
+        /** TEMPORARY (W6-S27-d measurement, removed before READY): loads per arm of the latency scene. */
+        private const val LATENCY_LOADS = 20
         /** The close toast (ToastCard.tsx; TabCloseDemo reads it the same way): its text and its Undo. */
         private const val TOAST_TEXT = ".zen-message-toast .zen-message-text"
         private const val UNDO = ".zen-message-toast .zen-message-button"
