@@ -342,7 +342,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Every row installed (and disabled) on the management page.
         runCatching {
             coreCall("urlbar.runCommand", """{"action":"addons.open"}""")
-            waitFor("Add-ons and Themes", 10_000)
+            waitFor("Extensions and Mods", 10_000)
             beat()
             snap("addons-all")
         }

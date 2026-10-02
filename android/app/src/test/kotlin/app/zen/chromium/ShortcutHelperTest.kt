@@ -39,7 +39,7 @@ class ShortcutHelperTest {
     private val table = listOf(
         row("compact.toggle", "zen-compact-mode", "Toggle Compact Mode", chord("s", ctrl = true, alt = true), layouts = listOf("desktop")),
         row("space.next", "zen-workspace", "Next Space", chord("ArrowRight", ctrl = true, alt = true), helperLabel = "Next space"),
-        row("space.new", "zen-workspace", "Create New Space", null, helperLabel = "Create new space"),
+        row("space.new", "zen-workspace", "New Space…", null, helperLabel = "New Space"),
         row("split.grid", "zen-split-view", "Toggle Split View Grid", chord("g", ctrl = true, alt = true), helperLabel = "Toggle Split View grid"),
         row("tab.copyUrl", "zen-other", "Copy Current URL", chord("c", ctrl = true, alt = true), helperLabel = "Copy current URL"),
         row("tab.new", "windowAndTabManagement", "New Tab", chord("t", ctrl = true)),
