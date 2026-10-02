@@ -88,6 +88,14 @@ name: TEMPORARY - compat round 27 sweep and frame budget trigger
 #     mode graded the row P/P/P/P/P): graded, the column is filled with the mode named; a host
 #     death again is the notOnGoogleImage-class mark with the evidence, the row read on the AOSP
 #     lane alone. One boot, no second boot: the death is the reading.
+#   - `[rows]`: nine rows of the AFTER again on both WebViews, at the head that carries the two
+#     fixes the AFTER measured the need for (round 27 §2.1 R27-11, §6.1): first the five whose
+#     configure the frame-idiom scan slowed on the device (Compose AI 1.7 → 23.7 s, tl;dv, RoValra,
+#     EverBee, WA Sender – the runtime's own `configured … in N ms` lines and `HEAP STEPS` the
+#     reading), then Save Page WE (its save completing is what opens the phone layout's Downloads
+#     sheet) followed in the AFTER's order by PDF Viewer, ScreenPal and the fonts page probe – the
+#     three the sheet took down, under the driver's `dismissChromeSurface` (`chromeSurfacesDismissed`
+#     on the row the reading). One boot per WebView, no second boot; only on the coordinator's YES.
 # Every emulator job's driver step carries its own `timeout-minutes` below the job's cap
 # (`driver-timeout-minutes`, round 23's optional input of the shared workflow): a driver that
 # sinks past it is cut with the job still alive, so the artifact upload and the emulator-death
@@ -425,6 +433,52 @@ jobs:
         SOFT_FAIL=1
         SWEEP_ONLY=dhhpefjklgkmgeafimnjhojgjamoafof
         SWEEP_LAST=
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  # Nine rows of the AFTER again on both WebViews (see the header, `[rows]`): the five configure
+  # rows first, Compose AI ahead of them as the one row not in SWEEP_LAST, then Save Page WE and
+  # the three rows its download's sheet took down, in the AFTER's order.
+  rows-system-webview:
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[rows]'))
+    name: Nine rows again - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-rows
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=ddlbpiadoechcolndfeaonajmngmhblj,lknmjhcajhfbbglglccadlfdjbaiifig,njcickgebhnpgmoodjdgohkclfplejli,oeicpkgdngoghobnbjngekclpcmpgpij,cgipcgghboamefelooajpiabilddemlh,dhhpefjklgkmgeafimnjhojgjamoafof,jdlkkmamiaikhfampledjnhhkbeifokk,eefedolmcildfckjamddopaplfiiankl,eicpojjdecdlodehmlcdjigijfepnedb
+        SWEEP_LAST=lknmjhcajhfbbglglccadlfdjbaiifig,njcickgebhnpgmoodjdgohkclfplejli,oeicpkgdngoghobnbjngekclpcmpgpij,cgipcgghboamefelooajpiabilddemlh,dhhpefjklgkmgeafimnjhojgjamoafof,jdlkkmamiaikhfampledjnhhkbeifokk,eefedolmcildfckjamddopaplfiiankl,eicpojjdecdlodehmlcdjigijfepnedb
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  rows-modern-webview:
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[rows]'))
+    name: Nine rows again - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-rows-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=ddlbpiadoechcolndfeaonajmngmhblj,lknmjhcajhfbbglglccadlfdjbaiifig,njcickgebhnpgmoodjdgohkclfplejli,oeicpkgdngoghobnbjngekclpcmpgpij,cgipcgghboamefelooajpiabilddemlh,dhhpefjklgkmgeafimnjhojgjamoafof,jdlkkmamiaikhfampledjnhhkbeifokk,eefedolmcildfckjamddopaplfiiankl,eicpojjdecdlodehmlcdjigijfepnedb
+        SWEEP_LAST=lknmjhcajhfbbglglccadlfdjbaiifig,njcickgebhnpgmoodjdgohkclfplejli,oeicpkgdngoghobnbjngekclpcmpgpij,cgipcgghboamefelooajpiabilddemlh,dhhpefjklgkmgeafimnjhojgjamoafof,jdlkkmamiaikhfampledjnhhkbeifokk,eefedolmcildfckjamddopaplfiiankl,eicpojjdecdlodehmlcdjigijfepnedb
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
