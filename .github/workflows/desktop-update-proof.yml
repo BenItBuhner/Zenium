@@ -1,0 +1,581 @@
+name: Desktop update proof
+
+# Proves that updating Zenium from inside the app works – Settings › Updates: check, download,
+# Restart to update / Install – on every desktop OS, with REAL builds:
+#
+#   published   An older PUBLISHED release (`from_version`; a bisect matrix of older ones on a
+#               dispatch with `bisect`, and nightly) is installed on the runner the way a user
+#               installs it – NSIS /S, the AppImage made executable, `dpkg -i`, the DMG mounted
+#               and the app copied to /Applications – and driven to the newest published release
+#               (`to_version`, default: GitHub's latest) over the renderer's own command bridge
+#               (.github/smoke/update-proof.mjs). The process that comes back must run the newer
+#               version. Red while the published builds carry the bug, green from the first fixed
+#               release on: re-run this with `from_version` = that release to prove it.
+#   pair        Build A (this commit) → build B (this commit with the version bumped one patch),
+#               packaged from the same electron-vite output, A installed like a user and pointed
+#               at a local release folder holding B's packages, electron-updater feeds and an
+#               update manifest signed with a throwaway ed25519 key generated in the job (B's
+#               public key baked into A through VITE_ZEN_UPDATE_PUBLIC_KEY). The app reaches the
+#               local folder through ZEN_UPDATE_BASE_URL – read by the main process only, never
+#               the renderer; an attacker who can set the app's environment already owns the
+#               account, and electron-updater and Chromium honour environment overrides of their
+#               own, so the variable adds no reach it did not have (src/main/platform/updates.ts).
+#               Proves the code in the pull request, not a release.
+#
+# Linux .deb: the installer runs dpkg through pkexec on a desktop, which has no authentication
+# agent on a headless runner – the deb legs run the app as root (electron-updater then runs dpkg
+# itself), as noted in each leg. macOS: the bundles are ad-hoc signed (no Developer ID), so the
+# app swaps itself with a detached helper rather than Squirrel.Mac; the published legs install
+# from the DMG into /Applications and clear quarantine the way "Open Anyway" would.
+#
+# Guard: every pull request touching the updater, the packaging or this proof runs the pair
+# legs (and the published legs for `from_version`'s default), and the summary job
+# "Desktop update proof" is the one to require.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: 'Published release to install first and update from (tag)'
+        required: false
+        type: string
+        default: 'v0.5.70'
+      to_version:
+        description: 'Published release to update to (tag, or "latest")'
+        required: false
+        type: string
+        default: 'latest'
+      bisect:
+        description: 'Also update from a matrix of older releases (v0.3.0, v0.4.12, v0.5.0, v0.5.40, v0.5.79)'
+        required: false
+        type: boolean
+        default: false
+      pair:
+        description: 'Run the build A → build B legs as well'
+        required: false
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - 'src/main/platform/updates.ts'
+      - 'src/main/platform/updateInstall.ts'
+      - 'src/core/updates.ts'
+      - 'src/shared/updates.ts'
+      - 'electron-builder.yml'
+      - 'build/**'
+      - '.github/scripts/update-manifest.mjs'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/desktop-update-proof.yml'
+      - '.github/smoke/update-proof.mjs'
+      - '.github/smoke/update-proof-lib.mjs'
+      - '.github/smoke/views.mjs'
+      - '.github/smoke/win-install.ps1'
+      - '.github/smoke/win-screenshot.ps1'
+  schedule:
+    # Nightly: the published legs against whatever is latest, the bisect matrix included.
+    - cron: '23 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-update-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+  REPOSITORY: BenItBuhner/Zenium
+
+jobs:
+  resolve:
+    name: Resolve versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      from_versions: ${{ steps.pick.outputs.from_versions }}
+      to_tag: ${{ steps.pick.outputs.to_tag }}
+      to_version: ${{ steps.pick.outputs.to_version }}
+      pair: ${{ steps.pick.outputs.pair }}
+    steps:
+      - name: Pick the releases
+        id: pick
+        env:
+          FROM_INPUT: ${{ inputs.from_version }}
+          TO_INPUT: ${{ inputs.to_version }}
+          BISECT: ${{ inputs.bisect }}
+          PAIR_INPUT: ${{ inputs.pair }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          from="${FROM_INPUT:-v0.5.70}"
+          to="${TO_INPUT:-latest}"
+          if [[ "$to" == latest ]]; then
+            curl -sSf -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$REPOSITORY/releases/latest" -o latest.json
+            to=$(node -p "JSON.parse(require('fs').readFileSync('latest.json','utf8')).tag_name")
+          fi
+          [[ "$to" == v* ]] || { echo "::error::to_version '$to' is not a tag"; exit 1; }
+          list=("$from")
+          if [[ "$BISECT" == true || "$EVENT" == schedule ]]; then
+            list+=(v0.3.0 v0.4.12 v0.5.0 v0.5.40 v0.5.79)
+          fi
+          # Unique, as a JSON array for the matrices.
+          json=$(printf '%s\n' "${list[@]}" | awk '!seen[$0]++' | node -e '
+            const lines = require("fs").readFileSync(0, "utf8").split("\n").filter(Boolean)
+            process.stdout.write(JSON.stringify(lines))')
+          pair=true
+          if [[ "$EVENT" == workflow_dispatch && "$PAIR_INPUT" == false ]]; then pair=false; fi
+          if [[ "$EVENT" == schedule ]]; then pair=false; fi
+          {
+            echo "from_versions=$json"
+            echo "to_tag=$to"
+            echo "to_version=${to#v}"
+            echo "pair=$pair"
+          } >> "$GITHUB_OUTPUT"
+          echo "from: $json → to: $to (pair legs: $pair)"
+          {
+            echo "## Desktop update proof"
+            echo ""
+            echo "Published legs update from \`$json\` to \`$to\`; pair legs: $pair."
+            echo ""
+            echo "| Leg | Versions | Result | Stage | Detail |"
+            echo "| --- | --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------------------------------
+  # Published old → published latest
+  # -------------------------------------------------------------------------------------------
+
+  published-windows:
+    name: published windows-x64 ${{ matrix.from }} → ${{ needs.resolve.outputs.to_tag }}
+    needs: resolve
+    runs-on: windows-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        from: ${{ fromJSON(needs.resolve.outputs.from_versions) }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      OUT: ${{ github.workspace }}\proof-out
+      SMOKE: ${{ github.workspace }}\.github\smoke
+      FROM: ${{ matrix.from }}
+      TO_VERSION: ${{ needs.resolve.outputs.to_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Download and install ${{ matrix.from }} silently (NSIS /S)
+        id: install
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:OUT" | Out-Null
+          $v = $env:FROM.TrimStart('v')
+          $setup = Join-Path $env:RUNNER_TEMP "zenium-$v-x64-setup.exe"
+          curl.exe -sSfL -o "$setup" "https://github.com/$env:REPOSITORY/releases/download/$env:FROM/zenium-$v-x64-setup.exe"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action install -Installer "$setup" -Out "$env:OUT" -Label from
+          $info = Get-Content "$env:OUT\from-install.json" -Raw | ConvertFrom-Json
+          if ($info.exitCode -ne 0) { throw "installer exited with code $($info.exitCode)" }
+          if (-not (Test-Path $info.exe)) { throw "installed executable missing: $($info.exe)" }
+          "exe=$($info.exe)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          node "$env:SMOKE\update-proof.mjs" version --exe "$($info.exe)"
+      - name: Update from inside the app
+        timeout-minutes: 20
+        run: node "$env:SMOKE\update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$env:OUT" --label "windows-x64-$env:FROM" --expect "$env:TO_VERSION"
+      - name: What is installed now
+        if: always()
+        run: node "$env:SMOKE\update-proof.mjs" version --exe "${{ steps.install.outputs.exe }}"
+      - name: Uninstall
+        if: always()
+        continue-on-error: true
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action kill
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action uninstall -Out "$env:OUT" -Label from
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: update-proof-published-windows-x64-${{ matrix.from }}
+          path: proof-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  published-linux:
+    name: published ${{ matrix.package }} linux-x64 ${{ matrix.from }} → ${{ needs.resolve.outputs.to_tag }}
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        from: ${{ fromJSON(needs.resolve.outputs.from_versions) }}
+        package: [appimage, deb]
+    env:
+      OUT: ${{ github.workspace }}/proof-out
+      SMOKE: ${{ github.workspace }}/.github/smoke
+      FROM: ${{ matrix.from }}
+      TO_VERSION: ${{ needs.resolve.outputs.to_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Display tools (Xvfb; ffmpeg grabs the screenshots)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils
+      - name: Download and install ${{ matrix.from }} (${{ matrix.package }})
+        id: install
+        run: |
+          mkdir -p "$OUT" "$HOME/Applications"
+          v="${FROM#v}"
+          if [[ "${{ matrix.package }}" == appimage ]]; then
+            file="$HOME/Applications/zenium-$v-x86_64.AppImage"
+            curl -sSfL -o "$file" "https://github.com/$REPOSITORY/releases/download/$FROM/zenium-$v-x86_64.AppImage"
+            chmod +x "$file"
+            echo "exe=$file" >> "$GITHUB_OUTPUT"
+          else
+            deb="$RUNNER_TEMP/zenium_${v}_amd64.deb"
+            curl -sSfL -o "$deb" "https://github.com/$REPOSITORY/releases/download/$FROM/zenium_${v}_amd64.deb"
+            # The runner image is no desktop: libnotify4 / libsecret are missing, so dpkg -i
+            # unpacks and stops and apt-get install -f completes the configuration.
+            sudo dpkg -i "$deb" 2>&1 | tee "$OUT/dpkg-i.log" || sudo apt-get install -f -y -qq 2>&1 | tee -a "$OUT/dpkg-i.log"
+            dpkg-query -W -f='${Package} ${Version} ${Status}\n' zenium | tee "$OUT/dpkg-query-before.txt"
+            echo "exe=/opt/Zenium/zenium" >> "$GITHUB_OUTPUT"
+            node "$SMOKE/update-proof.mjs" version --exe /opt/Zenium/zenium
+          fi
+      - name: Update from inside the app (AppImage; no FUSE on the runner, so APPIMAGE_EXTRACT_AND_RUN)
+        if: matrix.package == 'appimage'
+        timeout-minutes: 20
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}"
+          --out "$OUT" --label "appimage-x64-$FROM" --expect "$TO_VERSION"
+          --extra-args="--no-sandbox --disable-gpu"
+      - name: Update from inside the app (deb; as root – pkexec has no agent on a headless runner)
+        if: matrix.package == 'deb'
+        timeout-minutes: 20
+        run: >
+          sudo -E env "PATH=$PATH" xvfb-run -a -s '-screen 0 1600x1000x24'
+          node "$SMOKE/update-proof.mjs" drive --exe /opt/Zenium/zenium
+          --out "$OUT" --label "deb-x64-$FROM" --expect "$TO_VERSION"
+          --extra-args="--no-sandbox --disable-gpu"
+      - name: What is installed now
+        if: always()
+        run: |
+          if [[ "${{ matrix.package }}" == appimage ]]; then
+            find "$HOME/Applications" -maxdepth 1 -name '*.AppImage' -exec ls -la {} + | tee "$OUT/applications-after.txt"
+          else
+            dpkg-query -W -f='${Package} ${Version} ${Status}\n' zenium | tee "$OUT/dpkg-query-after.txt" || true
+            node "$SMOKE/update-proof.mjs" version --exe /opt/Zenium/zenium || true
+          fi
+          sudo chown -R "$(id -u):$(id -g)" "$OUT" || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: update-proof-published-${{ matrix.package }}-x64-${{ matrix.from }}
+          path: proof-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  published-macos:
+    name: published macos-${{ matrix.arch }} ${{ matrix.from }} → ${{ needs.resolve.outputs.to_tag }}
+    needs: resolve
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        from: ${{ fromJSON(needs.resolve.outputs.from_versions) }}
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    env:
+      OUT: ${{ github.workspace }}/proof-out
+      SMOKE: ${{ github.workspace }}/.github/smoke
+      FROM: ${{ matrix.from }}
+      TO_VERSION: ${{ needs.resolve.outputs.to_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Download ${{ matrix.from }}, mount the DMG, copy Zenium.app to /Applications
+        id: install
+        run: |
+          mkdir -p "$OUT"
+          v="${FROM#v}"
+          dmg="$RUNNER_TEMP/zenium-$v-${{ matrix.arch }}.dmg"
+          curl -sSfL -o "$dmg" "https://github.com/$REPOSITORY/releases/download/$FROM/zenium-$v-${{ matrix.arch }}.dmg"
+          mount="$RUNNER_TEMP/zenium-dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          rm -rf /Applications/Zenium.app
+          ditto "$mount/Zenium.app" /Applications/Zenium.app
+          hdiutil detach "$mount"
+          # What "Open Anyway" leaves: no quarantine on the bundle.
+          xattr -dr com.apple.quarantine /Applications/Zenium.app 2>/dev/null || true
+          codesign --verify --deep --strict /Applications/Zenium.app 2>&1 | tee "$OUT/codesign-before.txt" || true
+          bash "$SMOKE/mac-facts.sh" /Applications/Zenium.app "$OUT" bundle || true
+          echo "exe=/Applications/Zenium.app/Contents/MacOS/Zenium" >> "$GITHUB_OUTPUT"
+          node "$SMOKE/update-proof.mjs" version --exe /Applications/Zenium.app/Contents/MacOS/Zenium
+      - name: Update from inside the app
+        timeout-minutes: 20
+        run: >
+          node "$SMOKE/update-proof.mjs" drive --exe /Applications/Zenium.app/Contents/MacOS/Zenium
+          --app-names Zenium --out "$OUT" --label "macos-${{ matrix.arch }}-$FROM" --expect "$TO_VERSION"
+      - name: What is installed now
+        if: always()
+        run: |
+          node "$SMOKE/update-proof.mjs" version --exe /Applications/Zenium.app/Contents/MacOS/Zenium || true
+          codesign --verify --deep --strict /Applications/Zenium.app 2>&1 | tee "$OUT/codesign-after.txt" || true
+          find /Applications -maxdepth 1 -iname 'zenium*' -exec ls -lad {} + | tee "$OUT/applications-after.txt" || true
+          find ~/Library/Caches/zenium-updater -maxdepth 2 -exec ls -la {} + 2>/dev/null | tee "$OUT/updater-cache.txt" || true
+          # Anything the download-and-open fallback mounted.
+          hdiutil info | grep -i zenium | tee "$OUT/mounted-after.txt" || true
+          for vol in /Volumes/Zenium*; do if [[ -d "$vol" ]]; then hdiutil detach "$vol" -force || true; fi; done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: update-proof-published-macos-${{ matrix.arch }}-${{ matrix.from }}
+          path: proof-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  # -------------------------------------------------------------------------------------------
+  # Build A → build B (this commit), served from a local release folder
+  # -------------------------------------------------------------------------------------------
+
+  pair:
+    name: pair ${{ matrix.name }} A → B
+    needs: resolve
+    if: needs.resolve.outputs.pair == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            builder: --win nsis --x64
+          - name: linux-x64
+            os: ubuntu-24.04
+            builder: --linux AppImage deb --x64
+          - name: macos-arm64
+            os: macos-latest
+            builder: --mac dmg zip --arm64
+          - name: macos-x64
+            os: macos-15-intel
+            builder: --mac dmg zip --x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: ${{ github.workspace }}/proof-out
+      SMOKE: ${{ github.workspace }}/.github/smoke
+      SERVE_PORT: '8765'
+      # No certificate on CI: build/after-pack.mjs ad-hoc signs the macOS bundle.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Throwaway signing key for this job's manifest
+        id: key
+        run: |
+          node .github/scripts/update-manifest.mjs keygen > key.txt
+          # The PEM between the two comment lines, base64 on one line (the script accepts that).
+          pem=$(awk '/BEGIN PRIVATE KEY/,/END PRIVATE KEY/' key.txt | base64 | tr -d '\n')
+          pub=$(tail -n 1 key.txt)
+          echo "::add-mask::$pem"
+          echo "UPDATE_MANIFEST_SIGNING_KEY=$pem" >> "$GITHUB_ENV"
+          echo "VITE_ZEN_UPDATE_PUBLIC_KEY=$pub" >> "$GITHUB_ENV"
+          echo "public key: $pub"
+          rm key.txt
+      - name: Versions A and B
+        id: versions
+        run: |
+          a=$(node -p "require('./package.json').version")
+          b=$(node -e "const [x,y,z]=require('./package.json').version.split('-')[0].split('.').map(Number); console.log(\`\${x}.\${y}.\${z+1}\`)")
+          echo "a=$a" >> "$GITHUB_OUTPUT"
+          echo "b=$b" >> "$GITHUB_OUTPUT"
+          echo "A = $a, B = $b"
+      - name: Bundle main, preload and renderer (A's public key baked in)
+        run: npx electron-vite build
+      - name: Package A
+        run: |
+          npx electron-builder ${{ matrix.builder }} --publish never
+          mkdir -p pair/a
+          shopt -s nullglob
+          mv dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.blockmap dist/latest*.yml pair/a/ 2>/dev/null || true
+          ls -la pair/a
+      - name: Package B (same bundle, version ${{ steps.versions.outputs.b }})
+        env:
+          B: ${{ steps.versions.outputs.b }}
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.env.B;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          npx electron-builder ${{ matrix.builder }} --publish never
+          mkdir -p pair/b
+          shopt -s nullglob
+          mv dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.blockmap dist/latest*.yml pair/b/
+          ls -la pair/b
+      - name: B's update manifest, signed, pointing at the local release folder
+        env:
+          RELEASE_TAG: v${{ steps.versions.outputs.b }}
+          RELEASE_VERSION: ${{ steps.versions.outputs.b }}
+          GITHUB_REPOSITORY: ${{ env.REPOSITORY }}
+          ASSETS_DIR: pair/b
+          ASSET_BASE_URL: http://127.0.0.1:8765
+          ALLOW_INCOMPLETE: 'true'
+        run: |
+          node .github/scripts/update-manifest.mjs build
+          node .github/scripts/update-manifest.mjs verify
+          cat pair/b/update-manifest.json
+      - name: Serve B
+        run: |
+          mkdir -p "$OUT"
+          node "$SMOKE/update-proof.mjs" serve --dir pair/b --port "$SERVE_PORT" --detach --pid-file "$RUNNER_TEMP/serve.pid" --log "$OUT/serve.log"
+          curl -sSf "http://127.0.0.1:$SERVE_PORT/update-manifest.json" | head -c 300; echo
+      - name: Display tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils
+      - name: Install A like a user
+        id: install
+        env:
+          A: ${{ steps.versions.outputs.a }}
+        run: |
+          case "${{ matrix.name }}" in
+            windows-x64)
+              setup=$(find pair/a -maxdepth 1 -name '*-setup.exe' | head -n 1)
+              powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SMOKE/win-install.ps1" -Action install -Installer "$(cygpath -w "$setup")" -Out "$(cygpath -w "$OUT")" -Label a
+              exe=$(node -p "require('$OUT/a-install.json').exe")
+              [[ -f "$exe" ]] || { echo "::error::installed executable missing: $exe"; exit 1; }
+              echo "exe=$exe" >> "$GITHUB_OUTPUT"
+              ;;
+            linux-x64)
+              mkdir -p "$HOME/Applications"
+              cp pair/a/*.AppImage "$HOME/Applications/"
+              chmod +x "$HOME"/Applications/*.AppImage
+              echo "exe=$(find "$HOME/Applications" -maxdepth 1 -name '*.AppImage' | head -n 1)" >> "$GITHUB_OUTPUT"
+              sudo dpkg -i pair/a/*.deb 2>&1 | tee "$OUT/dpkg-i.log" || sudo apt-get install -f -y -qq 2>&1 | tee -a "$OUT/dpkg-i.log"
+              dpkg-query -W -f='${Package} ${Version} ${Status}\n' zenium
+              ;;
+            macos-*)
+              dmg=$(find pair/a -maxdepth 1 -name '*.dmg' | head -n 1)
+              mount="$RUNNER_TEMP/zenium-dmg"
+              hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+              rm -rf /Applications/Zenium.app
+              ditto "$mount/Zenium.app" /Applications/Zenium.app
+              hdiutil detach "$mount"
+              xattr -dr com.apple.quarantine /Applications/Zenium.app 2>/dev/null || true
+              codesign --verify --deep --strict /Applications/Zenium.app
+              echo "exe=/Applications/Zenium.app/Contents/MacOS/Zenium" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+      - name: A → B from inside the app
+        timeout-minutes: 25
+        env:
+          B: ${{ steps.versions.outputs.b }}
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          base="http://127.0.0.1:$SERVE_PORT"
+          case "${{ matrix.name }}" in
+            windows-x64)
+              node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$OUT" --label "pair-windows-x64" --expect "$B" --env "ZEN_UPDATE_BASE_URL=$base"
+              ;;
+            linux-x64)
+              status=0
+              xvfb-run -a -s '-screen 0 1600x1000x24' node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$OUT" --label "pair-appimage-x64" --expect "$B" --extra-args="--no-sandbox --disable-gpu" --env "ZEN_UPDATE_BASE_URL=$base" || status=$?
+              # deb as root: pkexec has no agent on a headless runner (see the header).
+              sudo -E env "PATH=$PATH" xvfb-run -a -s '-screen 0 1600x1000x24' node "$SMOKE/update-proof.mjs" drive --exe /opt/Zenium/zenium --out "$OUT" --label "pair-deb-x64" --expect "$B" --extra-args="--no-sandbox --disable-gpu" --env "ZEN_UPDATE_BASE_URL=$base" || status=$?
+              sudo chown -R "$(id -u):$(id -g)" "$OUT" || true
+              exit $status
+              ;;
+            macos-*)
+              node "$SMOKE/update-proof.mjs" drive --exe /Applications/Zenium.app/Contents/MacOS/Zenium --app-names Zenium --out "$OUT" --label "pair-${{ matrix.name }}" --expect "$B" --env "ZEN_UPDATE_BASE_URL=$base"
+              ;;
+          esac
+      - name: What is installed now
+        if: always()
+        run: |
+          case "${{ matrix.name }}" in
+            windows-x64) node "$SMOKE/update-proof.mjs" version --exe "${{ steps.install.outputs.exe }}" || true ;;
+            linux-x64)
+              ls -la "$HOME/Applications" || true
+              dpkg-query -W -f='${Package} ${Version} ${Status}\n' zenium || true
+              node "$SMOKE/update-proof.mjs" version --exe /opt/Zenium/zenium || true ;;
+            macos-*)
+              node "$SMOKE/update-proof.mjs" version --exe /Applications/Zenium.app/Contents/MacOS/Zenium || true
+              codesign --verify --deep --strict /Applications/Zenium.app 2>&1 || true
+              find ~/Library/Caches/zenium-updater -maxdepth 2 -exec ls -la {} + 2>/dev/null || true
+              for vol in /Volumes/Zenium*; do if [[ -d "$vol" ]]; then hdiutil detach "$vol" -force || true; fi; done ;;
+          esac
+          if [[ -f "$RUNNER_TEMP/serve.pid" ]]; then kill "$(cat "$RUNNER_TEMP/serve.pid")" 2>/dev/null || true; fi
+          mkdir -p "$OUT/served"
+          cp pair/b/update-manifest.json pair/b/update-manifest.json.sig pair/b/latest*.yml "$OUT/served/" 2>/dev/null || true
+      - name: Uninstall (Windows)
+        if: always() && runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SMOKE/win-session.ps1" -Action kill || true
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SMOKE/win-install.ps1" -Action uninstall -Out "$(cygpath -w "$OUT")" -Label a || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: update-proof-pair-${{ matrix.name }}
+          path: proof-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  # -------------------------------------------------------------------------------------------
+  # The one job to require
+  # -------------------------------------------------------------------------------------------
+
+  verdict:
+    name: Desktop update proof
+    needs: [resolve, published-windows, published-linux, published-macos, pair]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every leg green
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          echo "$RESULTS" > needs.json
+          # The template literals below are JavaScript, not shell.
+          # shellcheck disable=SC2016
+          node -e '
+            const needs = JSON.parse(require("fs").readFileSync("needs.json", "utf8"))
+            const event = process.env.EVENT
+            let failed = 0
+            for (const [job, info] of Object.entries(needs)) {
+              const result = info.result
+              // On a pull request the published legs report on releases, not on this code: they
+              // are recorded, and the pair legs decide. Elsewhere every leg counts.
+              const counts = !(event === "pull_request" && job.startsWith("published-"))
+              const ok = result === "success" || (result === "skipped" && job === "pair")
+              console.log(`${job}: ${result}${counts ? "" : " (informational on a pull request)"}`)
+              if (counts && !ok) failed++
+            }
+            if (failed > 0) {
+              console.log(`::error::${failed} leg(s) of the desktop update proof failed`)
+              process.exit(1)
+            }
+          '
