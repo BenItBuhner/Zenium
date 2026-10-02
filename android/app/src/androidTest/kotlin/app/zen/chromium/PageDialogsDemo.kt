@@ -115,6 +115,8 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
                 "/" to ("text/html; charset=utf-8" to page.toByteArray()),
                 // The same page under another title: scenes 11 to 15 arm it after scene 10 left for it.
                 "/second.html" to ("text/html; charset=utf-8" to page.replace("Page dialogs", SECOND_TITLE).toByteArray()),
+                // And under a third: scene 13's typed addresses over a page with no handler go there and back.
+                "/third.html" to ("text/html; charset=utf-8" to page.replace("Page dialogs", THIRD_TITLE).toByteArray()),
                 "/other.html" to DemoServer.page("Another tab", "<p>No dialogs here.</p>")
             )
         ).also { it.start() }
@@ -515,17 +517,36 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     /**
      * 13. A typed address over an armed page asks "Leave site?": the tab in front asks though
      * its view stood hidden under the URL field as the load was asked – the word is the tab's,
-     * not the view's ([UnloadObjection.inFront]); Cancel keeps the page. The page's own address
-     * says whether it stayed: the core took the typed address as the tab's as it asked. The
-     * Cancel is judged only where the navigation had not gone before the sheet's answer (the
-     * demo server's count of other.html answers): where Chromium's beforeunload timeout had let
-     * it go first, a NOTE names the race – pre-existing on main, W6-S27-d's to fix – and no
-     * verdict is given on the Cancel.
+     * not the view's ([UnloadObjection.inFront]); Cancel keeps the page, UNCONDITIONALLY. The
+     * page's handler is the slow one (busy past Chromium's 500 ms beforeunload budget before it
+     * objects), so the renderer's answer always comes after the browser's hang monitor has
+     * given up on it – the busy renderer of debug run 36898943391 made deterministic – and the
+     * view stands hidden under the URL field as the load is asked, as it did there. The verdict
+     * has no timing window: the document is still second.html with its handler armed, the demo
+     * server answered other.html NOT ONCE since ENTER (nothing left for the typed address), and
+     * the core's word on the tab is the page's address again (the core took the typed address
+     * as the tab's as it asked; the omnibox shows the page's). Then the same address with Leave:
+     * the page leaves once – other.html answered once, no second sheet.
+     *
+     * The host asks the page ahead of the load with a probe navigation of its own
+     * (`TabWebView.probeThenLoad`), and the scene pins that nothing of the probe shows: first
+     * over the page with NO handler – a typed address there and one back, each leaving the
+     * document once (the server told of one `pagehide` per navigation, never a second), one
+     * history entry per navigation, no sheet, one `startLoading` told to the chrome and nothing
+     * told to it naming the probe's address ([Watch]); then at the Cancel – the document saw no
+     * `pagehide` and no `unload` (its own counters, and the server's), its history is as long
+     * as it was, the chrome was told no `startLoading` (no throbber), no `navigated`,
+     * `redirected`, `historyChanged` or `navigation` (no flicker of the address), nothing
+     * naming the probe, and `stayed` (the omnibox back to the page); and at the Leave – one
+     * `pagehide`, one entry, one `startLoading`, the one navigation.
      */
     private fun leaveOnTypedAddress() {
-        finding("\n13. A typed address over an armed page: 'Leave site?' (the tab in front asks, its view under the URL field or not); Cancel keeps the page")
-        tapPage("#arm")
-        expect("the page armed its handler again", awaitLog { it.optBoolean("armed") })
+        finding("\n13. A typed address over an armed page: 'Leave site?' (the tab in front asks, its view under the URL field or not); Cancel keeps the page – unconditionally")
+        typedOverPlainPage("$ORIGIN/third.html")
+        typedOverPlainPage("$ORIGIN/second.html")
+        finding("  Cancel: the page armed with the slow handler, the typed address, Cancel")
+        tapPage("#arm-slow")
+        expect("the page armed its slow handler (busy past Chromium's beforeunload budget before it objects)", awaitLog { it.optBoolean("slow") })
         val typed = typeAddress("$ORIGIN/other.html")
         expect("the address went into the URL field: '$typed'", typed == "$ORIGIN/other.html")
         if (typed.isEmpty()) {
@@ -533,41 +554,44 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             awaitIme(false, 4_000)
             return
         }
-        // The server's count of other.html answers says whether the navigation had gone before
-        // the sheet's answer: Chromium's beforeunload hang monitor lets a navigation go when the
-        // page's handler has not answered within its timeout (the renderer is one for every
-        // page and the chrome, and the typed address finds it busy now and then), and a sheet
-        // that rises afterwards no longer governs it – pre-existing on main, W6-S27-d's to fix.
         val hitsBefore = server.hits("/other.html")
+        val leavings = Leavings()
+        val historyBefore = historySize()
+        val watch = Watch()
         val enterAt = SystemClock.uptimeMillis()
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
-        val sheet = awaitSheet(LEAVE)
+        watchUntil(watch, LOOKUP_WAIT) { sheetRoot(LEAVE) != null }
+        val sheet = sheet(LEAVE)
         finding("  (other.html answered ${server.hits("/other.html") - hitsBefore} time(s) between ENTER and the sheet, which ${if (sheet != null) "rose" else "did not rise"} +${SystemClock.uptimeMillis() - enterAt} ms after ENTER)")
         expect("'Leave site?' rises for the typed address", sheet != null)
         if (sheet == null) {
             if (urlbarOpen()) back()
             awaitIme(false, 4_000)
-            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()})")
+            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()}; other.html answered ${server.hits("/other.html") - hitsBefore} time(s) since ENTER)")
             return
         }
         expect("with Chrome's line and Cancel | Leave", sheet.text(LEAVE_LINE) != null && sheet.peer(CANCEL) != null && sheet.peer("Leave") != null)
         still("typed-leave-site")
-        val wentBeforeCancel = server.hits("/other.html") - hitsBefore
         answer(sheet, CANCEL)
-        SystemClock.sleep(2_000)
-        val stayed = pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed")
-        if (wentBeforeCancel == 0) {
-            expect("the page stayed: ${pageUrl()}, its handler still armed", stayed)
-        } else {
-            finding(
-                "  NOTE: other.html was answered $wentBeforeCancel time(s) before Cancel was given – Chromium's beforeunload timeout had let " +
-                    "the typed address's navigation go while the renderer was busy, and the sheet's Cancel no longer governs it " +
-                    "(the page ${if (stayed) "stayed" else "went to ${pageUrl()}"}). Pre-existing on main (baseline run 36899085323, " +
-                    "debug run 36898943391); no verdict here – the fix and the unconditional \"Cancel keeps the page\" verdict are " +
-                    "W6-S27-d's (seed A7, \"Cancel on 'Leave site?' keeps the page\")."
-            )
-        }
-        finding("  (the core's word on the tab after the Cancel: ${activeUrl()}; the URL field ${if (urlbarOpen()) "open" else "closed"})")
+        watchFor(watch, 2_500)
+        val log = pageLog()
+        expect("Cancel keeps the page: the document is second.html with its handler armed (${pageUrl()}, armed ${log.optBoolean("armed")})", pageUrl() == "$ORIGIN/second.html" && log.optBoolean("armed"))
+        val hits = server.hits("/other.html") - hitsBefore
+        expect("and nothing left for the typed address: other.html answered $hits time(s) since ENTER", hits == 0)
+        expect("the core's word on the tab is the page's address again: ${activeUrl()}", activeUrl() == "$ORIGIN/second.html")
+        expect(
+            "the document saw neither pagehide nor unload (its counters ${log.optInt("pagehide")} and ${log.optInt("unload")}; the server told of ${leavings.pagehides()} and ${leavings.unloads()} since ENTER)",
+            log.optInt("pagehide") == 0 && log.optInt("unload") == 0 && leavings.pagehides() == 0 && leavings.unloads() == 0
+        )
+        expect("no history entry for the refused navigation: ${historyBefore} entr${if (historyBefore == 1) "y" else "ies"} before, ${historySize()} after", historySize() == historyBefore)
+        val events = watch.events()
+        val names = watch.names(events)
+        finding("  (${watch.describe(events)})")
+        expect("no throbber: the tab never started loading", "startLoading" !in names)
+        expect("no flicker of the address: the chrome was told no navigated, redirected, historyChanged or navigation", names.none { it in FLICKER_EVENTS })
+        expect("nothing the chrome was told named the probe's address", events.none { PROBE_ORIGIN in it })
+        expect("the core heard 'stayed': the omnibox back to the page", "stayed" in names)
+        finding("  (the page's handler ran ${log.optInt("beforeunloads")} time(s) for the one question; the URL field ${if (urlbarOpen()) "open" else "closed"} after the Cancel)")
         if (urlbarOpen()) {
             back()
             awaitUntil(4_000) { !urlbarOpen() }
@@ -575,6 +599,163 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         awaitIme(false, 4_000)
         SystemClock.sleep(1_000)
         still("typed-cancelled")
+        leaveOnTypedAddressGoes()
+    }
+
+    /**
+     * 13, over the page with no handler: a typed address leaves the page once – no sheet, the
+     * server told of one `pagehide` (the navigation's own; the probe ahead of the load took no
+     * document away), one history entry, the core's word on the tab never the probe's address.
+     */
+    private fun typedOverPlainPage(target: String) {
+        finding("  No handler: a typed address over the plain page, ${pageUrl()} to $target – the page leaves once")
+        expect("the page stands unarmed", pageLog().has("armed") && !pageLog().optBoolean("armed"))
+        val typed = typeAddress(target)
+        expect("the address went into the URL field: '$typed'", typed == target)
+        if (typed.isEmpty()) {
+            back()
+            awaitIme(false, 4_000)
+            return
+        }
+        val leavings = Leavings()
+        val historyBefore = historySize()
+        val watch = Watch()
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+        expect("the page leaves for the typed address, no sheet", watchUntil(watch, 15_000) { pageUrl() == target } && !watch.sheetSeen)
+        awaitLoaded(DEMO, target)
+        // The beacons of the document that left: a moment for them to reach the server.
+        watchFor(watch, 1_500)
+        expect(
+            "the document left once: the server told of ${leavings.pagehides()} pagehide (${leavings.unloads()} unload) since ENTER",
+            leavings.pagehides() == 1 && leavings.unloads() <= 1
+        )
+        expect("one history entry for the one navigation: $historyBefore before, ${historySize()} after", historySize() == historyBefore + 1)
+        val events = watch.events()
+        finding("  (${watch.describe(events)})")
+        expect("the tab started loading once, for the one navigation", watch.names(events).count { it == "startLoading" } == 1)
+        expect("nothing the chrome was told named the probe's address, and the core's word on the tab is the typed address: ${activeUrl()}", events.none { PROBE_ORIGIN in it } && activeUrl() == target)
+        if (urlbarOpen()) {
+            back()
+            awaitUntil(4_000) { !urlbarOpen() }
+        }
+        awaitIme(false, 4_000)
+        SystemClock.sleep(500)
+    }
+
+    /** 13, Leave: the same typed address over the armed page, Leave – the page leaves once, no second sheet. */
+    private fun leaveOnTypedAddressGoes() {
+        finding("  Leave: the same typed address, Leave – the page leaves once")
+        armedSecondPage(slow = true)
+        expect("the page stands armed on second.html", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+        val typed = typeAddress("$ORIGIN/other.html")
+        expect("the address went into the URL field: '$typed'", typed == "$ORIGIN/other.html")
+        if (typed.isEmpty()) {
+            back()
+            awaitIme(false, 4_000)
+            return
+        }
+        val hitsBefore = server.hits("/other.html")
+        val leavings = Leavings()
+        val historyBefore = historySize()
+        val watch = Watch()
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+        watchUntil(watch, LOOKUP_WAIT) { sheetRoot(LEAVE) != null }
+        val sheet = sheet(LEAVE)
+        expect("'Leave site?' rises for the typed address", sheet != null)
+        if (sheet == null) {
+            if (urlbarOpen()) back()
+            awaitIme(false, 4_000)
+            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()}; other.html answered ${server.hits("/other.html") - hitsBefore} time(s) since ENTER)")
+            return
+        }
+        answer(sheet, "Leave")
+        expect("the page leaves for the typed address", watchUntil(watch, 15_000) { pageUrl() == "$ORIGIN/other.html" })
+        awaitLoaded(DEMO, "$ORIGIN/other.html")
+        val seen = sheetsSeenFor(2_500)
+        val hits = server.hits("/other.html") - hitsBefore
+        expect("once: other.html answered $hits time(s), no second sheet ($seen seen)", hits == 1 && seen == 0)
+        expect("the core's word on the tab: ${activeUrl()}", activeUrl() == "$ORIGIN/other.html")
+        expect(
+            "the document left once: the server told of ${leavings.pagehides()} pagehide (${leavings.unloads()} unload) since ENTER",
+            leavings.pagehides() == 1 && leavings.unloads() <= 1
+        )
+        expect("one history entry for the one navigation: $historyBefore before, ${historySize()} after", historySize() == historyBefore + 1)
+        val events = watch.events()
+        finding("  (${watch.describe(events)})")
+        expect("the tab started loading once, for the one navigation", watch.names(events).count { it == "startLoading" } == 1)
+        expect("nothing the chrome was told named the probe's address", events.none { PROBE_ORIGIN in it })
+        if (urlbarOpen()) {
+            back()
+            awaitUntil(4_000) { !urlbarOpen() }
+        }
+        awaitIme(false, 4_000)
+        SystemClock.sleep(1_000)
+        still("typed-left")
+    }
+
+    /** How many entries the demo tab's view holds in its back/forward list – committed documents only; a pending navigation is none. */
+    private fun historySize(): Int = onMain { host.tabs.get(DEMO)?.copyBackForwardList()?.size ?: -1 }
+
+    /** The server's count of the page's leaving beacons (`/beacon/pagehide`, `/beacon/unload`) since this was made. */
+    private inner class Leavings {
+        private val pagehideBefore = server.hits("/beacon/pagehide")
+        private val unloadBefore = server.hits("/beacon/unload")
+        fun pagehides(): Int = server.hits("/beacon/pagehide") - pagehideBefore
+        fun unloads(): Int = server.hits("/beacon/unload") - unloadBefore
+    }
+
+    /**
+     * What the chrome was told of the demo tab while the driver waited ([watchUntil]): the
+     * host's view events for it, recorded in the chrome's own script ahead of the core
+     * (`window.__zenHost.viewEvent`, wrapped once for the run), and whether a sheet was ever up
+     * ([appWindows]). The core's words on the tab – its address, its loading – follow these
+     * events alone, so a probe that showed would show here: a `startLoading` the typed address
+     * never answered for (the throbber), a `navigated`, `redirected`, `historyChanged` or
+     * `navigation` naming the probe's address (the omnibox). The record is read with [events]
+     * once the renderer is free again – the page's beforeunload answer is a synchronous call
+     * that holds the one renderer main thread every WebView of the process shares, the chrome's
+     * script with it; the chrome queues the host's scripts in order meanwhile, so nothing is
+     * lost. The driver asks the core nothing while it waits: such an ask would itself queue on
+     * the renderer the page's answer comes from.
+     */
+    private inner class Watch {
+        var sheetSeen = false
+        var looks = 0
+        /** The chrome's word on the recorder's install: 'ok', or what went wrong. */
+        val recorder: String = chromeJsString(RECORDER_INSTALL) ?: "no answer"
+
+        fun look() {
+            looks++
+            if (appWindows() > 1) sheetSeen = true
+        }
+
+        /** The events recorded since the watch was made, `name payload` each, in the host's order. */
+        fun events(): List<String> {
+            val raw = chromeJs("window.__demoViewEvents||[]")
+            val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+            return List(array.length()) { array.optString(it) }
+        }
+
+        fun names(events: List<String> = events()): List<String> = events.map { it.substringBefore(' ') }
+
+        fun describe(events: List<String> = events()): String =
+            "the chrome was told ${events.size} event(s) for the tab: ${events.joinToString("; ") { it.take(160) }}; a sheet seen $sheetSeen, over $looks looks; recorder $recorder"
+    }
+
+    /** [awaitUntil] with a look at the chrome each round ([Watch.look]). */
+    private fun watchUntil(watch: Watch, timeoutMs: Long, test: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            watch.look()
+            if (test()) return true
+            if (SystemClock.uptimeMillis() >= deadline) return false
+            SystemClock.sleep(50)
+        }
+    }
+
+    /** Watch the chrome for `durationMs` ([Watch.look] each round). */
+    private fun watchFor(watch: Watch, durationMs: Long) {
+        watchUntil(watch, durationMs) { false }
     }
 
     /**
@@ -647,12 +828,13 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     }
 
     /**
-     * Scenes 14 and 15 read the armed second page, and each scene's precondition is its own:
-     * where scene 13's race left the demo tab on other.html, the tab is taken back to
-     * second.html first (a clean navigation – other.html has no handler), and the page is armed
-     * again where it is not. Nothing is done where the page stands armed on second.html already.
+     * Scene 13's Leave half and scenes 14 and 15 read the armed second page, and each one's
+     * precondition is its own: where the scene before left the demo tab on other.html, the tab
+     * is taken back to second.html first (a clean navigation – other.html has no handler), and
+     * the page is armed again where it is not (`slow`: with the slow handler, scene 13's).
+     * Nothing is done where the page stands armed on second.html already.
      */
-    private fun armedSecondPage() {
+    private fun armedSecondPage(slow: Boolean = false) {
         if (pageUrl() != "$ORIGIN/second.html") {
             finding("  (the page stands at ${pageUrl()}: the demo tab goes back to second.html first)")
             fireCore("tab.navigate", JSONObject().put("tabId", DEMO).put("input", "$ORIGIN/second.html").toString())
@@ -661,7 +843,7 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             SystemClock.sleep(1_000)
         }
         if (!pageLog().optBoolean("armed")) {
-            tapPage("#arm")
+            tapPage(if (slow) "#arm-slow" else "#arm")
             awaitLog { it.optBoolean("armed") }
         }
     }
@@ -1262,6 +1444,21 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val CARD_CLOSE = ".zen-overview-grid [data-tab-id=\"tab_demo\"] [aria-label^=\"Close \"]"
         /** The second page's title (`/second.html`): what the close toast names the tab by. */
         private const val SECOND_TITLE = "Second page"
+        private const val THIRD_TITLE = "Third page"
+        /** The host's unload probe ahead of a load the core asked for (`UnloadProbeRules.ORIGIN`): never a word of the tab's. */
+        private const val PROBE_ORIGIN = "http://unload-probe.zen.invalid"
+        /**
+         * The chrome-side recorder of the host's view events for the demo tab ([Watch]): the
+         * boot's `window.__zenHost.viewEvent` (boot.ts) wrapped once for the run, every event
+         * for the tab appended to `window.__demoViewEvents` as `name payload` before the core
+         * hears it; the list starts afresh at each install. Answers 'ok', or why not.
+         */
+        private const val RECORDER_INSTALL = "(function(){var h=window.__zenHost;if(!h||typeof h.viewEvent!=='function')return 'no host';" +
+            "if(!h.__demoViewEvent){var orig=h.viewEvent;h.__demoViewEvent=orig;" +
+            "h.viewEvent=function(tabId,name,payload){if(tabId==='$DEMO'&&window.__demoViewEvents)window.__demoViewEvents.push(name+' '+payload);return orig.apply(this,arguments)}}" +
+            "window.__demoViewEvents=[];return 'ok'})()"
+        /** The view events that move the tab's address in the core (`views.ts`): none of them for a refused navigation, none ever naming the probe. */
+        private val FLICKER_EVENTS = setOf("navigated", "redirected", "historyChanged", "navigation")
         /** The close toast (ToastCard.tsx; TabCloseDemo reads it the same way): its text and its Undo. */
         private const val TOAST_TEXT = ".zen-message-toast .zen-message-text"
         private const val UNDO = ".zen-message-toast .zen-message-button"
