@@ -141,24 +141,24 @@ describe('the mnemonic letters', () => {
     expect(tableEntry('Find and Edit')).toEqual({ letter: 'F', source: 'chrome' })
     // The pinned toolbar button's menu: Chrome's three strings carry no `&`; the rule's first
     // letters, and the star's own rows ahead of them keep theirs (B, A, S).
-    expect(marked(['Unpin', 'Customise Toolbar…'])).toEqual(['&Unpin', '&Customise Toolbar…'])
-    expect(marked(['Pin', 'Customise Toolbar…'])).toEqual(['&Pin', '&Customise Toolbar…'])
+    expect(marked(['Unpin', 'Customise Toolbar'])).toEqual(['&Unpin', '&Customise Toolbar'])
+    expect(marked(['Pin', 'Customise Toolbar'])).toEqual(['&Pin', '&Customise Toolbar'])
     expect(
       marked([
         'Bookmark This Page',
         'Add to Reading List',
         'Show Reading List',
         'Unpin',
-        'Customise Toolbar…'
+        'Customise Toolbar'
       ])
     ).toEqual([
       '&Bookmark This Page',
       '&Add to Reading List',
       '&Show Reading List',
       '&Unpin',
-      '&Customise Toolbar…'
+      '&Customise Toolbar'
     ])
-    for (const label of ['Pin', 'Unpin', 'Customise Toolbar…', 'Addresses'])
+    for (const label of ['Pin', 'Unpin', 'Customise Toolbar', 'Addresses'])
       expect(tableEntry(label)?.source).toBe('zenium')
     // Help ▸'s last row, IDS_REPORT_UNSAFE_SITE "Report an &unsafe site...": Chrome's u (the U
     // of Unsafe in Title Case), unique beside Report an Issue…'s R (IDS_FEEDBACK "&Report an
@@ -525,7 +525,7 @@ const OPENINGS: Opening[] = [
     }
   },
   {
-    name: 'toolbar: a pinned control’s button (Unpin, Customise Toolbar…; W8-1)',
+    name: 'toolbar: a pinned control’s button (Unpin, Customise Toolbar; W8-1)',
     open: (h) =>
       h.browser.menus.showChromeContextMenu(
         chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'translate' }),
@@ -533,7 +533,7 @@ const OPENINGS: Opening[] = [
       )
   },
   {
-    name: 'toolbar: a control folded away, asked from the keyboard (Pin, Customise Toolbar…)',
+    name: 'toolbar: a control folded away, asked from the keyboard (Pin, Customise Toolbar)',
     open: (h) => {
       h.browser.handleCommand(h.win, 'settings.update', { toolbarPins: { media: false } })
       return h.browser.menus.showChromeContextMenu(

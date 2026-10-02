@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
 import { FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
+import { S } from '@shared/strings'
 import type { Mod, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
@@ -16,10 +17,11 @@ import { EmptyNote, OverlayShell } from './OverlayShell'
 type Tab = 'extensions' | 'mods'
 
 /**
- * Zen's "Add-ons and Themes" (Ctrl+Shift+A): extensions and chrome CSS mods. The Extensions
- * tab is an in-content page that owns its scrolling (components/extensions/ExtensionsPage); on
- * a phone the category column becomes a menulist above the page (v2 draft §6) whose options
- * open in a bottom sheet (§9.13).
+ * §9.10's "Extensions and Mods" (Ctrl+Shift+A; Zen's Add-ons and Themes): extensions and chrome
+ * CSS mods. The title is the string table's `addons.open` – the app menu's row, the key table's
+ * and the palette's words (P-6). The Extensions tab is an in-content page that owns its
+ * scrolling (components/extensions/ExtensionsPage); on a phone the category column becomes a
+ * menulist above the page (v2 draft §6) whose options open in a bottom sheet (§9.13).
  */
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
@@ -30,7 +32,7 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
     { id: 'mods', label: 'Mods' }
   ]
   return (
-    <OverlayShell title="Add-ons and Themes" variant="full">
+    <OverlayShell title={S.title('addons.open')} variant="full">
       <div className={cn('flex h-full', phone && 'flex-col')}>
         {phone ? (
           <div className="zen-v2 zen-v2-page shrink-0 px-4 pt-3 pb-1">

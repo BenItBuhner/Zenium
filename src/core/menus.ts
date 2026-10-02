@@ -741,8 +741,9 @@ export class Menus {
    * while the grid is shown – Chrome's second link on the removal toast, which v2 §9.33 gives
    * one action, so the restore lives here, greyed when the grid is a fresh profile's already,
    * with the page's Undo toast in place of a confirmation (§10.5); and "Customise New Tab
-   * Page…", the Customise button's route. A private page has neither section (its explainer
-   * stands where the grid would) and gets no rows.
+   * Page", the Customise button's route – a settings page, a destination with no ask (P-36). A
+   * private page has neither section (its explainer stands where the grid would) and gets no
+   * rows.
    */
   private newTabPageGroup(tab: Tab, win: ZenWindow): Template {
     if (tab.containerId === PRIVATE_CONTAINER_ID) return []
@@ -760,7 +761,7 @@ export class Menus {
       })
     }
     rows.push({
-      label: 'Customise New Tab Page…',
+      label: S.menu('newTab.customise'),
       click: () => this.browser.pages.open('settings', 'newtab', win, tab.id)
     })
     return rows
@@ -1229,7 +1230,7 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: 'Language Settings',
+          label: S.menu('languages.open'),
           click: () => void this.browser.pages.open('settings', 'languages', win)
         }
       ]
@@ -1608,8 +1609,9 @@ export class Menus {
         click: () => void view.executeJavaScript('document.exitFullscreen()').catch(() => null)
       })
     } else if (win.host.isFullScreen()) {
+      // The row knows the state: the pair's on side (P-22).
       items.push({
-        label: 'Exit Full Screen',
+        label: S.menu('page.fullscreen', { state: true }),
         action: 'page.fullscreen',
         click: () => this.browser.toggleFullscreen(win)
       })
@@ -1731,10 +1733,11 @@ export class Menus {
         action: 'page.readerMode',
         click: () => reader.toggle(tab.id, win)
       },
+      // The translate bar asks (P-33): the entry's ellipsis, as the app menu's row has it.
       ...(translate.available
         ? [
             {
-              label: 'Translate Page',
+              label: S.menu('translate.open'),
               enabled: translate.canTranslate(tab.id),
               click: () => void translate.open(tab.id, win)
             }
@@ -1839,8 +1842,9 @@ export class Menus {
       }
       groups.push([
         this.fullUrlsItem(win),
+        // Settings › Search, a destination (P-36): the palette's words, no ask.
         {
-          label: 'Manage Search Engines…',
+          label: S.menu('search.manageEngines'),
           click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
@@ -1893,10 +1897,11 @@ export class Menus {
    * folded away has no button to right-click, so Unpin is the row met; Pin stands for the
    * state all the same) – writing the control's key of `Settings.toolbarPins` as the Customise
    * toolbar dialog's row does, the control folding into the app menu; then "Customise
-   * Toolbar…", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
-   * on the row and opens its form) – the ellipsis because Zenium's surface is a dialog where
-   * Chrome's is a side panel (§9.1). Forward is not among them: its right-click is the stack's
-   * menu, as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
+   * Toolbar", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
+   * on the row and opens its form) – no ellipsis: a row that opens a settings page is a
+   * destination, not an ask (P-36, the Lead's ruling), though Zenium's surface is a dialog where
+   * Chrome's is a side panel. Forward is not among them: its right-click is the stack's menu,
+   * as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
    * Settings' "Show forward button" switch). The extension buttons keep their own menu (#104).
    */
   toolbarButtonItems(control: ToolbarControl, win: ZenWindow): Template {
@@ -1909,7 +1914,7 @@ export class Menus {
         click: () => this.browser.handleCommand(win, 'settings.update', patch)
       },
       {
-        label: 'Customise Toolbar…',
+        label: S.menu('toolbar.customise'),
         click: () =>
           void this.browser.pages.open('settings', 'look', win, undefined, {
             query: { row: CUSTOMIZE_TOOLBAR_ROW, open: CUSTOMIZE_TOOLBAR_ROW }
@@ -2092,8 +2097,10 @@ export class Menus {
       },
       { type: 'separator' },
       { label: 'Remove from Zenium', click: () => void extensions.remove(id) },
+      // The page's own name (the string table's `addons.open`, one label per act – the Lead's
+      // Q2 over Chrome's "Manage extensions" in this seat).
       {
-        label: 'Manage Extensions',
+        label: S.menu('addons.open'),
         click: () => this.browser.actions.run('addons.open', { sourceTabId: null, win })
       }
     )
@@ -5600,7 +5607,8 @@ export class Menus {
       },
       { type: 'separator' },
       {
-        label: 'Language Settings…',
+        // The settings page's row, a destination: no ellipsis (P-36).
+        label: S.menu('languages.open'),
         click: () => void this.browser.pages.open('settings', 'languages', win)
       }
     ]

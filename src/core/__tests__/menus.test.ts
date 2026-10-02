@@ -3018,7 +3018,7 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Inspect Element').action).toBe('devtools.inspector')
   })
 
-  it('on the new tab page leads with the page’s own rows (NTP-18, NTP-22): Hide Greeting / Hide Shortcuts for the sections it shows, Restore Default Shortcuts with the grid, Customise New Tab Page…', () => {
+  it('on the new tab page leads with the page’s own rows (NTP-18, NTP-22): Hide Greeting / Hide Shortcuts for the sections it shows, Restore Default Shortcuts with the grid, Customise New Tab Page', () => {
     const h = harness(DESKTOP)
     h.browser.handleCommand(h.win, 'settings.update', { newTab: { preset: 'inspirational' } })
     h.browser.handleCommand(h.win, 'newtab.open', undefined)
@@ -3031,7 +3031,7 @@ describe('the page context menu', () => {
       'Hide Greeting',
       'Hide Shortcuts',
       'Restore Default Shortcuts',
-      'Customise New Tab Page…',
+      'Customise New Tab Page',
       '-'
     ])
     // A fresh profile's grid: the restore has nothing to do and its row is greyed.
@@ -3059,11 +3059,11 @@ describe('the page context menu', () => {
     expect(menu().slice(0, 4)).toEqual([
       'Hide Shortcuts',
       'Restore Default Shortcuts',
-      'Customise New Tab Page…',
+      'Customise New Tab Page',
       '-'
     ])
     item(h.shown(), 'Hide Shortcuts').click?.()
-    expect(menu().slice(0, 2)).toEqual(['Customise New Tab Page…', '-'])
+    expect(menu().slice(0, 2)).toEqual(['Customise New Tab Page', '-'])
     // The private page has neither section and no rows of its own.
     const priv = h.browser.openWindow('private')!
     const privTab = h.browser.tabs.activeTabFor(priv)!
@@ -5221,7 +5221,7 @@ describe('the chrome context menus', () => {
       'Select All',
       '-',
       'Always Show Full URLs',
-      'Manage Search Engines…'
+      'Manage Search Engines'
     ])
     h.sent.length = 0
     h.click('Paste and Go')
@@ -5286,15 +5286,15 @@ describe('the chrome context menus', () => {
       'Paste and Go',
       '-',
       'Always Show Full URLs',
-      'Manage Search Engines…'
+      'Manage Search Engines'
     ])
     expect(item(h.shown(), 'Copy').action).toBe('tab.copyUrl')
   })
 
-  it('routes Manage Search Engines… through page.open: a Settings tab where the host has page tabs, the overlay elsewhere', async () => {
+  it('routes Manage Search Engines through page.open: a Settings tab where the host has page tabs, the overlay elsewhere', async () => {
     const phone = pageHarness(ANDROID)
     await show(phone, chromeParams({ target: 'urlpill', tabId: phone.tabId }))
-    phone.click('Manage Search Engines…')
+    phone.click('Manage Search Engines')
     const active = phone.browser.tabs.activeTabFor(phone.win)
     expect(active?.url).toBe('zen://settings/search')
     expect(phone.sent).not.toContain('overlay.open')
@@ -5302,7 +5302,7 @@ describe('the chrome context menus', () => {
     const desktop = pageHarness(DESKTOP)
     await show(desktop, chromeParams({ target: 'urlpill', tabId: desktop.tabId }))
     desktop.sent.length = 0
-    desktop.click('Manage Search Engines…')
+    desktop.click('Manage Search Engines')
     expect(desktop.sent).toContain('overlay.open')
     expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
   })
@@ -5317,7 +5317,7 @@ describe('the chrome context menus', () => {
       'Paste and Search',
       '-',
       'Always Show Full URLs',
-      'Manage Search Engines…'
+      'Manage Search Engines'
     ])
     let toggle = item(h.shown(), 'Always Show Full URLs')
     expect(toggle.type).toBe('checkbox')
@@ -5379,16 +5379,16 @@ describe('the chrome context menus', () => {
   describe("the pinned toolbar button's menu (context-menus-112, W8-1)", () => {
     const CUSTOMISE = 'zen://settings/look?row=customize-toolbar&open=customize-toolbar'
 
-    it('offers Chrome’s two rows in Chrome’s order on a desktop control: Unpin folds the control by settings.update, Pin (the folded state’s row) pins it back, Customise Toolbar… opens Settings › Look and Feel on the row with its form', async () => {
+    it('offers Chrome’s two rows in Chrome’s order on a desktop control: Unpin folds the control by settings.update, Pin (the folded state’s row) pins it back, Customise Toolbar opens Settings › Look and Feel on the row with its form', async () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const reader = chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'reader' })
-      expect(await show(h, reader)).toEqual(['Unpin', 'Customise Toolbar…'])
+      expect(await show(h, reader)).toEqual(['Unpin', 'Customise Toolbar'])
       // The words are Chrome's: no "from Toolbar" (that is the extension button's menu, #104)
       // and no ellipsis on a row that acts; the ellipsis on the dialog opener alone (§9.1).
       expect(h.shown().map((i) => i.type ?? 'normal')).toEqual(['normal', 'normal'])
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ reader: false })
-      expect(await show(h, reader)).toEqual(['Pin', 'Customise Toolbar…'])
+      expect(await show(h, reader)).toEqual(['Pin', 'Customise Toolbar'])
       h.click('Pin')
       expect(h.browser.state.settings.toolbarPins).toEqual({})
       // Another control's pin is its own key; the rest of the record stands.
@@ -5397,7 +5397,7 @@ describe('the chrome context menus', () => {
       await show(h, chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'translate' }))
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ media: false, translate: false })
-      h.click('Customise Toolbar…')
+      h.click('Customise Toolbar')
       expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(CUSTOMISE)
     })
 
@@ -5409,7 +5409,7 @@ describe('the chrome context menus', () => {
         h,
         chromeParams({ target: 'star', tabId: h.tabId, control: 'star' })
       )
-      expect(marked).toEqual([...plain, '-', 'Unpin', 'Customise Toolbar…'])
+      expect(marked).toEqual([...plain, '-', 'Unpin', 'Customise Toolbar'])
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ star: false })
     })
@@ -5433,10 +5433,10 @@ describe('the chrome context menus', () => {
     it('opens on the Install-app chip as on the other pinned controls (W8-6, the seam with W8-1): Unpin folds `install`, Pin brings it back, and the host’s read of the chip’s marks reaches the same rows', async () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const install = chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'install' })
-      expect(await show(h, install)).toEqual(['Unpin', 'Customise Toolbar…'])
+      expect(await show(h, install)).toEqual(['Unpin', 'Customise Toolbar'])
       h.click('Unpin')
       expect(h.browser.state.settings.toolbarPins).toEqual({ install: false })
-      expect(await show(h, install)).toEqual(['Pin', 'Customise Toolbar…'])
+      expect(await show(h, install)).toEqual(['Pin', 'Customise Toolbar'])
       h.click('Pin')
       expect(h.browser.state.settings.toolbarPins).toEqual({})
       // The chip's marks are `toolbarMenuMarks('install')`'s – `data-zen-menu="toolbar"` with
@@ -5446,7 +5446,7 @@ describe('the chrome context menus', () => {
       })
       marked.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()
-      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
+      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar'])
     })
 
     it('reaches the core from the host’s read of the chrome document: the control under the pointer (`data-zen-menu-control`), an unknown one reading as none', async () => {
@@ -5455,7 +5455,7 @@ describe('the chrome context menus', () => {
       })
       marked.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()
-      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
+      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar'])
       marked.click('Unpin')
       expect(marked.browser.state.settings.toolbarPins).toEqual({ translate: false })
       // Home (W8-3, settings-32) is a pin too – the one folded by default, so its rows read Pin
@@ -5465,7 +5465,7 @@ describe('the chrome context menus', () => {
       })
       home.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()
-      expect(topLabels(home.shown())).toEqual(['Pin', 'Customise Toolbar…'])
+      expect(topLabels(home.shown())).toEqual(['Pin', 'Customise Toolbar'])
       home.click('Pin')
       expect(home.browser.state.settings.toolbarPins).toEqual({ home: true })
       // A control that is no pin – the Share chip, a hover-only utility (W8-6) – reads as none.
