@@ -16,9 +16,12 @@ import type { Entry } from './index'
  * were (Select Next Tab, Open Location…, Actual Size, Show Full History, Inspect Element,
  * Downloads). Zenium's own acts keep the house label in that bar; View says "Hard Reload".
  *
- * Acts whose pair a later PR rules keep today's words here, named at the entry: `addons.open`
- * (P-6, PR-2b), `translate.open` (P-33, PR-2b), `tab.freezeOthers` and `resources.trim` (P-18,
- * PR-5). `bookmarks.open` and `history.open`, the palette's alias ids for `bookmark.library` and
+ * The app menu (PR-2b) resolved the acts it shares with the tables: `addons.open` is "Extensions
+ * and Mods" (P-6, Q2), `translate.open` asks (P-33), `space.new` is the menus' "New Space…" over
+ * the key table's "Create New Space" (one act, one label; the dialog asks), `resources.open` is
+ * the settings row's "Resource Settings" (P-36). Acts whose pair a later PR rules keep today's
+ * words here, named at the entry: `tab.freezeOthers` and `resources.trim` (P-18, PR-5).
+ * `bookmarks.open` and `history.open`, the palette's alias ids for `bookmark.library` and
  * `history.sidebar`, have no entry: their rows read the act they alias.
  */
 export const ACTIONS = {
@@ -48,7 +51,9 @@ export const ACTIONS = {
   'space.next': { menu: 'Next Space', sentence: 'Jump to the next Space' },
   'space.prev': { menu: 'Previous Space', sentence: 'Jump to the previous Space' },
   'space.closeUnpinned': { menu: 'Close Unpinned Tabs' },
-  'space.new': { menu: 'Create New Space' },
+  // The space dialog follows, so the ask: the app menu's and the mac Window menu's words, which
+  // the key table and the palette ("Create New Space") now share (PR-2b; no §A pair names it).
+  'space.new': { menu: 'New Space', ask: true },
 
   // --- Split view -------------------------------------------------------------------------------
   'split.grid': { menu: 'Split View Grid' },
@@ -170,7 +175,8 @@ export const ACTIONS = {
   'page.emailLink': { menu: 'Email Page Link', ask: true },
   'settings.open': { menu: 'Settings', os: { darwin: { menu: 'Settings', ask: true } } },
   'theme.open': { menu: 'Change Theme', ask: true },
-  'translate.open': { menu: 'Translate Page' },
+  // The translate bar asks (P-33; Chrome's "Translate…").
+  'translate.open': { menu: 'Translate Page', ask: true },
 
   // --- Zoom -------------------------------------------------------------------------------------
   'zoom.in': { menu: 'Zoom In' },
@@ -199,12 +205,16 @@ export const ACTIONS = {
   'devtools.console': { menu: 'JavaScript Console' },
   'devtools.browserConsole': { menu: 'Browser Console' },
   'tasks.open': { menu: 'Task Manager' },
-  'addons.open': { menu: 'Add-ons and Themes' },
+  // §9.10's name for the page that holds the extensions and the mods (P-6), the row and the
+  // page title alike – the extension's own menu and the puzzle panel too (Q2).
+  'addons.open': { menu: 'Extensions and Mods' },
   'help.reportIssue': { menu: 'Report an Issue', ask: true },
   'tab.freezeOthers': { menu: 'Freeze Other Tabs' },
   'tab.wakeAll': { menu: 'Wake All Tabs' },
   'resources.trim': { menu: 'Free Up Memory Now' },
-  'resources.open': { menu: 'Resource Budgets' },
+  // Settings › Resources: the app menu's row (P-36, a destination); the palette's "Resource
+  // Budgets" followed it.
+  'resources.open': { menu: 'Resource Settings' },
   'passwords.open': { menu: 'Password Manager' },
   'search.manageEngines': { menu: 'Manage Search Engines' }
 } satisfies Partial<Record<ActId, Entry>>

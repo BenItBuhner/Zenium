@@ -411,7 +411,7 @@ export function applicationMenu(browser: Browser): Template {
     count > 0
       ? [
           {
-            label: count > 1 ? `Close ${count} Private Windows` : 'Close Private Window',
+            label: S.menu('window.closePrivate', { n: count }),
             click: withWindow((w) => void browser.closePrivateWindows(w))
           }
         ]
@@ -444,9 +444,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: S.menu('space.next'), action: 'space.next', enabled: Boolean(win) && !local },
       { label: S.menu('space.prev'), action: 'space.prev', enabled: Boolean(win) && !local },
-      // The app menu's words for `space.new`, whose key table row says "Create New Space": the
-      // act's two labels resolve with the app menu (PR-2b), and the row keeps its words till then.
-      { label: 'New Space…', action: 'space.new', enabled: !local },
+      { label: S.menu('space.new'), action: 'space.new', enabled: !local },
       { type: 'separator' },
       { label: S.menu('downloads.open', { os }), action: 'downloads.open' },
       ...(state.capabilities.extensions
@@ -485,7 +483,7 @@ export function applicationMenu(browser: Browser): Template {
         click: () => browser.platform.shell.openExternal(ISSUES_URL)
       },
       {
-        label: 'Report an Unsafe Site…',
+        label: S.menu('help.reportUnsafeSite'),
         enabled: reportUnsafeSiteUrl(active?.url) !== null,
         click: withWindow((w) => void openReportUnsafeSite(browser, w))
       }

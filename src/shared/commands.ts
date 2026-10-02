@@ -47,7 +47,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   {
     id: 'new-space',
     label: S.menu('space.new'),
-    keywords: ['space', 'workspace', 'new'],
+    keywords: ['space', 'workspace', 'new', 'create'],
     action: 'space.new'
   },
   {
@@ -390,7 +390,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   {
     id: 'addons',
     label: S.menu('addons.open'),
-    keywords: ['addons', 'extensions', 'mods'],
+    keywords: ['addons', 'add-ons', 'extensions', 'mods', 'themes'],
     action: 'addons.open',
     requires: 'extensions'
   },

@@ -59,9 +59,9 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Select All', 'A'],
   ['Add to Dictionary', 'A'],
   ['Spell Check', 'S'],
+  // One face each since the string table (PR-2b): Language Settings opens a settings page, so
+  // no ellipsis; Translate Page… asks, so the ellipsis on every surface.
   ['Language Settings', 'L'],
-  ['Language Settings…', 'L'],
-  ['Translate Page', 'T'],
   ['Translate Page…', 'T'],
   ['Translate Selection', 'T'],
   // The strip's empty area and the window (IDS_NEW_TAB, IDS_RESTORE_TAB, IDS_NAME_WINDOW,
@@ -111,7 +111,7 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   // IDS_REPORT_UNSAFE_SITE "Report an &unsafe site..." (Help ▸'s last row, W8-1).
   ['Report an Unsafe Site…', 'u'],
   ['Delete Browsing Data…', 'D'],
-  ['Manage Search Engines…', 'M'],
+  ['Manage Search Engines', 'M'],
   ['Paste and Go', 's'],
   ['Paste and Search', 's'],
   ['Edit', 'E'],

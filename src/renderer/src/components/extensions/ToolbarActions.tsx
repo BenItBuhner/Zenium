@@ -1,6 +1,7 @@
 import type { JSX, RefObject } from 'react'
 import { useRef, useState } from 'react'
 import { Pin, PinOff, Puzzle, SlidersHorizontal } from 'lucide-react'
+import { S } from '@shared/strings'
 import type { ExtensionInfo, UIState } from '@shared/types'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { usePopover } from '@renderer/hooks/usePopover'
@@ -164,8 +165,10 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
  * The puzzle-piece popover (§9.20): 400 wide, flush under the toolbar's bar and aligned with
  * the button (`placePopover`, through the chrome layer, which flips it above the bar when there
  * is more room there), a title block (§9.23) over rows of 36 – icon, name and a pin button
- * (§9.21) – then Manage Extensions behind a hairline. Past 60% of the window's height the rows
- * scroll under the title. Focus lands on the first row and returns to the button on Escape
+ * (§9.21) – then the way to the Extensions and Mods page behind a hairline, in the page's own
+ * name (the string table's `addons.open`: one label per act, the Lead's Q2 over Chrome's
+ * "Manage Extensions"). Past 60% of the window's height the rows scroll under the title. Focus
+ * lands on the first row and returns to the button on Escape
  * (§9.22). The layer's light dismiss closes it otherwise (§9.20 amended): a press anywhere
  * outside it, consumed; the button's own press, which hands the button the focus; a scroll, a
  * resize, another popover opening.
@@ -255,7 +258,7 @@ function ExtensionsPanel({
             }}
           >
             <SlidersHorizontal aria-hidden />
-            <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
+            <span className="min-w-0 flex-1 truncate">{S.menu('addons.open')}</span>
           </button>
         </div>
       </div>

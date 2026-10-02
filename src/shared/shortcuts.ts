@@ -1092,7 +1092,7 @@ const DEFS: Def[] = [
   // WebView's inspector is the desktop Chrome's remote one): the group's rows are unsupported
   // there until it has one – the chords route and say so, the Settings rows are disabled, the
   // system's shortcut helper leaves them out. Task Manager below is the desktop layout's by
-  // `layouts` already; Add-ons and Themes opens a page the tablet has.
+  // `layouts` already; Extensions and Mods opens a page the tablet has.
   {
     id: 'key_toggleToolbox',
     action: 'devtools.toggle',

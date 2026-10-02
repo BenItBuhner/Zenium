@@ -525,7 +525,7 @@ const OPENINGS: Opening[] = [
     }
   },
   {
-    name: 'toolbar: a pinned control’s button (Unpin, Customise Toolbar…; W8-1)',
+    name: 'toolbar: a pinned control’s button (Unpin, Customise Toolbar; W8-1)',
     open: (h) =>
       h.browser.menus.showChromeContextMenu(
         chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'translate' }),
@@ -533,7 +533,7 @@ const OPENINGS: Opening[] = [
       )
   },
   {
-    name: 'toolbar: a control folded away, asked from the keyboard (Pin, Customise Toolbar…)',
+    name: 'toolbar: a control folded away, asked from the keyboard (Pin, Customise Toolbar)',
     open: (h) => {
       h.browser.handleCommand(h.win, 'settings.update', { toolbarPins: { media: false } })
       return h.browser.menus.showChromeContextMenu(

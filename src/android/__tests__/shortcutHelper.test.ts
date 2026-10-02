@@ -28,13 +28,14 @@ function chromesRows(): Set<string> {
 
 /**
  * Chrome's register (§9.1 v2): the first word capitalised, the rest lowercase but for a coined
- * sense, a proper noun or an acronym, which keeps its capitals (Glance, Space, URL, Markdown,
- * JavaScript, the hyphenated Picture-in-Picture); a common noun goes lower-case – compact mode,
- * reader view, split view, bookmarks bar (P-45); no row ends in an ellipsis (Chrome's helper
- * rows carry none – the Settings label keeps its own). Checked independently of the string
- * table's `sentence()`, so the two agree on the register rather than one repeating the other.
+ * sense, a proper noun or an acronym, which keeps its capitals (Glance, Space, Mods, URL,
+ * Markdown, JavaScript, the hyphenated Picture-in-Picture); a common noun goes lower-case –
+ * compact mode, reader view, split view, bookmarks bar (P-45); no row ends in an ellipsis
+ * (Chrome's helper rows carry none – the Settings label keeps its own). Checked independently of
+ * the string table's `sentence()`, so the two agree on the register rather than one repeating
+ * the other.
  */
-const KEEPS_CAPITALS = new Set(['Glance', 'Space', 'URL', 'Markdown', 'JavaScript'])
+const KEEPS_CAPITALS = new Set(['Glance', 'Space', 'Mods', 'URL', 'Markdown', 'JavaScript'])
 function isSentenceForm(words: string): boolean {
   if (/…|\.\.\./.test(words)) return false
   if (/\bspace\b/.test(words)) return false
@@ -183,7 +184,9 @@ describe('helperShortcuts (TABLET-20)', () => {
     expect(words('split.grid')).toBe('Split view grid')
     expect(words('split.vertical')).toBe('Split view vertical')
     expect(words('split.horizontal')).toBe('Split view horizontal')
-    expect(words('space.new')).toBe('Create new Space')
+    // PR-2b resolved `space.new` to the menus' "New Space…": the sheet reads it without the ask.
+    expect(label('space.new')).toBe('New Space…')
+    expect(words('space.new')).toBe('New Space')
     expect(words('space.next')).toBe('Jump to the next Space')
     expect(words('space.prev')).toBe('Jump to the previous Space')
     // Chrome's verb-first parallels (the coordinator's ruling on the six noun-phrase rows).
@@ -202,7 +205,8 @@ describe('helperShortcuts (TABLET-20)', () => {
       'page.openFile',
       'page.print',
       'page.emailLink',
-      'capture.start'
+      'capture.start',
+      'space.new'
     ]) {
       expect(label(action), action).toMatch(/…$/)
     }

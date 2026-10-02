@@ -741,8 +741,9 @@ export class Menus {
    * while the grid is shown – Chrome's second link on the removal toast, which v2 §9.33 gives
    * one action, so the restore lives here, greyed when the grid is a fresh profile's already,
    * with the page's Undo toast in place of a confirmation (§10.5); and "Customise New Tab
-   * Page…", the Customise button's route. A private page has neither section (its explainer
-   * stands where the grid would) and gets no rows.
+   * Page", the Customise button's route – a settings page, a destination with no ask (P-36). A
+   * private page has neither section (its explainer stands where the grid would) and gets no
+   * rows.
    */
   private newTabPageGroup(tab: Tab, win: ZenWindow): Template {
     if (tab.containerId === PRIVATE_CONTAINER_ID) return []
@@ -760,7 +761,7 @@ export class Menus {
       })
     }
     rows.push({
-      label: 'Customise New Tab Page…',
+      label: S.menu('newTab.customise'),
       click: () => this.browser.pages.open('settings', 'newtab', win, tab.id)
     })
     return rows
@@ -1229,7 +1230,7 @@ export class Menus {
         },
         { type: 'separator' },
         {
-          label: 'Language Settings',
+          label: S.menu('languages.open'),
           click: () => void this.browser.pages.open('settings', 'languages', win)
         }
       ]
@@ -1608,8 +1609,9 @@ export class Menus {
         click: () => void view.executeJavaScript('document.exitFullscreen()').catch(() => null)
       })
     } else if (win.host.isFullScreen()) {
+      // The row knows the state: the pair's on side (P-22).
       items.push({
-        label: 'Exit Full Screen',
+        label: S.menu('page.fullscreen', { state: true }),
         action: 'page.fullscreen',
         click: () => this.browser.toggleFullscreen(win)
       })
@@ -1731,10 +1733,11 @@ export class Menus {
         action: 'page.readerMode',
         click: () => reader.toggle(tab.id, win)
       },
+      // The translate bar asks (P-33): the entry's ellipsis, as the app menu's row has it.
       ...(translate.available
         ? [
             {
-              label: 'Translate Page',
+              label: S.menu('translate.open'),
               enabled: translate.canTranslate(tab.id),
               click: () => void translate.open(tab.id, win)
             }
@@ -1839,8 +1842,9 @@ export class Menus {
       }
       groups.push([
         this.fullUrlsItem(win),
+        // Settings › Search, a destination (P-36): the palette's words, no ask.
         {
-          label: 'Manage Search Engines…',
+          label: S.menu('search.manageEngines'),
           click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
@@ -1893,10 +1897,11 @@ export class Menus {
    * folded away has no button to right-click, so Unpin is the row met; Pin stands for the
    * state all the same) – writing the control's key of `Settings.toolbarPins` as the Customise
    * toolbar dialog's row does, the control folding into the app menu; then "Customise
-   * Toolbar…", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
-   * on the row and opens its form) – the ellipsis because Zenium's surface is a dialog where
-   * Chrome's is a side panel (§9.1). Forward is not among them: its right-click is the stack's
-   * menu, as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
+   * Toolbar", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
+   * on the row and opens its form) – no ellipsis: a row that opens a settings page is a
+   * destination, not an ask (P-36, the Lead's ruling), though Zenium's surface is a dialog where
+   * Chrome's is a side panel. Forward is not among them: its right-click is the stack's menu,
+   * as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
    * Settings' "Show forward button" switch). The extension buttons keep their own menu (#104).
    */
   toolbarButtonItems(control: ToolbarControl, win: ZenWindow): Template {
@@ -1909,7 +1914,7 @@ export class Menus {
         click: () => this.browser.handleCommand(win, 'settings.update', patch)
       },
       {
-        label: 'Customise Toolbar…',
+        label: S.menu('toolbar.customise'),
         click: () =>
           void this.browser.pages.open('settings', 'look', win, undefined, {
             query: { row: CUSTOMIZE_TOOLBAR_ROW, open: CUSTOMIZE_TOOLBAR_ROW }
@@ -2092,8 +2097,10 @@ export class Menus {
       },
       { type: 'separator' },
       { label: 'Remove from Zenium', click: () => void extensions.remove(id) },
+      // The page's own name (the string table's `addons.open`, one label per act – the Lead's
+      // Q2 over Chrome's "Manage extensions" in this seat).
       {
-        label: 'Manage Extensions',
+        label: S.menu('addons.open'),
         click: () => this.browser.actions.run('addons.open', { sourceTabId: null, win })
       }
     )
@@ -2997,7 +3004,7 @@ export class Menus {
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               {
-                label: 'New Space…',
+                label: S.menu('space.new'),
                 action: 'space.new' as const,
                 click: () => this.browser.emit('space.new', undefined, win)
               },
@@ -4259,16 +4266,20 @@ export class Menus {
     this.markUpdateMenuOpened()
 
     // --- The items, each once; the two layouts below put them in their order. ----------------
+    // Every row's words are the string table's (§9 item 10, the D7 proposal's PR-2b): a row
+    // that names an act reads `S.menu(act)`, so the ⋯ menu, the key table, the palette and the
+    // mac menu bar say the same of it, and the ask's ellipsis is the entry's flag, never typed.
     const newTab: MenuItemTemplate = {
-      label: 'New Tab',
+      label: S.menu('tab.new'),
       action: 'tab.new',
       click: () => this.browser.openNewTab(win)
     }
     // Chrome's tab search (tabs-17): a popover of the sidebar layouts, and the desktop's one
     // pointer way into it (the chord and the macOS menu bar are the others), so it keeps a row
-    // in the tabs group; the phone's tab switcher searches on its own.
+    // in the tabs group; the phone's tab switcher searches on its own. No ellipsis (P-10): the
+    // popover is the act itself, not an ask.
     const searchTabs: MenuItemTemplate = {
-      label: 'Search Tabs…',
+      label: S.menu('tab.search'),
       action: 'tab.search',
       click: () => this.browser.emit('tabsearch.open', undefined, win)
     }
@@ -4279,29 +4290,29 @@ export class Menus {
     const privateTabs = when(
       caps.privateTabs,
       {
-        label: 'New Private Tab',
+        label: S.menu('tab.newPrivate'),
         key: 'row.newPrivateTab',
         click: () => tabs.newPrivateTab(undefined, win)
       },
       {
-        label: 'Close Private Tabs',
+        label: S.menu('tab.closePrivate'),
         key: 'row.closePrivateTabs',
         enabled: tabs.privateTabs().length > 0,
         click: () => tabs.closePrivateTabs(win)
       }
     )
     const newSpace = when(!local, {
-      label: 'New Space…',
+      label: S.menu('space.new'),
       action: 'space.new',
       click: () => this.browser.emit('space.new', undefined, win)
     })
     const newWindow = when(caps.windows, {
-      label: 'New Window',
+      label: S.menu('window.new'),
       action: 'window.new',
       click: () => this.browser.openWindow('synced', win)
     })
     const newBlankWindow = when(caps.windows, {
-      label: 'New Blank Window',
+      label: S.menu('window.newUnsynced'),
       action: 'window.newUnsynced',
       click: () => this.browser.openWindow('unsynced', win)
     })
@@ -4312,29 +4323,29 @@ export class Menus {
     // an app window has no tab strip to duplicate: the row is left out, as `when`'s rule has it
     // (an app window's menu is `showWebAppMenu`'s in any case).
     const duplicateWindow = when(caps.windows && win.chrome === 'full', {
-      label: 'Duplicate Window',
+      label: S.menu('window.duplicate'),
       action: 'window.duplicate',
       click: () => void this.browser.duplicateWindow(win)
     })
     // Chrome's More tools › Name window… (shortcuts-menus-121): the desktop's, whose OS title
     // bar and window switcher read the name; a tablet's one window has neither.
     const nameWindow = desktop({
-      label: 'Name Window…',
+      label: S.menu('window.name'),
       action: 'window.name',
       click: () => this.browser.emit('windowName.open', undefined, win)
     })
     const newPrivateWindow = when(caps.windows, {
-      label: 'New Private Window',
+      label: S.menu('window.newPrivate'),
       action: 'window.newPrivate',
       click: () => this.browser.openWindow('private', win)
     })
     // A private window's menu closes the window group with Chrome's "Close Incognito windows"
     // (profiles-25; design language v2 §6, §9.19): Firefox's counted verb – "Close Private
-    // Window" for one, "Close 2 Private Windows" for more – every private window, the private
-    // session ending with the last. A regular window's menu is as it was.
+    // Window" for one, "Close 2 Private Windows" for more (the entry's count) – every private
+    // window, the private session ending with the last. A regular window's menu is as it was.
     const count = this.browser.allWindows().filter((w) => w.isPrivate).length
     const closePrivateWindows = when(win.isPrivate, {
-      label: count > 1 ? `Close ${count} Private Windows` : 'Close Private Window',
+      label: S.menu('window.closePrivate', { n: count }),
       click: () => void this.browser.closePrivateWindows(win)
     })
     const bookmarks: MenuItemTemplate = {
@@ -4349,13 +4360,13 @@ export class Menus {
           click: () => active && this.browser.toggleBookmark(active.id, win)
         }),
         {
-          label: 'Bookmark All Tabs…',
+          label: S.menu('bookmark.allTabs'),
           action: 'bookmark.allTabs',
           click: () => this.browser.bookmarkTabs(win)
         },
         separator,
         {
-          label: 'Show Bookmarks',
+          label: S.menu('bookmark.sidebar'),
           action: 'bookmark.sidebar',
           click: () => this.browser.pages.open('bookmarks', undefined, win)
         },
@@ -4407,7 +4418,13 @@ export class Menus {
         )
       ]
     }
-    /** The History page (Ctrl+H): the phone's row, the head of the sidebar layouts' submenu. */
+    /**
+     * The History page (Ctrl+H): the phone's row, the head of the sidebar layouts' submenu. The
+     * two library rows keep Chrome's app-menu words ("Show Full History", "Downloads" – the mac
+     * bar's faces of `history.sidebar` and `downloads.open`) where the key table and the
+     * palette say "Show History" and "Show Downloads": no D7 pair names the two, so the rows
+     * wait on the history and downloads family (PR-8; the sweep's PENDING).
+     */
     const showHistory = (label: string): MenuItemTemplate => ({
       label,
       action: 'history.sidebar',
@@ -4467,8 +4484,10 @@ export class Menus {
       label: 'Extensions',
       click: () => this.browser.emit('extensions.open', undefined, win)
     })
+    // §9.10's page of the extensions and the mods (P-6): the row, the page title and the
+    // extension's own menu read the one entry.
     const addons = when(caps.extensions, {
-      label: 'Add-ons and Themes',
+      label: S.menu('addons.open'),
       action: 'addons.open',
       click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
     })
@@ -4476,25 +4495,27 @@ export class Menus {
     // of More tools: the library group's last row on the sidebar layouts, the dialog the History
     // page's button and Settings › Privacy open. The phone's form is the Settings sheet.
     const deleteBrowsingData = sidebar({
-      label: 'Delete Browsing Data…',
+      label: S.menu('privacy.clearBrowsingData'),
       action: 'privacy.clearBrowsingData',
       click: () => this.browser.actions.run('privacy.clearBrowsingData', { sourceTabId: null, win })
     })
     // The desktop's alone: Zen's compact mode is the hover-revealed sidebar, which a finger
     // cannot reveal; the tablet's sidebar collapses to its rail from the toolbar.
     const compactMode = desktop({
-      label: 'Compact Mode',
+      label: S.menu('compact.toggle'),
       type: 'checkbox',
       action: 'compact.toggle',
       checked: win.compactEnabled,
       click: () => this.browser.toggleCompactMode(win)
     })
     const changeTheme = when(!local, {
-      label: 'Change Theme…',
+      label: S.menu('theme.open'),
       click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
     })
+    // A checkbox row, as Compact Mode beside it: the noun (P-22, "Full Screen"), the check
+    // carrying the state where the page menu's row says "Exit Full Screen" outright.
     const fullscreen: MenuItemTemplate = {
-      label: 'Fullscreen',
+      label: S.menu('page.fullscreen'),
       type: 'checkbox',
       action: 'page.fullscreen',
       checked: win.host.isFullScreen(),
@@ -4519,7 +4540,7 @@ export class Menus {
       active?.splitGroupId ? state.model.splitGroups[active.splitGroupId] : undefined
     )
     const findInPage: MenuItemTemplate = {
-      label: 'Find in Page…',
+      label: S.menu('find.open'),
       action: 'find.open',
       enabled: Boolean(active),
       click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
@@ -4564,7 +4585,7 @@ export class Menus {
       ]
     }
     const readerView: MenuItemTemplate = {
-      label: 'Reader View',
+      label: S.menu('page.readerMode'),
       action: 'page.readerMode',
       enabled: Boolean(active) && this.browser.reader.canRead(active),
       click: () => active && this.browser.reader.toggle(active.id, win)
@@ -4574,7 +4595,7 @@ export class Menus {
     // the sheet (a phone): the one home of the reader's controls, the document carrying no
     // toolbar of its own (§10.1). On a phone, whose pill has no chip, this is the way in.
     const textPreferences = when(Boolean(active) && this.browser.reader.isReaderUrl(active!.url), {
-      label: 'Text Preferences…',
+      label: S.menu('reader.textPreferences'),
       click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
     })
     // Chrome's "Listen to this page" (A11Y-06; Title Case like the menu's other items): on
@@ -4583,15 +4604,18 @@ export class Menus {
     // document, which the core then reads as `source: 'reader'`). The player it docks is
     // the one component on both hosts, in the frame's shape on each (§9.32).
     const listen = when(this.browser.readAloud.available, {
-      label: 'Listen to This Page',
+      label: S.menu('readAloud.start'),
       enabled: Boolean(active) && this.browser.reader.canRead(active),
       click: () => active && void this.browser.readAloud.start({ tabId: active.id })
     })
+    // The translate bar asks (P-33): the entry's ellipsis, here as on the page's own menu.
     const translate = when(this.browser.translate.available, {
-      label: 'Translate Page…',
+      label: S.menu('translate.open'),
       enabled: Boolean(active) && this.browser.translate.canTranslate(active!.id),
       click: () => active && void this.browser.translate.open(active.id, win)
     })
+    // `share.open`'s entry is the copy and share family's (PR-3): the row keeps its words
+    // till then (the sweep's PENDING).
     const share = when(caps.share, {
       label: 'Share…',
       enabled: Boolean(active) && /^https?:/i.test(active!.url),
@@ -4617,7 +4641,7 @@ export class Menus {
     )
     const openInApp = sidebar(...this.openAppItems(active, win))
     const print = when(caps.print, {
-      label: 'Print…',
+      label: S.menu('page.printPreview'),
       action: 'page.printPreview',
       enabled: Boolean(active),
       click: () =>
@@ -4628,14 +4652,14 @@ export class Menus {
     // a host that has them (`savePageItem`).
     const savePageAs = this.savePageItem(active, win)
     const screenshot: MenuItemTemplate = {
-      label: 'Take Screenshot',
+      label: S.menu('page.screenshot'),
       action: 'page.screenshot',
       enabled: Boolean(active),
       click: () =>
         active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
     }
     const captureFullPage: MenuItemTemplate = {
-      label: 'Capture Full Page',
+      label: S.menu('page.captureFullPage'),
       action: 'page.captureFullPage',
       enabled: Boolean(active),
       click: () =>
@@ -4644,7 +4668,7 @@ export class Menus {
     // Edge's "Web capture" row of its page group (Print, Web capture, Share): the desktop's
     // overlay over the dimmed page; the tablet's menu keeps the two captures in More Tools.
     const webCapture = desktop({
-      label: 'Screenshot…',
+      label: S.menu('capture.start'),
       action: 'capture.start',
       enabled: Boolean(active),
       click: () =>
@@ -4664,12 +4688,17 @@ export class Menus {
           enabled: false
         },
         separator,
-        { label: 'Free Up Memory Now', click: () => void this.browser.governor.trim() },
-        { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
-        { label: 'Wake All Tabs', click: () => void this.browser.governor.wakeAll() },
+        // The memory rows keep today's words in the table till the memory family rules P-18
+        // (PR-5); the settings row is a destination, no ask (P-36).
+        { label: S.menu('resources.trim'), click: () => void this.browser.governor.trim() },
+        {
+          label: S.menu('tab.freezeOthers'),
+          click: () => void this.browser.governor.freezeOthers()
+        },
+        { label: S.menu('tab.wakeAll'), click: () => void this.browser.governor.wakeAll() },
         separator,
         {
-          label: 'Resource Settings…',
+          label: S.menu('resources.open'),
           click: () => void this.browser.pages.open('settings', 'resources', win)
         }
       ]
@@ -4692,7 +4721,7 @@ export class Menus {
       click: () => this.browser.updates.openWhatsNew(win)
     }
     const settings: MenuItemTemplate = {
-      label: 'Settings',
+      label: S.menu('settings.open'),
       action: 'settings.open',
       click: () => void this.browser.pages.open('settings', undefined, win)
     }
@@ -4700,12 +4729,12 @@ export class Menus {
     // in its own window (Shift+Esc; `Browser.openTaskManager`, W5-18), the row before Developer
     // tools as Chrome seats it.
     const taskManager = desktop({
-      label: 'Task Manager',
+      label: S.menu('tasks.open'),
       action: 'tasks.open',
       click: () => this.browser.actions.run('tasks.open', { sourceTabId: null, win })
     })
     const devtools = when(caps.devtools, {
-      label: 'Developer Tools',
+      label: S.menu('devtools.toggle'),
       action: 'devtools.toggle',
       enabled: Boolean(active),
       click: () => active && tabs.toggleDevtools(active.id)
@@ -4749,14 +4778,14 @@ export class Menus {
     // bar's does (§9.17; Chrome gates nothing on the scheme: its dialog lets the address be
     // typed). Its click reads the page again and opens nothing over one the form cannot take.
     const reportUnsafeSite: MenuItemTemplate = {
-      label: 'Report an Unsafe Site…',
+      label: S.menu('help.reportUnsafeSite'),
       enabled: reportUnsafeSiteUrl(active?.url) !== null,
       click: () => void openReportUnsafeSite(this.browser, win)
     }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
     const quit = when(caps.windows, {
-      label: 'Quit',
+      label: S.menu('app.quit'),
       action: 'app.quit',
       click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
     })
@@ -5001,7 +5030,7 @@ export class Menus {
             { label: 'Zenium Help', click: () => openHelp(this.browser, win) },
             keyboardShortcuts,
             {
-              label: 'Report an Issue…',
+              label: S.menu('help.reportIssue'),
               action: 'help.reportIssue',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
             },
@@ -5578,7 +5607,8 @@ export class Menus {
       },
       { type: 'separator' },
       {
-        label: 'Language Settings…',
+        // The settings page's row, a destination: no ellipsis (P-36).
+        label: S.menu('languages.open'),
         click: () => void this.browser.pages.open('settings', 'languages', win)
       }
     ]

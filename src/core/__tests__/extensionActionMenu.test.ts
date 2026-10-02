@@ -173,7 +173,7 @@ describe('extension.actionContextMenu', () => {
       'Pin to Toolbar',
       '-',
       'Remove from Zenium',
-      'Manage Extensions'
+      'Extensions and Mods'
     ])
   })
 })

@@ -40,6 +40,21 @@ export type MenuAct =
   | 'tab.newAfter'
   | 'tab.closeAfter'
   | 'tab.closeBefore'
+  /** The app menu's private session rows on a host without private windows (`appMenu.ts`). */
+  | 'tab.newPrivate'
+  | 'tab.closePrivate'
+  /** Close every private window – the counted verb while more than one is up (profiles-25). */
+  | 'window.closePrivate'
+  /** The reader's "Text Preferences…" popover or sheet (§10.1). */
+  | 'reader.textPreferences'
+  /** Chrome's "Listen to This Page" (A11Y-06). */
+  | 'readAloud.start'
+  /** The Help menu's "Report an Unsafe Site…", Google's Safe Browsing form (shortcuts-menus-123). */
+  | 'help.reportUnsafeSite'
+  /** The rows that open a settings page (P-36): the New Tab page's, the toolbar's, the languages'. */
+  | 'newTab.customise'
+  | 'toolbar.customise'
+  | 'languages.open'
 
 /** Every act the string table may name. */
 export type ActId = ShortcutAction | PaletteAct | MenuAct

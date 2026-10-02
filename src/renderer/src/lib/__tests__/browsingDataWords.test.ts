@@ -281,14 +281,13 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
     expect(find('src/renderer/src/lib/browsingData.ts', 'Deleted')).toBe(true)
     expect(find('src/renderer/src/lib/browsingData.ts', 'Nothing deleted')).toBe(true)
     // The menu rows and the shortcut's label were Chrome's Title Case already (#396). The mac
-    // menu bar and the key table now read the string table's entry (`privacy.clearBrowsingData`,
-    // an ask: the ellipsis is the face's, never typed); the app menu's row spells the words
-    // until its family lands.
-    expect(find('src/core/menus.ts', 'Delete Browsing Data…')).toBe(true)
+    // menu bar, the key table and the app menu's row (its family, PR-2b) read the string
+    // table's entry (`privacy.clearBrowsingData`, an ask: the ellipsis is the face's, never
+    // typed), so none of the three spells the words.
     expect(find('src/shared/strings/actions.ts', 'Delete Browsing Data')).toBe(true)
     expect(S.menu('privacy.clearBrowsingData')).toBe('Delete Browsing Data…')
     expect(S.title('privacy.clearBrowsingData')).toBe('Delete browsing data')
-    for (const file of ['src/core/menuBar.ts', 'src/shared/shortcuts.ts']) {
+    for (const file of ['src/core/menuBar.ts', 'src/shared/shortcuts.ts', 'src/core/menus.ts']) {
       expect(readFileSync(join(repo, file), 'utf8'), file).toContain("'privacy.clearBrowsingData'")
       expect(find(file, 'Delete Browsing Data…'), file).toBe(false)
     }
