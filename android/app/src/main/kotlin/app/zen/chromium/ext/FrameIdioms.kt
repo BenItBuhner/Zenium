@@ -33,7 +33,13 @@ import java.util.regex.Pattern
  *
  * The scan is a word search for `top` and `parent` with the patterns run on a short window
  * around each hit, so a 28 million character file (Monica) costs its one pass and a few
- * thousand short matches, not a regular expression over the whole.
+ * thousand short matches, not a regular expression over the whole. Each window is cut out as
+ * the patterns' own input, never set as a region of the file: Android's `Matcher` copies its
+ * whole input into the native regex state on every `reset` and `region` (libcore's
+ * `MatcherState::updateInput` – a `UChar` array the input's length and a `memcpy`, where
+ * OpenJDK's sets two fields), so a region moved over the file at each hit copied the file each
+ * time – 2.9 s per 8.4 million character unit, 23.7 s for Compose AI's nine units against 1.7 s,
+ * at compat round 27's AFTER; the JVM gate, where a region costs nothing, never saw it.
  */
 object FrameIdioms {
     /** The literal's name for a unit with the idiom: `top` / `parent` stay the scope's. */
@@ -76,18 +82,19 @@ object FrameIdioms {
     /** The flags ([IDIOM], [WALK], [COMPARE]) of `text` between `start` and `end`. */
     fun scan(text: CharSequence, start: Int = 0, end: Int = text.length): Int {
         var flags = 0
-        val idiomMatcher = idiom.matcher(text).useTransparentBounds(true).useAnchoringBounds(false)
-        val walkMatcher = walk.matcher(text).useTransparentBounds(true).useAnchoringBounds(false)
-        val compareMatcher = compare.matcher(text).useTransparentBounds(true).useAnchoringBounds(false)
+        // Made over nothing and reset to each window (see the class note: a matcher over the
+        // text would copy the text at every region on Android).
+        val idiomMatcher = idiom.matcher("")
+        val walkMatcher = walk.matcher("")
+        val compareMatcher = compare.matcher("")
         for (word in WORDS) {
             var at = text.indexOf(word, start)
             while (at >= 0 && at + word.length <= end) {
                 if (isWord(text, at, word.length)) {
-                    val from = maxOf(start, at - WINDOW)
-                    val to = minOf(end, at + word.length + WINDOW)
-                    if (flags and IDIOM == 0 && idiomMatcher.region(from, to).find()) flags = flags or IDIOM
-                    if (flags and WALK == 0 && word == "parent" && walkMatcher.region(from, to).find()) flags = flags or WALK
-                    if (flags and COMPARE == 0 && compareMatcher.region(from, to).find()) flags = flags or COMPARE
+                    val window = text.subSequence(maxOf(start, at - WINDOW), minOf(end, at + word.length + WINDOW))
+                    if (flags and IDIOM == 0 && idiomMatcher.reset(window).find()) flags = flags or IDIOM
+                    if (flags and WALK == 0 && word == "parent" && walkMatcher.reset(window).find()) flags = flags or WALK
+                    if (flags and COMPARE == 0 && compareMatcher.reset(window).find()) flags = flags or COMPARE
                     if (flags == IDIOM or WALK or COMPARE) return flags
                 }
                 at = text.indexOf(word, at + 1)

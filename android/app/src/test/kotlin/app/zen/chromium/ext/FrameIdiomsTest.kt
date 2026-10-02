@@ -107,6 +107,20 @@ class FrameIdiomsTest {
     }
 
     @Test
+    fun `a hit at either end of a long text is read in a window of its own`() {
+        // A framework's `parentNode` chains and `stop()` calls by the thousand make no window
+        // (not word hits); the one idiom at the text's start or end is read in its own.
+        val filler = "e.parentNode.stop();".repeat(2_000)
+        assertEquals(FrameIdioms.IDIOM, FrameIdioms.scan("if(self!==top)x();$filler") and FrameIdioms.IDIOM)
+        assertEquals(FrameIdioms.IDIOM, FrameIdioms.scan("${filler}if(self!==top)x();") and FrameIdioms.IDIOM)
+        assertEquals(FrameIdioms.PAGE, FrameIdioms.nameOf(FrameIdioms.scan("$filler\n$savePageWalk\n$filler")))
+        assertEquals(0, FrameIdioms.scan(filler))
+        // The same text in a builder, over its middle range alone.
+        val sb = StringBuilder("if(self!==top)x();").append(filler).append("if (window === window.top) a();")
+        assertEquals(0, FrameIdioms.scan(sb, "if(self!==top)x();".length, sb.length - "if (window === window.top) a();".length))
+    }
+
+    @Test
     fun `the names are the bootstrap's, and the longer bounds a builder's room`() {
         assertEquals("__zenScopeFrames", FrameIdioms.SCOPE)
         assertEquals("__zenPageFrames", FrameIdioms.PAGE)
