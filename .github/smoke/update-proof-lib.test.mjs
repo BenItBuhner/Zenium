@@ -4,6 +4,7 @@ import {
   asarPathFor,
   bareVersion,
   binaryVersion,
+  defaultUserDataDir,
   isAppMainProcess,
   judge,
   newAppProcesses,
@@ -310,6 +311,46 @@ describe('toasts and the verdict', () => {
     ).toBe(
       'the app did not quit after Restart to update / Install: a "quit" question (2 tabs) stood in the window; a second instance (0.5.81, pid 77) started beside it'
     )
+    // The old app quit in the end (the question answered), but the new version had been
+    // running beside it for seconds: on one profile it would have died on the lock.
+    expect(
+      judge({
+        expected: '0.5.81',
+        oldVersion: '0.5.70',
+        check,
+        download,
+        install: {
+          exited: true,
+          exit: { code: 0, at: 60000 },
+          errorToast: null,
+          windowPrompt: { kind: 'quit', count: 2, answered: true },
+          besideOld: { pid: 77, version: '0.5.81', at: 12000 }
+        },
+        relaunched
+      })
+    ).toEqual({
+      ok: false,
+      stage: 'install',
+      reason:
+        'a second instance (0.5.81, pid 77) started 48s before the old app quit; a "quit" question (2 tabs) stood in the window (answered) – with one profile it would have died on the single-instance lock'
+    })
+    // Seen within the grace of the exit: that is the relaunch itself.
+    expect(
+      judge({
+        expected: '0.5.81',
+        oldVersion: '0.5.70',
+        check,
+        download,
+        install: {
+          exited: true,
+          exit: { code: 0, at: 13000 },
+          errorToast: null,
+          windowPrompt: { kind: 'quit', count: 2, answered: true },
+          besideOld: { pid: 77, version: '0.5.81', at: 12000 }
+        },
+        relaunched
+      }).ok
+    ).toBe(true)
     expect(
       judge({
         expected: '0.5.81',
@@ -366,5 +407,17 @@ describe('arguments and ranges', () => {
     expect(parseRange('bytes=1000-', 1000)).toEqual({ unsatisfiable: true })
     expect(parseRange('items=0-1', 1000)).toBeNull()
     expect(parseRange(undefined, 1000)).toBeNull()
+  })
+  it("knows where each OS keeps the app's default profile", () => {
+    expect(defaultUserDataDir({ APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }, 'win32')).toBe(
+      'C:\\Users\\u\\AppData\\Roaming\\Zenium'
+    )
+    expect(defaultUserDataDir({ HOME: '/Users/u' }, 'darwin')).toBe(
+      '/Users/u/Library/Application Support/Zenium'
+    )
+    expect(defaultUserDataDir({ HOME: '/home/u', XDG_CONFIG_HOME: '/tmp/x' }, 'linux')).toBe(
+      '/tmp/x/Zenium'
+    )
+    expect(defaultUserDataDir({ HOME: '/home/u' }, 'linux')).toBe('/home/u/.config/Zenium')
   })
 })

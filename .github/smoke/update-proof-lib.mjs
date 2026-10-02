@@ -219,6 +219,20 @@ export function updateErrorToast(toasts) {
  *   verified      `{ version }` the installed binary reported when launched again (optional)
  * Returns `{ ok, stage, reason }` – `stage` names the first step that did not pass.
  */
+/**
+ * Where Electron keeps the app's profile when no `--user-data-dir` is given (`app.setName('Zenium')`):
+ * %APPDATA%\Zenium, ~/Library/Application Support/Zenium, $XDG_CONFIG_HOME/Zenium (~/.config).
+ */
+export function defaultUserDataDir(env, platform = process.platform, home = env.HOME ?? '') {
+  if (platform === 'win32')
+    return `${env.APPDATA ?? `${env.USERPROFILE ?? ''}\\AppData\\Roaming`}\\Zenium`
+  if (platform === 'darwin') return `${home}/Library/Application Support/Zenium`
+  return `${env.XDG_CONFIG_HOME || `${home}/.config`}/Zenium`
+}
+
+/** A new process seen this close to the old one's exit is the relaunch, not a second instance. */
+export const BESIDE_GRACE_MS = 3000
+
 export function judge(facts) {
   const { expected, oldVersion, check, download, install, relaunched, verified } = facts
   if (!check) return { ok: false, stage: 'check', reason: 'the check never settled' }
@@ -253,15 +267,20 @@ export function judge(facts) {
     }
   if (!install) return { ok: false, stage: 'install', reason: 'install was never asked for' }
   if (install.errorToast) return { ok: false, stage: 'install', reason: install.errorToast }
+  // The quit question over the open tabs is the user's to answer (the drive answers it the way
+  // a user would); what the question must not do is hold the old app while the new version is
+  // already running beside it – a second instance that came up before the old one went.
+  const beside = install.besideOld
+  const prompt = install.windowPrompt
+  const promptText = prompt
+    ? `a "${prompt.kind}" question (${prompt.count} tabs) stood in the window${prompt.answered ? ' (answered)' : ''}`
+    : null
   if (!install.exited) {
     const why = []
-    if (install.windowPrompt)
+    if (promptText) why.push(promptText)
+    if (beside)
       why.push(
-        `a "${install.windowPrompt.kind}" question (${install.windowPrompt.count} tabs) stood in the window`
-      )
-    if (install.besideOld)
-      why.push(
-        `a second instance (${install.besideOld.version ?? 'unknown version'}, pid ${install.besideOld.pid}) started beside it`
+        `a second instance (${beside.version ?? 'unknown version'}, pid ${beside.pid}) started beside it`
       )
     return {
       ok: false,
@@ -269,6 +288,12 @@ export function judge(facts) {
       reason: `the app did not quit after Restart to update / Install${why.length ? `: ${why.join('; ')}` : ''}`
     }
   }
+  if (beside && (install.exit?.at ?? 0) - (beside.at ?? 0) > BESIDE_GRACE_MS)
+    return {
+      ok: false,
+      stage: 'install',
+      reason: `a second instance (${beside.version ?? 'unknown version'}, pid ${beside.pid}) started ${Math.round(((install.exit?.at ?? 0) - (beside.at ?? 0)) / 1000)}s before the old app quit${promptText ? `; ${promptText}` : ''} – with one profile it would have died on the single-instance lock`
+    }
   if (!relaunched || !relaunched.found)
     return {
       ok: false,

@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url'
 import {
   bareVersion,
   binaryVersion,
+  defaultUserDataDir,
   isAppMainProcess,
   judge,
   newAppProcesses,
@@ -256,8 +257,23 @@ async function drive() {
   const downloadTimeoutMs = Number(argv['download-timeout'] ?? 900) * 1000
 
   // A fresh profile past onboarding, with automatic checks off so the drive is the only actor.
+  // It lives where the app keeps its profile by default (Linux: under an XDG_CONFIG_HOME of
+  // the drive's own), not behind `--user-data-dir`: the process that comes back after the
+  // install is started by the installer, the helper or the app itself, and must find the same
+  // profile a user's would – a second instance over one profile dies on the single-instance
+  // lock, which is part of what is being proved. `--profile-dir <dir>` opts out for a local run.
   const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), `zenium-update-proof-${argv.label}-`))
-  const profile = path.join(profileRoot, 'profile')
+  const isolationEnv = IS_LINUX
+    ? {
+        XDG_CONFIG_HOME: path.join(profileRoot, 'xdg-config'),
+        XDG_CACHE_HOME: path.join(profileRoot, 'xdg-cache'),
+        XDG_DATA_HOME: path.join(profileRoot, 'xdg-data')
+      }
+    : {}
+  for (const dir of Object.values(isolationEnv)) fs.mkdirSync(dir, { recursive: true })
+  const explicitProfile = typeof argv['profile-dir'] === 'string' ? argv['profile-dir'] : null
+  const profile = explicitProfile ?? defaultUserDataDir({ ...process.env, ...isolationEnv })
+  if (!explicitProfile) fs.rmSync(profile, { recursive: true, force: true })
   fs.mkdirSync(path.join(profile, 'zen'), { recursive: true })
   fs.writeFileSync(
     path.join(profile, 'zen', 'state.json'),
@@ -270,15 +286,6 @@ async function drive() {
       }
     })
   )
-  const isolationEnv = IS_LINUX
-    ? {
-        XDG_CONFIG_HOME: path.join(profileRoot, 'xdg-config'),
-        XDG_CACHE_HOME: path.join(profileRoot, 'xdg-cache'),
-        XDG_DATA_HOME: path.join(profileRoot, 'xdg-data')
-      }
-    : {}
-  for (const dir of Object.values(isolationEnv)) fs.mkdirSync(dir, { recursive: true })
-
   const facts = {
     platform: process.platform,
     arch: process.arch,
@@ -311,7 +318,7 @@ async function drive() {
     process.exitCode = verdict.ok ? 0 : 1
   }
 
-  const launchArgs = [...extraArgs, `--user-data-dir=${profile}`]
+  const launchArgs = explicitProfile ? [...extraArgs, `--user-data-dir=${profile}`] : [...extraArgs]
   const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...isolationEnv, ...extraEnv }
   log(`launching ${exe} ${launchArgs.join(' ')}`)
   let app
@@ -508,8 +515,18 @@ async function drive() {
     // instance of the app that came up while this one is still running.
     const whole = await invoke('app.getState', undefined, 10000).catch(() => null)
     if (whole?.window?.prompt && !windowPrompt) {
-      windowPrompt = whole.window.prompt
+      windowPrompt = { ...whole.window.prompt, at: Date.now() - t0, answered: false }
       log(`window prompt up: ${JSON.stringify(windowPrompt)}`)
+      shot('03b-quit-question')
+      // A user who asked to restart answers "Quit" here; the same command the button sends.
+      if (windowPrompt.kind === 'quit') {
+        await invoke('window.respondPrompt', { id: windowPrompt.id, accepted: true }, 10000)
+          .then(() => {
+            windowPrompt.answered = true
+            log('answered the quit question: yes')
+          })
+          .catch((e) => log(`could not answer the quit question: ${e.message}`))
+      }
     }
     if (Date.now() - lastProcessScan > (IS_WIN ? 5000 : 2000)) {
       lastProcessScan = Date.now()
@@ -519,7 +536,8 @@ async function drive() {
         besideOld = {
           pid: p.pid,
           exe: p.exe,
-          version: binaryVersion(p.exe, process.platform, fs).version
+          version: binaryVersion(p.exe, process.platform, fs).version,
+          at: Date.now() - t0
         }
         log(`a second app process came up beside the running one: ${JSON.stringify(besideOld)}`)
       }
