@@ -2412,14 +2412,12 @@ class TabWebView(
      * check's blank document's are.
      */
     private fun probeThenLoad(requested: String) {
-        // TEMPORARY (W6-S27-d measurement, removed before READY): the load's receipt, paired in the latency scene with the target's onPageStarted.
-        Log.i(UNLOAD_PROBE_MEASURE_TAG, "load url=$requested probe=${UnloadProbeRules.measurementEnabled} at=${SystemClock.uptimeMillis()}")
         unloadProbe?.let { probe ->
             probe.retarget(requested)
             return
         }
         val document = currentDocument
-        if (!UnloadProbeRules.measurementEnabled || !UnloadProbeRules.needsProbe(document, failed = failedUrl != null, interstitial = interstitial, viewer = pdfPage != null, checkInFlight = unloadCheck != null)) {
+        if (!UnloadProbeRules.needsProbe(document, failed = failedUrl != null, interstitial = interstitial, viewer = pdfPage != null, checkInFlight = unloadCheck != null)) {
             loadRequested(requested, emptyMap())
             return
         }
@@ -3414,8 +3412,6 @@ class TabWebView(
             // The unload probe's address commits nothing (its answer is a 204); should a word
             // about it come all the same, it is not the tab's (see probeThenLoad).
             if (UnloadProbeRules.isProbeUrl(url)) return
-            // TEMPORARY (W6-S27-d measurement, removed before READY): the target's start, for the latency scene.
-            Log.i(UNLOAD_PROBE_MEASURE_TAG, "started url=$url at=${SystemClock.uptimeMillis()}")
             unloadCheck?.let { check ->
                 // The check's blank document started: the page did not object (or the user chose
                 // to leave) and is on its way out; the view goes with it (see confirmUnload).
@@ -4047,9 +4043,6 @@ class TabWebView(
          * check's window, by the Design Lead's word: the two never drift apart.
          */
         private const val UNLOAD_PROBE_TIMEOUT_MS = UNLOAD_CHECK_TIMEOUT_MS
-
-        /** TEMPORARY (W6-S27-d measurement, removed before READY): the latency scene's logcat tag. */
-        private const val UNLOAD_PROBE_MEASURE_TAG = "ZenUnloadProbe"
 
         /** A `beforeunload` objection this soon after the core asked for a reload is "Reload site?". */
         private const val RELOAD_ASK_WINDOW_MS = 2_000L
