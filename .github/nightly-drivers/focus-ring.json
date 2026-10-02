@@ -5,5 +5,6 @@
   "shard": "phone-d",
   "mirrors": "android-focus-ring-demo.yml",
   "dir": "focus-ring-demo",
-  "estimate": 3
+  "estimate": 2.5,
+  "note": "Three scenes since seed A3 (v2 §9.23): the install sheet's primary, a Settings row and the History list's multi-select checkbox; the Close-all prompt's 'Don't ask again' checkbox went with the prompt."
 }

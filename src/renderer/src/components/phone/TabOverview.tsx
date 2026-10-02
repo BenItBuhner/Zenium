@@ -1472,9 +1472,15 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
     closeSet(regularAll)
   }
+  /**
+   * The regular view's Close All asks nothing (v2 §9.23: a close that can be taken back from
+   * its toast confirms nothing, and `closeSet`'s one Undo brings the lot back); the private
+   * view's Close Private Tabs still asks (`CloseAllSheet`), since a private tab is never filed
+   * and there is no Undo to stand in for the question.
+   */
   const closeAllAsked = (): void => {
     if (regularAll.length === 0) return
-    if (state.settings.confirmCloseAll) setSheet({ kind: 'close-all' })
+    if (privatePane) setSheet({ kind: 'close-all' })
     else closeAll()
   }
   /**
@@ -2449,13 +2455,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       {interactive && sheet?.kind === 'close-all' && (
         <CloseAllSheet
           count={regularAll.length}
-          spaceName={space.name}
-          privateTabs={privatePane}
           onClose={() => leaveSheet('close-all')}
-          onConfirm={(askAgain) => {
-            if (!askAgain) run('settings.update', { confirmCloseAll: false })
-            closeAll()
-          }}
+          onConfirm={closeAll}
         />
       )}
       {interactive && sheet?.kind === 'recently-closed' && (
