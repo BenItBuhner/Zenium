@@ -1,9 +1,12 @@
 package app.zen.chromium
 
 import android.app.Instrumentation
+import android.content.ContentValues
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Log
 import android.webkit.WebView
 import androidx.core.content.pm.PackageInfoCompat
@@ -57,9 +60,11 @@ import java.util.concurrent.TimeUnit
  * (with minus without inside each pair); the device, API level, `ro.hardware`, WebView; an
  * ADVISORY verdict against one frame at 60 Hz (16.7 ms; the Lead's decision rule, nothing
  * asserted on it) – go to the log under [tag], to `unload-probe-latency.txt` in the handshake
- * directory (the workflow collects `*.txt`; `run-as` reads it on a device) and to the same file
- * in the app's external files directory (plain `adb pull`), and to the instrumentation's stream
- * (`am instrument -w` prints it as it comes). The run fails when a load never starts or the
+ * directory (the workflow collects `*.txt`; `run-as` reads it on a device), to the same file in
+ * the app's external files directory (plain `adb pull`) and under a timestamped name in the
+ * device's Downloads (the copy that outlives the uninstall a Gradle connected run ends with;
+ * [publish]), and to the instrumentation's stream (`am instrument -w` prints it as it comes;
+ * `android/docs/unload-probe-latency.md` says how to read each). The run fails when a load never starts or the
  * hold never took; never on the numbers. [UnloadProbeLatencyStats] has the arithmetic, pinned
  * on the JVM. A perf reading, so [runPerfDemo] (no events hold; see the rule at [runDemo]); it
  * answers the recorder's handshake itself – nothing to record. See [DemoHarness].
@@ -204,15 +209,57 @@ class UnloadProbeLatency : DemoHarness("unload-probe-latency-state.json", "unloa
         }
         findings.appendText("\n$block")
         for (line in block.lines()) if (line.isNotEmpty()) Log.i(tag, line)
+        publish()
+        val status = Bundle()
+        status.putString("unload-probe-latency.block", block)
+        status.putString(Instrumentation.REPORT_KEY_STREAMRESULT, "\n$block\n")
+        instrumentation.sendStatus(0, status)
+    }
+
+    /**
+     * The findings file where a host can get at it, each copy best-effort and said in the log:
+     * the app's external files directory (a plain `adb pull` while the app is installed); the
+     * device's Downloads, under a timestamped name (`MediaStore` from API 29, the public
+     * directory before it) – the one copy that outlives the uninstall Gradle's
+     * `connectedDebugAndroidTest` ends with; and the directory AGP pulls to the host after a
+     * connected run when `android.enableAdditionalTestOutput` is on (its `additionalTestOutputDir`
+     * argument; absent otherwise). The handshake directory's copy is the workflow's
+     * (`*.txt` is collected) and `run-as`'s.
+     */
+    private fun publish() {
         runCatching {
             val external = File(app.getExternalFilesDir(null), FINDINGS)
             findings.copyTo(external, overwrite = true)
             Log.i(tag, "findings: ${findings.path} and ${external.path}")
         }.onFailure { Log.w(tag, "the findings could not be copied to the external files directory", it) }
-        val status = Bundle()
-        status.putString("unload-probe-latency.block", block)
-        status.putString(Instrumentation.REPORT_KEY_STREAMRESULT, "\n$block\n")
-        instrumentation.sendStatus(0, status)
+        val stamped = "unload-probe-latency-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(Date())}.txt"
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, stamped)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val resolver = app.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("MediaStore gave no row")
+                resolver.openOutputStream(uri)?.use { it.write(findings.readBytes()) } ?: error("MediaStore gave no stream for $uri")
+                Log.i(tag, "findings: Downloads/$stamped ($uri)")
+            } else {
+                @Suppress("DEPRECATION")
+                val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                downloads.mkdirs()
+                findings.copyTo(File(downloads, stamped), overwrite = true)
+                Log.i(tag, "findings: ${File(downloads, stamped).path}")
+            }
+        }.onFailure { Log.w(tag, "the findings could not be put in Downloads", it) }
+        InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { dir ->
+            runCatching {
+                val target = File(dir, FINDINGS)
+                target.parentFile?.mkdirs()
+                findings.copyTo(target, overwrite = true)
+                Log.i(tag, "findings: ${target.path} (AGP pulls it to build/outputs/connected_android_test_additional_output)")
+            }.onFailure { Log.w(tag, "the findings could not be copied to the additional test output directory $dir", it) }
+        }
     }
 
     // --- the tap -------------------------------------------------------------------------------
