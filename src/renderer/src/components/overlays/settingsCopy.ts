@@ -31,8 +31,10 @@ export function installLabel(u: UpdateStatus): string {
       return 'Debian package'
     case 'mac-signed':
       return 'macOS app (signed)'
+    case 'mac-adhoc':
+      return 'macOS app'
     case 'mac-unsigned':
-      return 'macOS app (unsigned)'
+      return 'macOS app (read-only location)'
     case 'apk':
       return 'Android APK'
     case 'portable':
@@ -93,13 +95,15 @@ export function detail(u: UpdateStatus): string {
     case 'ready':
       return u.target.kind === 'deb'
         ? 'Verified and staged. Restart to update runs dpkg, which asks for your password.'
-        : u.mode === 'in-place'
+        : u.target.kind === 'nsis'
           ? 'Verified and staged. It installs when Zenium restarts – now, or the next time you quit.'
-          : u.target.kind === 'apk'
-            ? u.packageChange
-              ? 'Verified. Install hands the APK to Android; it installs as a new app next to this one, and this app can be uninstalled afterwards.'
-              : 'Verified. Install hands the APK to Android, which asks you to confirm.'
-            : `Verified and saved to ${u.downloadedPath ?? 'Downloads'}. Install opens it.`
+          : u.mode === 'in-place'
+            ? 'Verified and staged. Restart to update installs it and brings Zenium back.'
+            : u.target.kind === 'apk'
+              ? u.packageChange
+                ? 'Verified. Install hands the APK to Android; it installs as a new app next to this one, and this app can be uninstalled afterwards.'
+                : 'Verified. Install hands the APK to Android, which asks you to confirm.'
+              : `Verified and saved to ${u.downloadedPath ?? 'Downloads'}. Install opens it.`
     case 'error':
       return `${u.error ?? 'Unknown error'}. ${checked}`
   }
