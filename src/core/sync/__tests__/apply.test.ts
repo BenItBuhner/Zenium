@@ -772,11 +772,12 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
 
 describe('applyRemote: the settings record and the retired confirmCloseAll (the Lead\u2019s A3/S1 ruling, services pass 17)', () => {
   it("an older peer's record still carries the key: it applies cleanly, the key lands unread and rides on at the peer's time – no stamp, no second win, no fold", () => {
-    // This device as the build after the retirement holds it: no `confirmCloseAll` among its
-    // settings (the default left with the type field), per-key entries for the rest.
+    // This device as the build after the retirement: no `confirmCloseAll` among its settings
+    // (the default left with the type field in S1's stage 2), per-key entries for the rest.
     const b = browser()
     const settings = b.state.settings as unknown as Record<string, unknown>
-    delete settings.confirmCloseAll
+    expect(settings).not.toHaveProperty('confirmCloseAll')
+    expect(DEFAULT_SETTINGS).not.toHaveProperty('confirmCloseAll')
     const sources = (): Parameters<typeof collectLocal>[0] => ({
       model: b.state.model,
       settings: b.state.settings,
