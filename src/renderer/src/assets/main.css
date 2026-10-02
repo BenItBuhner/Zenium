@@ -11784,6 +11784,16 @@
   flex-shrink: 0;
   stroke-width: var(--v2-icon-stroke);
 }
+/*
+ * The row's trailing indicators – the submenu chevron, the managed mark – are 16 on every
+ * platform (§9.3): `--v2-icon` is the LEADING glyph's size, 20 on the tablet, and the rule above
+ * would otherwise hand it to the trailing slot too.
+ */
+.zen-v2-menu-item .zen-v2-menu-chevron,
+.zen-v2-menu-item .zen-v2-menu-mark {
+  width: 16px;
+  height: 16px;
+}
 /* The glyph slot: 16 wide whether or not this row has a glyph, so the labels share one edge. */
 .zen-v2-menu-glyph {
   display: inline-flex;

@@ -34,7 +34,7 @@ import { contentAreaStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { V2Menulist, type MenulistOption } from '../extensions/V2Menulist'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { V2_GLYPH, V2Button, type V2ButtonProps } from '../v2/controls'
+import { V2_GLYPH, V2_TRAILING_GLYPH, V2Button, type V2ButtonProps } from '../v2/controls'
 
 /**
  * The chassis the site-control surfaces share, on the design language v2 draft: the desktop
@@ -55,7 +55,11 @@ import { V2_GLYPH, V2Button, type V2ButtonProps } from '../v2/controls'
 // Busy
 // ---------------------------------------------------------------------------
 
-/** A 16 / 20 px spinner (§9.30): the row glyph size, turning. */
+/**
+ * A 16 / 20 px spinner (§9.30): the row glyph size, turning. In a row's trailing slot it is a
+ * trailing indicator and takes `V2_TRAILING_GLYPH` (16 on both platforms, §9.3); the 20 is a
+ * phone button's label replaced.
+ */
 export function Spinner({ className }: { className?: string }): JSX.Element {
   return <LoaderCircle className={cn(V2_GLYPH, 'animate-spin', className)} aria-hidden />
 }
@@ -1013,10 +1017,10 @@ export function ListRow({
             wrapped && 'mt-[calc((20px-var(--v2-control))/2)] self-start'
           )}
         >
-          {busy ? <Spinner /> : trailing}
+          {busy ? <Spinner className={V2_TRAILING_GLYPH} /> : trailing}
           {chevron && (
             <ChevronRight
-              className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
+              className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
               aria-hidden
             />
           )}

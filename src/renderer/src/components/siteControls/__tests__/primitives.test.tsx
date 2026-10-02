@@ -691,6 +691,27 @@ describe('ListRow trailing values', () => {
     expect(slot.classList.contains('shrink-0')).toBe(true)
   })
 
+  it('draws its trailing indicators – the chevron, the busy spinner – at 16 on both platforms (§9.3)', () => {
+    // `--v2-icon` is the LEADING glyph's size (16 desktop / 20 phone); a trailing indicator is
+    // 16 everywhere, and §9.30's 20 is a phone BUTTON's spinner, not a row's.
+    const el = render(
+      <>
+        <ListRow label="A" chevron onClick={() => undefined} />
+        <ListRow label="B" busy />
+      </>
+    )
+    const chevron = el.querySelector<SVGElement>('svg.lucide-chevron-right')
+    const spinner = el.querySelector<SVGElement>('svg.animate-spin')
+    expect(chevron).not.toBeNull()
+    expect(spinner).not.toBeNull()
+    for (const glyph of [chevron!, spinner!]) {
+      expect(glyph.classList.contains('h-4')).toBe(true)
+      expect(glyph.classList.contains('w-4')).toBe(true)
+      expect(glyph.classList.contains('h-[var(--v2-icon)]')).toBe(false)
+      expect(glyph.classList.contains('w-[var(--v2-icon)]')).toBe(false)
+    }
+  })
+
   it('forwards data attributes to its root in both forms; a row without a press is static (§9.34)', () => {
     const el = render(
       <>

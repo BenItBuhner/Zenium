@@ -577,8 +577,10 @@ function BookmarkNodeRow({
           <>
             <span className="zen-list-value shrink-0">{folderCountLabel(childCount)}</span>
             {menuButton ?? (
+              // The folder's chevron is a trailing indicator, 16 on both platforms (§9.3); the
+              // 44 box keeps it where the menu button's glyph sits on the other rows.
               <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden>
-                <ChevronRight className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+                <ChevronRight className="h-4 w-4 opacity-60" strokeWidth={1.75} />
               </span>
             )}
           </>

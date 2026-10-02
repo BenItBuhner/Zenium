@@ -377,15 +377,17 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                     }}
                   >
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {/* The trailing slot's indicators are 16 on both platforms (§9.3); the row's
+                        leading glyph is the 20. */}
                     {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                      <Check className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
                     )}
                     {item.mark === 'managed' && (
                       // Chrome's `ic_domain` on the Managed Browser row (TB-13), in the trailing
                       // slot the chevron takes on a row with a submenu: the row's label reads
                       // as every other row's, the mark says whose the setting is.
                       <Building2
-                        className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                        className="zen-sheet-item-secondary h-4 w-4 shrink-0"
                         strokeWidth={1.75}
                         aria-hidden
                         data-mark="managed"
@@ -393,7 +395,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                     )}
                     {item.submenu && (
                       <ChevronRight
-                        className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                        className="zen-sheet-item-secondary h-4 w-4 shrink-0"
                         strokeWidth={1.75}
                         aria-hidden
                       />
