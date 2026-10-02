@@ -846,13 +846,6 @@ export interface TabViewEvents {
    * or the close the host is carrying out. Resolves true when the user leaves anyway.
    */
   onLeaveSite(reload: boolean): Promise<boolean>
-  /**
-   * The page objected to a navigation the core asked for and stays, the host having answered
-   * the question itself (its own sheet, a hidden tab's rule, an agent's policy): the core takes
-   * the tab back to the page, as it does after its own `onLeaveSite` ends in a stay. Hosts whose
-   * questions come to the core (`onLeaveSite`) never call it.
-   */
-  onStayedOnPage?(): void
   /** `zen://newtab` asked for something (hosts route the page's dedicated channel here). */
   onNewTabAction(action: NewTabPageAction): void
   /**
