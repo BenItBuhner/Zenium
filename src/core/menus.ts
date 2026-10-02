@@ -1898,9 +1898,10 @@ export class Menus {
    * state all the same) – writing the control's key of `Settings.toolbarPins` as the Customise
    * toolbar dialog's row does, the control folding into the app menu; then "Customise
    * Toolbar", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
-   * on the row and opens its form) – no ellipsis: a row that opens a settings page is a
-   * destination, not an ask (P-36, the Lead's ruling), though Zenium's surface is a dialog where
-   * Chrome's is a side panel. Forward is not among them: its right-click is the stack's menu,
+   * on the row and opens its form) – the pinned control's row opens the Customise Toolbar
+   * dialog, not a settings page, so the dialog rule keeps the ellipsis (the Design Lead's
+   * ruling on #784), though Zenium's surface is a dialog where Chrome's is a side panel.
+   * Forward is not among them: its right-click is the stack's menu,
    * as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
    * Settings' "Show forward button" switch). The extension buttons keep their own menu (#104).
    */
@@ -5670,7 +5671,7 @@ export function linkCopyItem(url: string): { label: string; text: string; confir
       ? { label: 'Copy Email Address', text, confirmation: 'Email address copied' }
       : { label: 'Copy Phone Number', text, confirmation: 'Phone number copied' }
   }
-  return { label: 'Copy Link Address', text: url, confirmation: 'Link copied' }
+  return { label: S.menu('link.copyAddress'), text: url, confirmation: 'Link copied' }
 }
 
 /**

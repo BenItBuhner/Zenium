@@ -15,6 +15,7 @@ import {
 } from '../strings'
 import { ACTIONS } from '../strings/actions'
 import { APP_MENU } from '../strings/appMenu'
+import { COPY_SHARE } from '../strings/copyShare'
 import {
   DEFAULT_GROUP_NAME,
   GROUP_NOUN,
@@ -275,13 +276,21 @@ describe('nouns.ts: the words, re-exported where they were', () => {
 })
 
 describe('the merged table', () => {
-  it('holds the action tables (PR-2) and the app menu (PR-2b) and nothing else yet: the families land one PR each (§D)', () => {
+  it('holds the action tables (PR-2), the app menu (PR-2b) and copyShare (PR-3a) and nothing else yet: the families land one PR each (§D)', () => {
     const ids = tableEntries().map(([id]) => id)
-    expect(ids).toEqual([...Object.keys(ACTIONS), ...Object.keys(APP_MENU)])
+    expect(ids).toEqual([
+      ...Object.keys(ACTIONS),
+      ...Object.keys(APP_MENU),
+      ...Object.keys(COPY_SHARE)
+    ])
     expect(ids.length).toBeGreaterThan(130)
     expect(new Set(ids).size).toBe(ids.length)
     // One entry per act: a family cannot name an act another family holds.
     for (const id of Object.keys(APP_MENU)) expect(ACTIONS).not.toHaveProperty(id)
+    for (const id of Object.keys(COPY_SHARE)) {
+      expect(ACTIONS).not.toHaveProperty(id)
+      expect(APP_MENU).not.toHaveProperty(id)
+    }
     expect(tableValues().get('Copy Link')).toBe('tab.copyUrl')
     expect(tableValues().get('Copy link')).toBe('tab.copyUrl')
     expect(tableValues().get('Find in Page…')).toBe('find.open')
@@ -365,5 +374,13 @@ describe('the merged table', () => {
     expect(tableValues().get('Close {n} Private Windows')).toBe('window.closePrivate')
     expect(tableValues().get('Extensions and Mods')).toBe('addons.open')
     expect(tableValues().get('Add-ons and Themes')).toBeUndefined()
+  })
+
+  it('reads the copy-and-share family's faces (PR-3a): Copy Link Address once; the page’s own stays Copy Link', () => {
+    expect(S.menu('link.copyAddress')).toBe('Copy Link Address')
+    expect(S.title('link.copyAddress')).toBe('Copy link address')
+    expect(S.row('link.copyAddress')).toBe('Copy link address')
+    expect(tableValues().get('Copy Link')).toBe('tab.copyUrl')
+    expect(tableValues().get('Copy Link Address')).toBe('link.copyAddress')
   })
 })
