@@ -533,11 +533,13 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
      * (`TabWebView.probeThenLoad`), and the scene pins that nothing of the probe shows: first
      * over the page with NO handler – a typed address there and one back, each leaving the
      * document once (the server told of one `pagehide` per navigation, never a second), one
-     * history entry per navigation, no sheet, and the core's word on the tab never the probe's
-     * address ([Watch]); then at the Cancel – the document saw no `pagehide` and no `unload`
-     * (its own counters, and the server's), its history is as long as it was, the tab never
-     * loaded (no throbber) and the core's word on it was only the page's or the typed address;
-     * and at the Leave – one `pagehide`, one entry, the one navigation.
+     * history entry per navigation, no sheet, one `startLoading` told to the chrome and nothing
+     * told to it naming the probe's address ([Watch]); then at the Cancel – the document saw no
+     * `pagehide` and no `unload` (its own counters, and the server's), its history is as long
+     * as it was, the chrome was told no `startLoading` (no throbber), no `navigated`,
+     * `redirected`, `historyChanged` or `navigation` (no flicker of the address), nothing
+     * naming the probe, and `stayed` (the omnibox back to the page); and at the Leave – one
+     * `pagehide`, one entry, one `startLoading`, the one navigation.
      */
     private fun leaveOnTypedAddress() {
         finding("\n13. A typed address over an armed page: 'Leave site?' (the tab in front asks, its view under the URL field or not); Cancel keeps the page – unconditionally")
@@ -583,10 +585,13 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             log.optInt("pagehide") == 0 && log.optInt("unload") == 0 && leavings.pagehides() == 0 && leavings.unloads() == 0
         )
         expect("no history entry for the refused navigation: ${historyBefore} entr${if (historyBefore == 1) "y" else "ies"} before, ${historySize()} after", historySize() == historyBefore)
-        expect(
-            "nothing of the probe showed: the tab never loaded, and the core's word on it was only the page's or the typed address (${watch.describe()})",
-            !watch.loadingSeen && watch.urls.all { it == "$ORIGIN/second.html" || it.startsWith("$ORIGIN/other.html") }
-        )
+        val events = watch.events()
+        val names = watch.names(events)
+        finding("  (${watch.describe(events)})")
+        expect("no throbber: the tab never started loading", "startLoading" !in names)
+        expect("no flicker of the address: the chrome was told no navigated, redirected, historyChanged or navigation", names.none { it in FLICKER_EVENTS })
+        expect("nothing the chrome was told named the probe's address", events.none { PROBE_ORIGIN in it })
+        expect("the core heard 'stayed': the omnibox back to the page", "stayed" in names)
         finding("  (the page's handler ran ${log.optInt("beforeunloads")} time(s) for the one question; the URL field ${if (urlbarOpen()) "open" else "closed"} after the Cancel)")
         if (urlbarOpen()) {
             back()
@@ -626,7 +631,10 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             leavings.pagehides() == 1 && leavings.unloads() <= 1
         )
         expect("one history entry for the one navigation: $historyBefore before, ${historySize()} after", historySize() == historyBefore + 1)
-        expect("the core's word on the tab was never the probe's address (${watch.describe()})", watch.urls.none { it.startsWith(PROBE_ORIGIN) } && activeUrl() == target)
+        val events = watch.events()
+        finding("  (${watch.describe(events)})")
+        expect("the tab started loading once, for the one navigation", watch.names(events).count { it == "startLoading" } == 1)
+        expect("nothing the chrome was told named the probe's address, and the core's word on the tab is the typed address: ${activeUrl()}", events.none { PROBE_ORIGIN in it } && activeUrl() == target)
         if (urlbarOpen()) {
             back()
             awaitUntil(4_000) { !urlbarOpen() }
@@ -673,7 +681,10 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             leavings.pagehides() == 1 && leavings.unloads() <= 1
         )
         expect("one history entry for the one navigation: $historyBefore before, ${historySize()} after", historySize() == historyBefore + 1)
-        expect("the core's word on the tab was never the probe's address (${watch.describe()})", watch.urls.none { it.startsWith(PROBE_ORIGIN) })
+        val events = watch.events()
+        finding("  (${watch.describe(events)})")
+        expect("the tab started loading once, for the one navigation", watch.names(events).count { it == "startLoading" } == 1)
+        expect("nothing the chrome was told named the probe's address", events.none { PROBE_ORIGIN in it })
         if (urlbarOpen()) {
             back()
             awaitUntil(4_000) { !urlbarOpen() }
@@ -748,27 +759,41 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     }
 
     /**
-     * What the driver saw of the chrome while it waited ([watchUntil]): the core's word on the
-     * active tab's address at each look, whether the tab was ever loading (the throbber's word)
-     * and whether a sheet was ever up. The core's words follow the host's view events alone, so
-     * a probe that showed would show here: its address as the tab's, or a load that never was.
+     * What the chrome was told of the demo tab while the driver waited ([watchUntil]): the
+     * host's view events for it, recorded in the chrome's own script ahead of the core
+     * (`window.__zenHost.viewEvent`, wrapped once for the run), and whether a sheet was ever up
+     * ([appWindows]). The core's words on the tab – its address, its loading – follow these
+     * events alone, so a probe that showed would show here: a `startLoading` the typed address
+     * never answered for (the throbber), a `navigated`, `redirected`, `historyChanged` or
+     * `navigation` naming the probe's address (the omnibox). The record is read with [events]
+     * once the renderer is free again – the page's beforeunload answer is a synchronous call
+     * that holds the one renderer main thread every WebView of the process shares, the chrome's
+     * script with it; the chrome queues the host's scripts in order meanwhile, so nothing is
+     * lost. The driver asks the core nothing while it waits: such an ask would itself queue on
+     * the renderer the page's answer comes from.
      */
     private inner class Watch {
-        val urls = LinkedHashSet<String>()
-        var loadingSeen = false
         var sheetSeen = false
         var looks = 0
+        /** The chrome's word on the recorder's install: 'ok', or what went wrong. */
+        val recorder: String = chromeJsString(RECORDER_INSTALL) ?: "no answer"
 
         fun look() {
             looks++
-            activeCoreTab()?.let { tab ->
-                urls += tab.optString("url")
-                if (tab.optBoolean("loading")) loadingSeen = true
-            }
             if (appWindows() > 1) sheetSeen = true
         }
 
-        fun describe(): String = "the tab's address read ${urls.joinToString(" then ") { "'$it'" }}, loading seen $loadingSeen, a sheet seen $sheetSeen, over $looks looks"
+        /** The events recorded since the watch was made, `name payload` each, in the host's order. */
+        fun events(): List<String> {
+            val raw = chromeJs("window.__demoViewEvents||[]")
+            val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+            return List(array.length()) { array.optString(it) }
+        }
+
+        fun names(events: List<String> = events()): List<String> = events.map { it.substringBefore(' ') }
+
+        fun describe(events: List<String> = events()): String =
+            "the chrome was told ${events.size} event(s) for the tab: ${events.joinToString("; ") { it.take(160) }}; a sheet seen $sheetSeen, over $looks looks; recorder $recorder"
     }
 
     /** [awaitUntil] with a look at the chrome each round ([Watch.look]). */
@@ -1476,6 +1501,18 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val THIRD_TITLE = "Third page"
         /** The host's unload probe ahead of a load the core asked for (`UnloadProbeRules.ORIGIN`): never a word of the tab's. */
         private const val PROBE_ORIGIN = "http://unload-probe.zen.invalid"
+        /**
+         * The chrome-side recorder of the host's view events for the demo tab ([Watch]): the
+         * boot's `window.__zenHost.viewEvent` (boot.ts) wrapped once for the run, every event
+         * for the tab appended to `window.__demoViewEvents` as `name payload` before the core
+         * hears it; the list starts afresh at each install. Answers 'ok', or why not.
+         */
+        private const val RECORDER_INSTALL = "(function(){var h=window.__zenHost;if(!h||typeof h.viewEvent!=='function')return 'no host';" +
+            "if(!h.__demoViewEvent){var orig=h.viewEvent;h.__demoViewEvent=orig;" +
+            "h.viewEvent=function(tabId,name,payload){if(tabId==='$DEMO'&&window.__demoViewEvents)window.__demoViewEvents.push(name+' '+payload);return orig.apply(this,arguments)}}" +
+            "window.__demoViewEvents=[];return 'ok'})()"
+        /** The view events that move the tab's address in the core (`views.ts`): none of them for a refused navigation, none ever naming the probe. */
+        private val FLICKER_EVENTS = setOf("navigated", "redirected", "historyChanged", "navigation")
         /** TEMPORARY (W6-S27-d measurement, removed before READY): loads per arm of the latency scene. */
         private const val LATENCY_LOADS = 20
         /** The close toast (ToastCard.tsx; TabCloseDemo reads it the same way): its text and its Undo. */
