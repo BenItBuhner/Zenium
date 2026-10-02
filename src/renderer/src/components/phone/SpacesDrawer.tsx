@@ -219,7 +219,8 @@ const ROW_SLOP = 8
 /**
  * How long a dropped row keeps its new slot waiting for the browser's order to show it there.
  * Not a motion: the reorder's round trip takes a few ms; a reorder the browser would not make
- * (none does today) leaves the rows in the order it has once this is up.
+ * (none does today) leaves the rows in the order it has once this is up – and they go back on
+ * the list's FLIP, the glide the rows stepping aside take, not in a jump.
  */
 const REORDER_GRACE_MS = 800
 
@@ -237,6 +238,12 @@ interface Held {
 interface Pending {
   spaceId: string
   to: number
+  /**
+   * The grace is up and the browser's order never showed the row there: the rows are back in
+   * the order the browser has for this one commit, measured, so they glide home on the FLIP from
+   * where the drop left them; the commit done, the drop is forgotten.
+   */
+  refused?: true
 }
 
 /** `spaces` with the row `spaceId` moved to slot `to` – the order the finger is making. */
@@ -276,19 +283,48 @@ function SpaceList({
   // Counts the holds: each takes a fresh baseline for the FLIP (nothing glides on the lift).
   const [gesture, setGesture] = useState(0)
   const spaces = state.spaces
-  // A drop still waiting for the browser's order; one the order already shows is done with.
+  // A drop still waiting for the browser's order; one the order already shows is done with, and
+  // one refused is on its way back (the rows are laid out in the browser's order again).
   const waiting =
-    pending && spaces.findIndex((s) => s.id === pending.spaceId) !== pending.to ? pending : null
+    pending && !pending.refused && spaces.findIndex((s) => s.id === pending.spaceId) !== pending.to
+      ? pending
+      : null
   const reorder = held ?? waiting
+  const refused = pending?.refused === true
   // Measured only while a reorder is on: the drawer re-renders as it slides, and a layout read
   // per row per frame would slow the slide for nothing. (The panel's slide is an inline
   // transform the tracker's `frame` hold would strip, so none is given: a reorder runs on a
   // drawer at rest, and a drawer held still by the same finger measures the same every commit.)
-  useFlip(scroller, reorder !== null || landing !== null, { epoch: String(gesture) })
-  // A drop the browser's order never shows (none today) is let go of after the grace.
+  // A refused drop's one commit is measured too: against the last baseline – the dropped order –
+  // every row that changed slot has its travel, and glides it on the FLIP (or, under reduced
+  // motion, the tracker's cut: at its slot at once, §11.3).
+  useFlip(scroller, reorder !== null || landing !== null || refused, { epoch: String(gesture) })
+  const latest = useRef(spaces)
+  useLayoutEffect(() => {
+    latest.current = spaces
+  })
+  // A drop the browser's order never shows (none today) is let go of after the grace: a drop the
+  // order has shown meanwhile is simply forgotten (nothing moves); one it has not is refused –
+  // the rows go back in the measured commit above, then it is forgotten too.
   useEffect(() => {
-    if (!pending) return undefined
-    const timer = setTimeout(() => setPending(null), REORDER_GRACE_MS)
+    if (!pending || pending.refused) return undefined
+    const timer = setTimeout(
+      () =>
+        setPending((p) => {
+          if (!p || p.refused) return p
+          const shown = latest.current.findIndex((s) => s.id === p.spaceId) === p.to
+          return shown ? null : { ...p, refused: true }
+        }),
+      REORDER_GRACE_MS
+    )
+    return () => clearTimeout(timer)
+  }, [pending])
+  // The refused drop's measured commit is on screen once this runs: the drop is forgotten on the
+  // next tick (the glide, if any, is the tracker's and runs on), and the rows are observed, not
+  // measured, from then.
+  useEffect(() => {
+    if (!pending?.refused) return undefined
+    const timer = setTimeout(() => setPending(null), 0)
     return () => clearTimeout(timer)
   }, [pending])
   const landingSpring = useMemo(
