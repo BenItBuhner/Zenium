@@ -22,6 +22,15 @@ package app.zen.chromium
  * shown again, the safe side. A `beforeunload` check of the core's own (`confirmUnload`, ahead
  * of a tab close) never consults this: its objection is the check's to settle.
  *
+ * The unload probe's Leave is the other carry ([probeLeft]): a load the core asked for is
+ * preceded by a probe navigation the page is asked about first (`TabWebView.probeThenLoad`),
+ * and when the user chose Leave at the probe's sheet the load itself – the very navigation,
+ * issued the moment the renderer's ack comes – is asked by the browser once more. That asking
+ * is answered with the probe's Leave whenever it comes: no window, since nothing but this
+ * load can be the next objection (any other load, history step or document start drops the
+ * carry, [reset]), and a page whose handler runs long before it objects would otherwise be
+ * asked twice.
+ *
  * Time is passed in (`SystemClock.uptimeMillis()` on the device), so the shape is pinned on the
  * JVM (`LeaveCarryTest`).
  */
@@ -30,6 +39,8 @@ class LeaveCarry(private val windowMs: Long = DEFAULT_WINDOW_MS) {
     private var leaveChosenAt: Long? = null
     /** When a held navigation the Leave was given for was re-issued as the view's load; null when spent. */
     private var carriedAt: Long? = null
+    /** The load an unload probe stood for was issued past a Leave at the probe's sheet; false when spent. */
+    private var probeLeft = false
 
     /** The user chose to leave at a "Leave site?" the page raised for a navigation it started. */
     fun leaveChosen(now: Long) {
@@ -53,12 +64,22 @@ class LeaveCarry(private val windowMs: Long = DEFAULT_WINDOW_MS) {
     }
 
     /**
+     * The load an unload probe stood for was issued, the user having chosen Leave at the probe's
+     * sheet (`TabWebView.UnloadProbe`): the load's own asking is answered with that Leave.
+     */
+    fun probeLeft() {
+        probeLeft = true
+    }
+
+    /**
      * The page objected again, outside a check: whether this is the re-issued load's second
-     * asking – within the window of the resume – to be answered with the Leave (spent here).
+     * asking – within the window of the resume – or the probed load's own, to be answered with
+     * the Leave (spent here).
      */
     fun answers(now: Long): Boolean {
-        val carried = within(carriedAt, now)
+        val carried = within(carriedAt, now) || probeLeft
         carriedAt = null
+        probeLeft = false
         return carried
     }
 
@@ -66,6 +87,7 @@ class LeaveCarry(private val windowMs: Long = DEFAULT_WINDOW_MS) {
     fun reset() {
         leaveChosenAt = null
         carriedAt = null
+        probeLeft = false
     }
 
     private fun within(since: Long?, now: Long): Boolean = since != null && now - since in 0 until windowMs
