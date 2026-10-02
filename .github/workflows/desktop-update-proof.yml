@@ -21,7 +21,8 @@ name: Desktop update proof
 #               the renderer; an attacker who can set the app's environment already owns the
 #               account, and electron-updater and Chromium honour environment overrides of their
 #               own, so the variable adds no reach it did not have (src/main/platform/updates.ts).
-#               Proves the code in the pull request, not a release.
+#               Proves the code in the pull request, not a release. Legs: Windows x64 and arm64
+#               (NSIS), Linux x64 and arm64 (AppImage and deb), macOS arm64 and x64 (ad-hoc zip).
 #
 # Linux .deb: the installer runs dpkg through pkexec on a desktop, which has no authentication
 # agent on a headless runner – the deb legs run the app as root (electron-updater then runs dpkg
@@ -287,19 +288,19 @@ jobs:
           retention-days: 14
 
   published-macos:
-    name: published macos-${{ matrix.arch }} ${{ matrix.from }} → ${{ needs.resolve.outputs.to_tag }}
+    name: published macos-${{ matrix.mac.arch }} ${{ matrix.from }} → ${{ needs.resolve.outputs.to_tag }}
     needs: resolve
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.mac.os }}
     timeout-minutes: 35
     strategy:
       fail-fast: false
+      # Two matrix axes, not `include`: a bare `include` list next to `from` would add its
+      # values to every `from` leg in turn, and the last entry would win for all of them.
       matrix:
         from: ${{ fromJSON(needs.resolve.outputs.from_versions) }}
-        include:
-          - os: macos-latest
-            arch: arm64
-          - os: macos-15-intel
-            arch: x64
+        mac:
+          - { os: macos-latest, arch: arm64 }
+          - { os: macos-15-intel, arch: x64 }
     env:
       OUT: ${{ github.workspace }}/proof-out
       SMOKE: ${{ github.workspace }}/.github/smoke
@@ -317,8 +318,8 @@ jobs:
         run: |
           mkdir -p "$OUT"
           v="${FROM#v}"
-          dmg="$RUNNER_TEMP/zenium-$v-${{ matrix.arch }}.dmg"
-          curl -sSfL -o "$dmg" "https://github.com/$REPOSITORY/releases/download/$FROM/zenium-$v-${{ matrix.arch }}.dmg"
+          dmg="$RUNNER_TEMP/zenium-$v-${{ matrix.mac.arch }}.dmg"
+          curl -sSfL -o "$dmg" "https://github.com/$REPOSITORY/releases/download/$FROM/zenium-$v-${{ matrix.mac.arch }}.dmg"
           mount="$RUNNER_TEMP/zenium-dmg"
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
           rm -rf /Applications/Zenium.app
@@ -334,7 +335,7 @@ jobs:
         timeout-minutes: 20
         run: >
           node "$SMOKE/update-proof.mjs" drive --exe /Applications/Zenium.app/Contents/MacOS/Zenium
-          --app-names Zenium --out "$OUT" --label "macos-${{ matrix.arch }}-$FROM" --expect "$TO_VERSION"
+          --app-names Zenium --out "$OUT" --label "macos-${{ matrix.mac.arch }}-$FROM" --expect "$TO_VERSION"
       - name: What is installed now
         if: always()
         run: |
@@ -348,7 +349,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: update-proof-published-macos-${{ matrix.arch }}-${{ matrix.from }}
+          name: update-proof-published-macos-${{ matrix.mac.arch }}-${{ matrix.from }}
           path: proof-out
           if-no-files-found: warn
           retention-days: 14
@@ -370,9 +371,15 @@ jobs:
           - name: windows-x64
             os: windows-latest
             builder: --win nsis --x64
+          - name: windows-arm64
+            os: windows-11-arm
+            builder: --win nsis --arm64
           - name: linux-x64
             os: ubuntu-24.04
             builder: --linux AppImage deb --x64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            builder: --linux AppImage deb --arm64
           - name: macos-arm64
             os: macos-latest
             builder: --mac dmg zip --arm64
@@ -462,14 +469,14 @@ jobs:
           A: ${{ steps.versions.outputs.a }}
         run: |
           case "${{ matrix.name }}" in
-            windows-x64)
+            windows-*)
               setup=$(find pair/a -maxdepth 1 -name '*-setup.exe' | head -n 1)
               powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SMOKE/win-install.ps1" -Action install -Installer "$(cygpath -w "$setup")" -Out "$(cygpath -w "$OUT")" -Label a
-              exe=$(node -p "require('$OUT/a-install.json').exe")
+              exe=$(FACTS="$(cygpath -m "$OUT")/a-install.json" node -p "require(process.env.FACTS).exe")
               [[ -f "$exe" ]] || { echo "::error::installed executable missing: $exe"; exit 1; }
               echo "exe=$exe" >> "$GITHUB_OUTPUT"
               ;;
-            linux-x64)
+            linux-*)
               mkdir -p "$HOME/Applications"
               cp pair/a/*.AppImage "$HOME/Applications/"
               chmod +x "$HOME"/Applications/*.AppImage
@@ -496,15 +503,16 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
           base="http://127.0.0.1:$SERVE_PORT"
+          arch="${{ matrix.name }}"; arch="${arch#*-}"
           case "${{ matrix.name }}" in
-            windows-x64)
-              node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$OUT" --label "pair-windows-x64" --expect "$B" --env "ZEN_UPDATE_BASE_URL=$base"
+            windows-*)
+              node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$OUT" --label "pair-${{ matrix.name }}" --expect "$B" --env "ZEN_UPDATE_BASE_URL=$base"
               ;;
-            linux-x64)
+            linux-*)
               status=0
-              xvfb-run -a -s '-screen 0 1600x1000x24' node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$OUT" --label "pair-appimage-x64" --expect "$B" --extra-args="--no-sandbox --disable-gpu" --env "ZEN_UPDATE_BASE_URL=$base" || status=$?
+              xvfb-run -a -s '-screen 0 1600x1000x24' node "$SMOKE/update-proof.mjs" drive --exe "${{ steps.install.outputs.exe }}" --out "$OUT" --label "pair-appimage-$arch" --expect "$B" --extra-args="--no-sandbox --disable-gpu" --env "ZEN_UPDATE_BASE_URL=$base" || status=$?
               # deb as root: pkexec has no agent on a headless runner (see the header).
-              sudo -E env "PATH=$PATH" xvfb-run -a -s '-screen 0 1600x1000x24' node "$SMOKE/update-proof.mjs" drive --exe /opt/Zenium/zenium --out "$OUT" --label "pair-deb-x64" --expect "$B" --extra-args="--no-sandbox --disable-gpu" --env "ZEN_UPDATE_BASE_URL=$base" || status=$?
+              sudo -E env "PATH=$PATH" xvfb-run -a -s '-screen 0 1600x1000x24' node "$SMOKE/update-proof.mjs" drive --exe /opt/Zenium/zenium --out "$OUT" --label "pair-deb-$arch" --expect "$B" --extra-args="--no-sandbox --disable-gpu" --env "ZEN_UPDATE_BASE_URL=$base" || status=$?
               sudo chown -R "$(id -u):$(id -g)" "$OUT" || true
               exit $status
               ;;
@@ -516,8 +524,8 @@ jobs:
         if: always()
         run: |
           case "${{ matrix.name }}" in
-            windows-x64) node "$SMOKE/update-proof.mjs" version --exe "${{ steps.install.outputs.exe }}" || true ;;
-            linux-x64)
+            windows-*) node "$SMOKE/update-proof.mjs" version --exe "${{ steps.install.outputs.exe }}" || true ;;
+            linux-*)
               ls -la "$HOME/Applications" || true
               dpkg-query -W -f='${Package} ${Version} ${Status}\n' zenium || true
               node "$SMOKE/update-proof.mjs" version --exe /opt/Zenium/zenium || true ;;
