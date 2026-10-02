@@ -7,11 +7,13 @@ package app.zen.chromium
  * has no `chrome://crash`, and `WebViewRenderProcess.terminate()` alone reads as the system's
  * kill (the memory page), so the hook records the exit's word first; and [Host.debugHoldLoadHtml],
  * which holds a tab's next `view.loadHtml` back so the run can force the order in which a load
- * set up ahead of the crash page commits before it.
+ * set up ahead of the crash page commits before it; and [UnloadProbeRules.debugHoldProbe], which
+ * holds the unload probe off for the latency harness's baseline arm (`UnloadProbeLatency`).
  *
- * Reach: a hook is a Kotlin method on [Host], called in-process by the instrumentation (the
- * harness shares the app's process); none is a bridge method, none is on `window`, and the
- * bridge object is the chrome document's alone, so no page and no chrome script can reach one.
+ * Reach: a hook is a Kotlin method on [Host] (or on the rules object it switches), called
+ * in-process by the instrumentation (the harness shares the app's process); none is a bridge
+ * method, none is on `window`, and the bridge object is the chrome document's alone, so no page
+ * and no chrome script can reach one.
  * Gate: debuggable builds alone answer, as [BackgroundWorkHold] honours its extra – the decision
  * is `BuildConfig.DEBUG`, made where the boot payload is built; a release build's hook logs and
  * does nothing.
