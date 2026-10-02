@@ -37,9 +37,13 @@ import java.util.regex.Pattern
  * the patterns' own input, never set as a region of the file: Android's `Matcher` copies its
  * whole input into the native regex state on every `reset` and `region` (libcore's
  * `MatcherState::updateInput` – a `UChar` array the input's length and a `memcpy`, where
- * OpenJDK's sets two fields), so a region moved over the file at each hit copied the file each
- * time – 2.9 s per 8.4 million character unit, 23.7 s for Compose AI's nine units against 1.7 s,
- * at compat round 27's AFTER; the JVM gate, where a region costs nothing, never saw it.
+ * OpenJDK's sets two fields; and `Matcher.reset` takes the input's `toString()` first, a whole
+ * new String on the Java heap when the input is a builder), so a region moved over the file at
+ * each hit copied the file each time – 2.9 s per 8.4 million character unit, 23.7 s for Compose
+ * AI's nine units against 1.7 s, at compat round 27's AFTER, and for a file streamed into an
+ * `executeScript` builder (Weava's 1.7 million character `main.js`, 552 hits) a 3 MB String per
+ * hit, the Java heap at 191 of its 192 MB under blocking collections in seven rows of the sweep;
+ * the JVM gate, where a region costs nothing, never saw either.
  */
 object FrameIdioms {
     /** The literal's name for a unit with the idiom: `top` / `parent` stay the scope's. */
@@ -88,7 +92,7 @@ object FrameIdioms {
         val walkMatcher = walk.matcher("")
         val compareMatcher = compare.matcher("")
         for (word in WORDS) {
-            var at = text.indexOf(word, start)
+            var at = indexOf(text, word, start)
             while (at >= 0 && at + word.length <= end) {
                 if (isWord(text, at, word.length)) {
                     val window = text.subSequence(maxOf(start, at - WINDOW), minOf(end, at + word.length + WINDOW))
@@ -97,10 +101,17 @@ object FrameIdioms {
                     if (flags and COMPARE == 0 && compareMatcher.reset(window).find()) flags = flags or COMPARE
                     if (flags == IDIOM or WALK or COMPARE) return flags
                 }
-                at = text.indexOf(word, at + 1)
+                at = indexOf(text, word, at + 1)
             }
         }
         return flags
+    }
+
+    /** `word`'s next start in `text` at or after `from`: a String's and a builder's own search; the generic one for any other sequence. */
+    private fun indexOf(text: CharSequence, word: String, from: Int): Int = when (text) {
+        is String -> text.indexOf(word, from)
+        is StringBuilder -> text.indexOf(word, from)
+        else -> text.indexOf(word, from)
     }
 
     /** The function literal's name for `flags`: [SCOPE], [PAGE], or empty for an anonymous literal. */
