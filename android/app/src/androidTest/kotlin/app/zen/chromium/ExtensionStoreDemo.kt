@@ -251,7 +251,8 @@ class ExtensionStoreDemo : DemoHarness("ext-store-demo-state.json", "ext-android
 
     private fun openAddons() {
         zen("urlbar.runCommand", JSONObject().put("action", "addons.open"))
-        waitFor("Add-ons and Themes", 10_000) ?: Log.w(TAG, "the add-ons page never showed its title")
+        waitFor("Extensions and Mods", 10_000)
+            ?: Log.w(TAG, "the extensions page never showed its title")
     }
 
     // --- state and registry -----------------------------------------------------------------------
