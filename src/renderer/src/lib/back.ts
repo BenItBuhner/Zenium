@@ -3,6 +3,7 @@ import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { run } from './api'
+import { closeWithUndo } from './closeUndo'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from './motion/spring'
 import { closeAllPopovers, openPopoverCount, subscribePopovers } from './popoverStore'
 import { activeSpace, activeTab, tabOrderOf } from './selectors'
@@ -221,18 +222,17 @@ export function performRootBack(tab: Tab, state: UIState): boolean {
   switch (rootBackAction(tab, state)) {
     case 'opener':
       if (tab.openerTabId) run('tab.activate', { tabId: tab.openerTabId })
-      run('tab.close', { tabId: tab.id })
+      closeForBack(tab, state)
       return true
     case 'caller': {
       // Background the app first, which returns to the app that sent the URL; the tab goes once
       // the app is out of sight (Chrome's 500 ms), so the tab taking its place is never glimpsed.
       // The sent tab was an interruption: coming back to Zenium resumes the tab the user was on.
       const resume = lastActiveOther(tab, state)
-      const sentId = tab.id
       run('window.minimize', undefined)
       setTimeout(() => {
         if (resume) run('tab.activate', { tabId: resume.id })
-        run('tab.close', { tabId: sentId })
+        closeForBack(tab, state)
       }, CLOSE_AFTER_LEAVE_MS)
       return true
     }
@@ -245,20 +245,36 @@ export function performRootBack(tab: Tab, state: UIState): boolean {
         afterTabId: tab.id,
         containerId: tab.containerId
       })
-      run('tab.close', { tabId: tab.id })
+      closeForBack(tab, state)
       return true
     case 'closeTab':
-      run('tab.close', { tabId: tab.id })
+      closeForBack(tab, state)
       return true
     case 'previousTab': {
       const previous = lastActiveOther(tab, state)
       if (previous) run('tab.activate', { tabId: previous.id })
-      run('tab.close', { tabId: tab.id })
+      closeForBack(tab, state)
       return true
     }
     case 'background':
       return false
   }
+}
+
+/**
+ * The root back's close of `tab`, with Undo on the toast ({@link closeWithUndo}, §9.33): on a
+ * touch host the close goes through at once – the page's own "Leave site?" never comes for a
+ * close (OS-40 part B, §9.23: a page objecting under a close is let go), so the toast's Undo is
+ * the protection the question used to be, here as on the overview's cards and the quick menu's
+ * Close Tab. `tab` was the tab in front as back was pressed, so Undo brings it back in front.
+ */
+function closeForBack(tab: Tab, state: UIState): void {
+  closeWithUndo({
+    tabs: [tab],
+    settings: state.settings,
+    activeTabId: tab.id,
+    close: () => run('tab.close', { tabId: tab.id })
+  })
 }
 
 /** What a back at the first page of `tab`'s history does. */

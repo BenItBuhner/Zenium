@@ -6,6 +6,7 @@ import { act, createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { BLANK_URL, SETTINGS_URL } from '@shared/url'
+import { MOTION_MESSAGE_MS, MOTION_POP_MS, MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 
 /*
  * The phone tab overview rendered for real: (A) every kind of card the grid draws – a pinned
@@ -856,6 +857,51 @@ describe('a card dragged out of its group', () => {
     expect(commands()).toEqual([])
     act(() => settleSprings())
     expect(liftStore.get().phase).toBe('idle')
+  })
+})
+
+// --- the card in the hand: compositor-only (motion spec §0.4) -------------------------------------
+
+describe('the card in the hand', () => {
+  const seat = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-overview-ghost-seat')!
+  const card = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-overview-ghost')!
+
+  it('follows by a translate on its seat and scales on the card inside: no left/top, no frame of layout', () => {
+    render(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')]))
+    pickUp('a')
+    act(() => settleSprings())
+    const origin = liftStore.get().ghost!
+    // The seat is the fixed, sized element and carries the follow alone.
+    expect(seat().contains(card())).toBe(true)
+    expect(seat().style.transform).toBe(`translate(${origin.x}px, ${origin.y}px)`)
+    expect(seat().style.width).toBe(`${origin.width}px`)
+    expect(seat().style.height).toBe(`${origin.height}px`)
+    expect(seat().style.left).toBe('')
+    expect(seat().style.top).toBe('')
+    // The card carries the lift's scale alone – the 120 ms transition is its – and no position.
+    expect(card().style.transform).toBe('scale(1.02)')
+    expect(card().style.left).toBe('')
+    expect(card().style.top).toBe('')
+    expect(card().style.width).toBe('')
+    expect(card().style.height).toBe('')
+    expect(card().classList.contains('zen-overview-card')).toBe(true)
+    // The card keeps the hooks the stylesheet and the drivers read.
+    expect(card().dataset.active).toBe('true')
+
+    // A drag moves the seat's translate and nothing else on either element.
+    const from = at('a', 0.5, 0.5)
+    drag(from.x + 40, from.y + 60)
+    act(() => settleSprings())
+    const moved = liftStore.get().ghost!
+    expect(moved).toMatchObject({ x: origin.x + 40, y: origin.y + 60 })
+    expect(seat().style.transform).toBe(`translate(${moved.x}px, ${moved.y}px)`)
+    expect(seat().style.left).toBe('')
+    expect(seat().style.top).toBe('')
+    expect(card().style.transform).toBe('scale(1.02)')
+    expect(Array.from(card().style)).toEqual(['transform'])
+    expect(Array.from(seat().style).sort()).toEqual(['height', 'transform', 'width'])
+    letGo(from.x + 40, from.y + 60)
+    act(() => settleSprings())
   })
 })
 
@@ -3108,11 +3154,11 @@ describe('the Tabs pane with no tab', () => {
     )
     expect(own).toHaveLength(2)
     expect(own.find((r) => !r.reduced)?.declarations.get('animation')).toEqual({
-      value: 'zen-fade 120ms var(--zen-ease)',
+      value: 'zen-fade var(--zen-motion-state) var(--zen-ease)',
       important: false
     })
     expect(own.find((r) => r.reduced)?.declarations.get('animation')).toEqual({
-      value: 'zen-fade 120ms var(--zen-ease)',
+      value: 'zen-fade var(--zen-motion-state) var(--zen-ease)',
       important: true
     })
     for (const rule of own) {
@@ -3192,7 +3238,19 @@ const commaList = (value: string): string[] => {
   items.push(current.trim())
   return items
 }
+/**
+ * A duration's ms: digits before `s` / `ms`, or the stylesheet's own face of a motion token –
+ * `var(--zen-motion-state)` – read at the token's value (`lib/__tests__/motionTokens.test.ts`
+ * holds main.css's declaration equal to it).
+ */
+const DURATION_VARS: Record<string, number> = {
+  'var(--zen-motion-state)': MOTION_STATE_MS,
+  'var(--zen-motion-pop)': MOTION_POP_MS,
+  'var(--zen-motion-message)': MOTION_MESSAGE_MS
+}
+const isDuration = (token: string): boolean => /m?s$/.test(token) || token in DURATION_VARS
 const ms = (token: string): number => {
+  if (token in DURATION_VARS) return DURATION_VARS[token]!
   const m = /^([\d.]+)(m?s)$/.exec(token)
   if (!m) throw new Error(`${token} is no duration`)
   return Number(m[1]) * (m[2] === 's' ? 1000 : 1)
@@ -3231,7 +3289,7 @@ describe('the chrome switch in the stylesheet', () => {
   const transitions = (selector: string, reduced = false): Map<string, number> => {
     const list = commaList(declared(selector, 'transition') ?? '').filter(Boolean)
     const properties = list.map((entry) => entry.split(' ')[0])
-    const durations = list.map((entry) => ms(entry.split(' ').find((t) => /m?s$/.test(t))!))
+    const durations = list.map((entry) => ms(entry.split(' ').find(isDuration)!))
     if (reduced) {
       const remover = rules.find(
         (r) => r.reduced && r.selectors.includes('*') && r.declarations.has('transition-property')
@@ -3250,7 +3308,7 @@ describe('the chrome switch in the stylesheet', () => {
       durations.splice(
         0,
         durations.length,
-        ...entries.map((e) => ms(e.split(' ').find((t) => /m?s$/.test(t))!))
+        ...entries.map((e) => ms(e.split(' ').find(isDuration)!))
       )
     }
     return new Map(properties.map((p, i) => [p, durations[i]]))
@@ -3291,7 +3349,7 @@ describe('the chrome switch in the stylesheet', () => {
     expect(remover?.declarations.get('animation')).toEqual({ value: 'none', important: true })
     const overview = forSelector('.zen-overview', true)
     expect(overview.map((r) => r.declarations.get('animation')).find(Boolean)).toEqual({
-      value: 'zen-fade 120ms var(--zen-ease)',
+      value: 'zen-fade var(--zen-motion-state) var(--zen-ease)',
       important: true
     })
   })
@@ -3299,12 +3357,14 @@ describe('the chrome switch in the stylesheet', () => {
   it('the panes and the segment change in place on a 120 ms opacity fade with no movement, the same under reduced motion (v2 §11.4)', () => {
     // A pane coming up: the 120 ms fade, written out again `!important` past the sheet's closing
     // rule that removes every other animation.
-    expect(declared('.zen-overview-pane', 'animation')).toMatch(/^zen-fade 120ms/)
+    expect(declared('.zen-overview-pane', 'animation')).toMatch(
+      /^zen-fade var\(--zen-motion-state\)/
+    )
     expect(
       forSelector('.zen-overview-pane', true)
         .map((r) => r.declarations.get('animation'))
         .find(Boolean)
-    ).toEqual({ value: 'zen-fade 120ms var(--zen-ease)', important: true })
+    ).toEqual({ value: 'zen-fade var(--zen-motion-state) var(--zen-ease)', important: true })
     // The segment primitive (§9.34): the label's ink and the line's opacity, nothing that moves.
     // Under reduced motion the line's opacity fade stays (re-declared, opacity alone) and the
     // ink's colour tween is removed: §11.3 keeps opacity fades, no other property's.

@@ -19,30 +19,46 @@ import {
   dismissPosted,
   postBanner,
   postedKeyUp,
+  postedShown,
   postedUp,
   setBandDoor,
   type BandDoor
 } from '../post'
-import type { BandRequest } from '../tenants'
+import type { BandEndReason, BandRequest } from '../tenants'
 
 interface FakeBand extends BandDoor {
-  shown: Array<{ id: number; request: BandRequest }>
+  posted: Array<{ id: number; request: BandRequest }>
   standing: Map<number, BandRequest>
-  end(id: number, reason: BannerDismissReason | 'displaced'): void
+  /** A cover over the band: a request posted under it waits, undrawn, until `uncover`. */
+  covered: boolean
+  drawn: Set<number>
+  uncover(): void
+  end(id: number, reason: BandEndReason): void
 }
 
 function fakeBand(): FakeBand {
   let next = 100
   const listeners = new Set<() => void>()
+  const publish = (): void => {
+    for (const l of listeners) l()
+  }
   const band: FakeBand = {
-    shown: [],
+    posted: [],
     standing: new Map(),
+    covered: false,
+    drawn: new Set(),
     show(request) {
       const id = next++
-      band.shown.push({ id, request })
+      band.posted.push({ id, request })
       band.standing.set(id, request)
-      for (const l of listeners) l()
+      if (!band.covered) band.drawn.add(id)
+      publish()
       return id
+    },
+    uncover() {
+      band.covered = false
+      for (const id of band.standing.keys()) band.drawn.add(id)
+      publish()
     },
     dismiss(id, reason) {
       band.end(id, reason)
@@ -51,11 +67,13 @@ function fakeBand(): FakeBand {
       const request = band.standing.get(id)
       if (!request) return
       band.standing.delete(id)
-      for (const l of listeners) l()
+      band.drawn.delete(id)
+      publish()
       request.onEnd?.(reason)
     },
     up: (id) => band.standing.has(id),
     upByKey: (key) => [...band.standing.values()].some((r) => r.key === key),
+    shown: (id) => band.standing.has(id) && band.drawn.has(id),
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -111,13 +129,14 @@ describe('postBanner', () => {
       'offer'
     )
     expect(uiStore.get().banners).toEqual([])
-    expect(band.shown).toHaveLength(1)
-    expect(band.shown[0].request.form).toBe('offer')
-    expect(band.shown[0].request.title).toBe('Show Reader View?')
+    expect(band.posted).toHaveLength(1)
+    expect(band.posted[0].request.form).toBe('offer')
+    expect(band.posted[0].request.title).toBe('Show Reader View?')
     expect(postedUp(id)).toBe(true)
+    expect(postedShown(id)).toBe(true)
     expect(postedKeyUp('reader')).toBe(true)
     // The band's own end reaches the tenant in its vocabulary…
-    band.end(band.shown[0].id, 'displaced')
+    band.end(band.posted[0].id, 'displaced')
     expect(heard).toEqual(['program'])
     expect(postedUp(id)).toBe(false)
     expect(postedKeyUp('reader')).toBe(false)
@@ -142,9 +161,12 @@ describe('postBanner', () => {
     setBandDoor(band)
     expect(bandIsTheDoor()).toBe(false)
     const id = postBanner({ title: 'Desktop', duration: null }, 'state')
-    expect(band.shown).toEqual([])
+    expect(band.posted).toEqual([])
     expect(uiStore.get().banners.map((b) => b.title)).toEqual(['Desktop'])
+    // The stack's card is drawn as it is posted.
+    expect(postedShown(id)).toBe(true)
     dismissPosted(id)
+    expect(postedShown(id)).toBe(false)
   })
 
   it('a message posted to the banner stack is still found after the band mounts', () => {
@@ -154,5 +176,83 @@ describe('postBanner', () => {
     expect(postedKeyUp('early')).toBe(true)
     dismissPosted(id)
     expect(postedKeyUp('early')).toBe(false)
+  })
+
+  describe('a post the band holds back (seed #43)', () => {
+    const offer = (onShown?: () => void): number =>
+      postBanner(
+        {
+          title: 'Add Sketch to Home screen',
+          key: 'install',
+          duration: 10_000,
+          action: { label: 'Add', onPick: () => undefined }
+        },
+        'offer',
+        { onShown }
+      )
+
+    it('is up, not shown, until the band draws it; onShown then hears of the first drawn frame once', () => {
+      const band = fakeBand()
+      setBandDoor(band)
+      band.covered = true
+      const shown = vi.fn()
+      const id = offer(shown)
+      expect(postedUp(id)).toBe(true)
+      expect(postedKeyUp('install')).toBe(true)
+      expect(postedShown(id)).toBe(false)
+      expect(shown).not.toHaveBeenCalled()
+      // The band's other changes under the cover are not the show.
+      band.show({ form: 'state', title: 'No internet connection', clock: null })
+      expect(shown).not.toHaveBeenCalled()
+      band.uncover()
+      expect(postedShown(id)).toBe(true)
+      expect(shown).toHaveBeenCalledTimes(1)
+      // Later changes of the band repeat nothing.
+      band.covered = true
+      band.uncover()
+      band.show({ form: 'state', title: 'Back online', clock: null })
+      expect(shown).toHaveBeenCalledTimes(1)
+    })
+
+    it('shown at the post gets no onShown: its tenant reads postedShown at the post', () => {
+      const band = fakeBand()
+      setBandDoor(band)
+      const shown = vi.fn()
+      const id = offer(shown)
+      expect(postedShown(id)).toBe(true)
+      band.covered = true
+      band.uncover()
+      expect(shown).not.toHaveBeenCalled()
+    })
+
+    it('ended before it is ever drawn – by the band or by its tenant – never hears of a show, and the watch goes with it', () => {
+      const band = fakeBand()
+      setBandDoor(band)
+      band.covered = true
+      const byBand = vi.fn()
+      const first = offer(byBand)
+      band.end(band.posted[0].id, 'back')
+      expect(postedUp(first)).toBe(false)
+      const byTenant = vi.fn()
+      const second = offer(byTenant)
+      dismissPosted(second)
+      expect(postedUp(second)).toBe(false)
+      band.uncover()
+      expect(byBand).not.toHaveBeenCalled()
+      expect(byTenant).not.toHaveBeenCalled()
+      expect(postedShown(first)).toBe(false)
+      expect(postedShown(second)).toBe(false)
+    })
+
+    it('a tenant with no onShown is watched for nothing', () => {
+      const band = fakeBand()
+      setBandDoor(band)
+      band.covered = true
+      const id = offer()
+      expect(postedShown(id)).toBe(false)
+      band.uncover()
+      expect(postedShown(id)).toBe(true)
+      dismissPosted(id)
+    })
   })
 })

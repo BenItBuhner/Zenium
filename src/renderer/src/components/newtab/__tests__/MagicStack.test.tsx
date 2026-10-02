@@ -1044,10 +1044,10 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       /opacity: 1;/
     )
     expect(rule(":root[data-form-factor='phone'] .zen-mstack-card[data-leaving]")).toMatch(
-      /animation: zen-mstack-leave 120ms/
+      /animation: zen-mstack-leave var\(--zen-motion-state\)/
     )
     expect(rule(":root[data-form-factor='phone'] .zen-mstack-card[data-arriving]")).toMatch(
-      /animation: zen-mstack-arrive 120ms/
+      /animation: zen-mstack-arrive var\(--zen-motion-state\)/
     )
     expect(rule('@keyframes zen-mstack-arrive')).toMatch(
       /from \{\s*opacity: 0;\s*transform: scale\(0\.96\);/

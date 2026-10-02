@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -17,10 +19,14 @@ import { BLANK_URL } from '@shared/url'
  * the gesture stage: a new band waits, a standing one stays) – how it fills the band's seam: the
  * page's offset to the core per frame (`layout.pageOffset`), the seat for the layout reporter at
  * the lesser of the seat and the destination on a departure and at the height at the rest
- * (`lib/pageBand.ts`), and a cut – no travel – when the frame's page changes; and what the tabs
+ * (`lib/pageBand.ts`), unseated at a drag's first frame below it (no departure announced – the
+ * page keeps covering the frame under it, as Android's host keeps its layer; W8-M2b), and a cut
+ * – no travel – when the frame's page changes; and what the tabs
  * tell the model (a tab closing, a document changing). Its tenants: the default-browser state
  * stands while the OS names another browser; the crash-restore state while the session holds the
- * last run's pages for an answer.
+ * last run's pages for an answer. With the band it mounts the two corner masks that ride the
+ * page's offset (`PageBandCorners`; W8-M2c): the frame's radius at the top corners of a page
+ * the chrome draws under the band, hidden at home, taking no pointer.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -42,6 +48,7 @@ type BandDismissReason = import('@renderer/lib/band').BandDismissReason
 const {
   bandOffset,
   bandSeat,
+  bandSeatStore,
   layoutBand,
   moveChromePage,
   movePage,
@@ -170,6 +177,17 @@ function renderWithLayer(s: UIState): void {
   })
 }
 const layer = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-band-layer]')!
+/** The two corner masks the host mounts with the band (`PageBandCorners`), or null without the host. */
+const corners = (): HTMLElement | null => mount!.querySelector<HTMLElement>('[data-band-corners]')
+
+const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+const bare = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ')
+/** The first rule at `selector` in main.css, comments and runs of whitespace gone. */
+const rule = (selector: string): string => {
+  const at = bare.indexOf(`${selector} {`)
+  expect(at, selector).toBeGreaterThanOrEqual(0)
+  return bare.slice(at, bare.indexOf('}', at))
+}
 
 /** Run the clock until it goes idle (the spring rested) or `limit` frames pass. */
 function settle(limit = 200): void {
@@ -198,6 +216,56 @@ const offsets = (): number[] =>
   run.mock.calls
     .filter(([c]) => c === 'layout.pageOffset')
     .map(([, a]) => (a as { offset: number }).offset)
+
+/**
+ * The seats written from here on, in order – each one a layout of the page under the band
+ * (the layout reporter lays out on the seat store's every change).
+ */
+function seats(): { written: number[]; off: () => void } {
+  const written: number[] = []
+  const off = bandSeatStore.subscribe(() => written.push(bandSeat()))
+  return { written, off }
+}
+
+const MOUSE = 7
+const HOLD = { x: 200, y: 30 }
+
+/**
+ * A mouse on the band, as `useSwipeDismiss` hears it: `down` takes hold where the band is,
+ * `move(dy)` is the pointer `dy` px (negative up) from there, `up` lets go. happy-dom has no
+ * pointer capture, so the band's take and release of it are stubbed not to throw.
+ */
+function mouse(): { down: () => void; move: (dy: number) => void; up: (dy: number) => void } {
+  const captured = new Set<number>()
+  const at = (type: string, dy: number): void => {
+    const el = band()!
+    el.setPointerCapture = (id: number) => {
+      captured.add(id)
+    }
+    el.releasePointerCapture = (id: number) => {
+      captured.delete(id)
+    }
+    el.hasPointerCapture = (id: number) => captured.has(id)
+    act(() => {
+      el.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: MOUSE,
+          pointerType: 'mouse',
+          button: 0,
+          clientX: HOLD.x,
+          clientY: HOLD.y + dy
+        })
+      )
+    })
+  }
+  return {
+    down: () => at('pointerdown', 0),
+    move: (dy) => at('pointermove', dy),
+    up: (dy) => at('pointerup', dy)
+  }
+}
 
 const offline = (tabId: string | null = null): number =>
   showBand({
@@ -513,6 +581,311 @@ describe('PageBandHost – the seam to the page (motion spec §3.4, §6)', () =>
   })
 })
 
+describe('PageBandHost – a drag on the seated band (motion spec §3.4; W8-M2b)', () => {
+  const H = BAND_HEIGHT_TWO_LINE
+
+  it("a drag's first frame below the seat unseats the band – seat 0, the offset the frame's, the report { seat: 0, offset } – one relayout at the drag's start and none per frame after; the page the chrome draws rides full-frame, translated by the offset, never a bare strip under it", () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    settle()
+    const el = layer()
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    expect(el.style.top).toBe(`${H}px`)
+    expect(el.style.transform).toBe('')
+    run.mockClear()
+    const { written, off } = seats()
+    const m = mouse()
+    // Taking hold moves nothing: the pointer has not left the slop circle.
+    m.down()
+    expect(written).toEqual([])
+    expect(offsets()).toEqual([])
+    // The first frame below the seat, no departure announced: the band is unseated before the
+    // page is moved – the seat 0, the offset the frame's own – and the layout reporter's word
+    // is the same pair. The layer's box is the whole frame again, translated by the offset: the
+    // page covers the frame under it to its bottom.
+    m.move(-20)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 20)
+    expect(offsets()).toEqual([H - 20])
+    expect(layoutBand()).toEqual({ seat: 0, offset: H - 20 })
+    expect(written).toEqual([0])
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${H - 20}px)`)
+    // The frames after it move the page alone: no seat written, no layout.
+    m.move(-30)
+    m.move(-35)
+    expect(offsets()).toEqual([H - 20, H - 30, H - 35])
+    expect(layoutBand()).toEqual({ seat: 0, offset: H - 35 })
+    expect(written).toEqual([0])
+    expect(el.style.transform).toBe(`translateY(${H - 35}px)`)
+    off()
+  })
+
+  it('a travel is as it was: the departure seats the lesser of the seat and the destination, its frames – below the seat too – write no seat, the rest seats the height; one layout per travel', () => {
+    offline()
+    render(state())
+    settle()
+    const { written, off } = seats()
+    // 76 → 56, the two-line state giving way to a one-line one: the departure seats 56 – the
+    // one layout – and the frames down to it (a travel's, whatever their place against the
+    // seat) leave it; the rest holds it.
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    act(() => {
+      bandStore.set((s) => ({ entries: s.entries.filter((e) => e.key !== 'connectivity') }))
+    })
+    render(state())
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE])
+    while (framesPending() > 0) {
+      frames.tick()
+      expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    }
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE])
+    // 56 → 76: the seat stays the lesser through the travel, the rest seats 76.
+    act(() => {
+      offline()
+    })
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    frames.tick(3)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBeGreaterThan(BAND_HEIGHT_ONE_LINE)
+    settle()
+    expect(bandSeat()).toBe(H)
+    expect(bandOffset()).toBe(H)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE, H])
+    // The leave: 0 at the departure, the frames home, 0 at the rest – nothing written twice.
+    act(() => {
+      resetBands()
+    })
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE, H, 0])
+    settle()
+    expect(band()).toBeNull()
+    expect(layoutBand()).toBeUndefined()
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE, H, 0])
+    off()
+  })
+
+  it('let go short of half, the band springs back: the return is a travel whose departure keeps the drag’s 0, and the rest re-seats at the height; let go past half, it leaves: the departure keeps 0, the rest at 0 is home', () => {
+    offline()
+    render(state())
+    settle()
+    const { written, off } = seats()
+    const m = mouse()
+    m.down()
+    m.move(-20)
+    expect(bandSeat()).toBe(0)
+    // 56 of 76 is short of half: a return toward 76 – the departure's lesser is the 0 the drag
+    // left, so the page rides down unseated and is laid out under the band once, at the rest.
+    m.up(-20)
+    expect(standing()).toBe('connectivity')
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([0])
+    frames.tick(2)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBeGreaterThan(H - 20)
+    settle()
+    expect(bandSeat()).toBe(H)
+    expect(bandOffset()).toBe(H)
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    expect(written).toEqual([0, H])
+    // Past half: the release dismisses – the leave's departure keeps the 0 the drag left, the
+    // frames bring the page home and the band is gone at the rest, nothing laid out twice.
+    run.mockClear()
+    m.down()
+    m.move(-50)
+    expect(bandSeat()).toBe(0)
+    expect(offsets()).toEqual([H - 50])
+    expect(written).toEqual([0, H, 0])
+    m.up(-50)
+    expect(standing()).toBeNull()
+    expect(band()).not.toBeNull()
+    settle()
+    expect(band()).toBeNull()
+    expect(bandOffset()).toBe(0)
+    expect(bandSeat()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    expect(written).toEqual([0, H, 0])
+    off()
+  })
+
+  it('a drag frame at the seat – the band pulled down past its rest, where the page can go no lower than the height – or above it – a taller tenant arriving under the pointer – leaves the seat; the first frame below it unseats', () => {
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    render(state())
+    settle()
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    run.mockClear()
+    const { written, off } = seats()
+    const m = mouse()
+    m.down()
+    // Down: the page is already at the band's height, so the frame is at the seat – nothing is
+    // unseated, nothing moves, nothing is laid out.
+    m.move(20)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(offsets()).toEqual([])
+    expect(written).toEqual([])
+    // The two-line state arrives under the pointer: the band's height is 76 now (the content
+    // swaps; the travel waits for the release), and the next frame down puts the page at 76 –
+    // above the seat of 56. Nothing bared: the page is laid out under 56 and stands 20 below
+    // that; the seat is left where it is.
+    act(() => {
+      offline()
+    })
+    m.move(30)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(H)
+    expect(offsets()).toEqual([H])
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: H })
+    expect(written).toEqual([])
+    // Up, but still above the seat (66 of 76): the seat is left. Under it (46): the drag's
+    // unseat, as on any band.
+    m.move(-10)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(H - 10)
+    expect(written).toEqual([])
+    m.move(-30)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 30)
+    expect(written).toEqual([0])
+    m.up(-30)
+    settle()
+    expect(standing()).toBe('connectivity')
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    expect(written).toEqual([0, H])
+    off()
+  })
+})
+
+describe('PageBandHost – a drag that grabs the band mid-travel (motion spec §3.4; W8-M2d, the Design Lead’s seed D8)', () => {
+  const H = BAND_HEIGHT_TWO_LINE
+
+  it('the band travelling down to a lower seat (76 → 56, seated at 56 by the departure) is grabbed before its rest: the take-hold ends the travel for the seam, the drag’s first frame below the seat unseats – seat 0, the frame’s offset, the report { seat: 0, offset }, the layer full-frame – and the frames after write no seat; let go short of half, the return keeps the 0 and the rest re-seats at the height', () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    settle()
+    const el = layer()
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    // The two-line state gives way to a one-line one: a travel 76 → 56 whose departure seats
+    // 56 – the one layout – under which the page rides down.
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    act(() => {
+      bandStore.set((s) => ({ entries: s.entries.filter((e) => e.key !== 'connectivity') }))
+    })
+    renderWithLayer(state({ front: 'settings' }))
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    const { written, off } = seats()
+    frames.tick(3)
+    // Mid-travel: the page between 76 and 56, the seat 56 under it, the layer laid out under
+    // the seat and translated by the rest, frames still pending.
+    const caught = bandOffset()
+    expect(caught).toBeLessThan(H)
+    expect(caught).toBeGreaterThan(BAND_HEIGHT_ONE_LINE)
+    expect(framesPending()).toBeGreaterThan(0)
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe(`translateY(${caught - BAND_HEIGHT_ONE_LINE}px)`)
+    expect(written).toEqual([])
+    run.mockClear()
+    const m = mouse()
+    // Taking hold moves nothing: the pointer has not left the slop circle.
+    m.down()
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(written).toEqual([])
+    // The first frame: the hand stops the travel where it is (the clock idle) and the drag's
+    // 1:1 from the band's height puts the page at 36 – below the seat of 56. No travel is under
+    // way for the seam any more, so it unseats before the page is moved: the seat 0, the
+    // offset the frame's, the report the same pair, the layer the whole frame translated by
+    // the offset – the page covers the frame under it to its bottom, no strip bared.
+    m.move(-20)
+    expect(framesPending()).toBe(0)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE - 20)
+    expect(offsets()).toEqual([BAND_HEIGHT_ONE_LINE - 20])
+    expect(layoutBand()).toEqual({ seat: 0, offset: BAND_HEIGHT_ONE_LINE - 20 })
+    expect(written).toEqual([0])
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_ONE_LINE - 20}px)`)
+    // The frames after it move the page alone.
+    m.move(-25)
+    expect(offsets()).toEqual([BAND_HEIGHT_ONE_LINE - 20, BAND_HEIGHT_ONE_LINE - 25])
+    expect(layoutBand()).toEqual({ seat: 0, offset: BAND_HEIGHT_ONE_LINE - 25 })
+    expect(written).toEqual([0])
+    // Let go at 31 of 56, short of half: the return's departure keeps the 0 the drag left, and
+    // the rest re-seats at the height – the page laid out under the band once more.
+    m.up(-25)
+    expect(standing()).toBe('k1')
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([0])
+    settle()
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe('')
+    expect(written).toEqual([0, BAND_HEIGHT_ONE_LINE])
+    off()
+  })
+
+  it('the band travelling up to a taller seat (56 → 76, the seat the lesser, 56) grabbed mid-travel: the take-hold alone unseats nothing – the drag’s first frame at the seat (76 − 20 = 56) leaves it, the first below it unseats; let go past half, the band under the hand goes and the state behind it stands: its travel departs from the drag’s 0 and the rest re-seats at 56', () => {
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    render(state())
+    settle()
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    const { written, off } = seats()
+    // The two-line state arrives: a travel 56 → 76 whose departure keeps the lesser seat.
+    act(() => {
+      offline()
+    })
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    frames.tick(3)
+    const caught = bandOffset()
+    expect(caught).toBeGreaterThan(BAND_HEIGHT_ONE_LINE)
+    expect(caught).toBeLessThan(H)
+    expect(written).toEqual([])
+    run.mockClear()
+    const m = mouse()
+    m.down()
+    // The first frame lands at the seat: the travel is over for the seam, but a frame at the
+    // seat bares nothing (the page laid out under 56 stands at 56), so the seat is left – the
+    // take-hold itself unseats nothing.
+    m.move(-20)
+    expect(framesPending()).toBe(0)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(offsets()).toEqual([BAND_HEIGHT_ONE_LINE])
+    expect(written).toEqual([])
+    // The first frame below it: the drag's unseat, as on any band.
+    m.move(-50)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 50)
+    expect(layoutBand()).toEqual({ seat: 0, offset: H - 50 })
+    expect(written).toEqual([0])
+    // Let go at 26 of 76, past half: the two-line state under the hand is dismissed and the
+    // one-line state behind it stands – the leave turns into a travel toward 56 whose
+    // departure keeps the 0 the drag left; the rest re-seats at 56, the page laid out under
+    // the band once.
+    m.up(-50)
+    expect(standing()).toBe('k1')
+    expect(band()).not.toBeNull()
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([0])
+    settle()
+    expect(
+      band()!.querySelector('.zen-band-content:not([data-leaving]) .zen-band-title')!.textContent
+    ).toBe('One line')
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    expect(written).toEqual([0, BAND_HEIGHT_ONE_LINE])
+    off()
+  })
+})
+
 describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, §10)', () => {
   it('a chrome-drawn page is moved through the page seam: its layer is translated per frame by the very offset the core hears, laid out under the seat at the rest – offset − seat, as the views’ bounds move – and comes home the same way on a leave; at home it is a plain box', () => {
     offline()
@@ -671,6 +1044,152 @@ describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, 
     expect(desktop.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
     expect(desktop.style.transform).toBe(`translateY(${30 - BAND_HEIGHT_TWO_LINE}px)`)
     expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_TWO_LINE, offset: 30 })
+  })
+})
+
+describe('PageBandHost – the corner masks under the band (motion spec §3.1, §3.4; W8-M2c)', () => {
+  const H = BAND_HEIGHT_TWO_LINE
+
+  it("the masks follow the offset store: translated per frame to the very offset the core hears and the layer rides on – the page's top edge, whatever the seat – at the rest the seat itself, and home again as the page comes home; a frame of the travel re-renders nothing", () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    const el = corners()!
+    expect(el).not.toBeNull()
+    expect(el.getAttribute('aria-hidden')).toBe('true')
+    expect(el.querySelectorAll('.zen-band-corner')).toHaveLength(2)
+    expect(el.querySelector('.zen-band-corner[data-side="left"]')).not.toBeNull()
+    expect(el.querySelector('.zen-band-corner[data-side="right"]')).not.toBeNull()
+    // Before the first frame: home, hidden, no transform.
+    expect(el.hasAttribute('data-home')).toBe(true)
+    expect(el.style.transform).toBe('')
+    frames.tick(3)
+    const travelling = offsets()
+    expect(travelling).toHaveLength(3)
+    // Unseated while the page travels: the masks stand at the offset – the layer's translate
+    // against a seat of 0 is the same number.
+    expect(bandSeat()).toBe(0)
+    expect(el.hasAttribute('data-home')).toBe(false)
+    expect(el.style.transform).toBe(`translateY(${travelling.at(-1)}px)`)
+    expect(layer().style.transform).toBe(`translateY(${travelling.at(-1)}px)`)
+    settle()
+    // At the rest the page is laid out under the seat and the masks stand at it: the page's
+    // top edge, where the layer's box begins.
+    expect(bandSeat()).toBe(H)
+    expect(bandOffset()).toBe(H)
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    expect(el.hasAttribute('data-home')).toBe(false)
+    expect(layer().style.top).toBe(`${H}px`)
+    // The leave: the page comes home per frame and the masks with it; home, they hide.
+    run.mockClear()
+    act(() => dismissBandByKey('connectivity'))
+    frames.tick(2)
+    const leaving = offsets()
+    expect(leaving).toHaveLength(2)
+    expect(el.style.transform).toBe(`translateY(${leaving.at(-1)}px)`)
+    expect(el.hasAttribute('data-home')).toBe(false)
+    settle()
+    expect(bandOffset()).toBe(0)
+    expect(band()).toBeNull()
+    expect(el.style.transform).toBe('')
+    expect(el.hasAttribute('data-home')).toBe(true)
+    // The same element throughout: written to, never re-rendered into another.
+    expect(corners()).toBe(el)
+  })
+
+  it('a drag moves them as it moves the page: at the offset of every frame, the seat gone; a cut lands them where the band stands at once', () => {
+    offline()
+    render(state())
+    settle()
+    const el = corners()!
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    const m = mouse()
+    m.down()
+    m.move(-20)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 20)
+    expect(el.style.transform).toBe(`translateY(${H - 20}px)`)
+    m.move(-35)
+    expect(el.style.transform).toBe(`translateY(${H - 35}px)`)
+    // Let go short of half-way: the band travels back to its rest and the masks to the seat.
+    m.up(-35)
+    settle()
+    expect(bandSeat()).toBe(H)
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    // A cut: the page's fullscreen takes the band at once – the masks home at once, no travel.
+    render(state({ htmlFullscreenTabId: 'page' }))
+    expect(framesPending()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(el.hasAttribute('data-home')).toBe(true)
+    expect(el.style.transform).toBe('')
+    // Its exit: the band stands again at once, the masks at the seat.
+    render(state())
+    expect(framesPending()).toBe(0)
+    expect(bandOffset()).toBe(H)
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    expect(el.hasAttribute('data-home')).toBe(false)
+  })
+
+  it('home where no band stands – the empty frame, a fullscreen, a page shown in another window – and absent where the host is not mounted: the layer alone, as Android mounts it, carries none', () => {
+    offline()
+    render(state({ front: null }))
+    expect(standing()).toBeNull()
+    expect(corners()!.hasAttribute('data-home')).toBe(true)
+    expect(corners()!.style.transform).toBe('')
+    render(state({ fullscreen: true }))
+    expect(model()).toMatchObject({ ok: false })
+    expect(corners()!.hasAttribute('data-home')).toBe(true)
+    render(state({ foreign: ['page'] }))
+    expect(model()).toMatchObject({ ok: false })
+    expect(corners()!.hasAttribute('data-home')).toBe(true)
+    expect(bandOffset()).toBe(0)
+    // The chrome page's layer without the desktop's host: no masks, and the chrome page's pair
+    // moves none.
+    act(() => root!.render(null))
+    resetBands()
+    resetPageBand()
+    act(() => {
+      root!.render(
+        <PageBandLayer source="chrome-page">
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      )
+    })
+    expect(corners()).toBeNull()
+    act(() => {
+      moveChromePage(24)
+      seatChromePage(BAND_HEIGHT_ONE_LINE)
+    })
+    expect(corners()).toBeNull()
+    expect(layer().style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+  })
+
+  it("the masks' chrome (main.css): a strip the frame's radius tall over the band's layer and the page's picture, under the band, taking no pointer, hidden at home; each box the inverse of the frame's corner – rounded at the outer top corner alone, the frame's ground in its spread shadow", () => {
+    const strip = rule('.zen-band-corners')
+    expect(strip).toContain('position: absolute;')
+    expect(strip).toContain('inset: 0 0 auto 0;')
+    expect(strip).toContain('height: var(--zen-content-radius);')
+    expect(strip).toContain('pointer-events: none;')
+    // Over the layer and the cover (no `z-index` of their own), under the band's 6.
+    expect(strip).toContain('z-index: 5;')
+    expect(rule('.zen-band')).toContain('z-index: 6;')
+    expect(rule('.zen-band-corners[data-home]')).toContain('display: none;')
+    const box = rule('.zen-band-corner')
+    expect(box).toContain('width: var(--zen-content-radius);')
+    expect(box).toContain('height: var(--zen-content-radius);')
+    expect(box).toContain('overflow: hidden;')
+    expect(rule(".zen-band-corner[data-side='left']")).toContain('left: 0;')
+    expect(rule(".zen-band-corner[data-side='right']")).toContain('right: 0;')
+    // The ground outside the arc: the frame's own background, light and dark alike.
+    expect(rule('.zen-band-corner::before')).toContain(
+      'box-shadow: 0 0 0 var(--zen-content-radius) var(--zen-bg-solid);'
+    )
+    expect(rule('.zen-content-frame')).toContain('background: var(--zen-bg-solid);')
+    expect(rule(".zen-band-corner[data-side='left']::before")).toContain(
+      'border-radius: var(--zen-content-radius) 0 0 0;'
+    )
+    expect(rule(".zen-band-corner[data-side='right']::before")).toContain(
+      'border-radius: 0 var(--zen-content-radius) 0 0;'
+    )
   })
 })
 

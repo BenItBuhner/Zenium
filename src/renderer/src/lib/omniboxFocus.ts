@@ -46,6 +46,7 @@ import {
   type OmniboxFocusPhase,
   type OmniboxFocusState
 } from './motion/omniboxFocus'
+import { REDUCED_FADE_MS } from './motion/fade'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from './motion/spring'
 import { createStore } from './store'
 import {
@@ -87,8 +88,8 @@ export function focusHoldsChrome(s: OmniboxFocusStoreState): boolean {
 /** The spring: SNAPPY's, the swipes' and the field morph's (v2 §11), over the field's growth. */
 export const SPRING_FOCUS = SPRING_SNAPPY
 
-/** Under reduced motion the omnibox arrives and leaves on a 120 ms fade in place (v2 §11.3). */
-export const FOCUS_REDUCED_FADE_MS = 120
+/** Under reduced motion the omnibox arrives and leaves on the 120 ms fade in place (v2 §11.3; motion spec §0.5's one fade). */
+export const FOCUS_REDUCED_FADE_MS = REDUCED_FADE_MS
 
 /** The value on the bound surfaces: 0 the pill's pose, 1 the omnibox's. */
 export const FOCUS_VAR = '--zen-omnibox-focus'

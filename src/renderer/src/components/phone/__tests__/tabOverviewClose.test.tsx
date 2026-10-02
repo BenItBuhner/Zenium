@@ -15,13 +15,15 @@ import { BLANK_URL } from '@shared/url'
  * BAR's ⋯ opens the overview's menu through the core while the overview stands, its rows the
  * core's template (`src/core/__tests__/overviewMenuTemplate.test.ts` pins them), and a picked
  * row of the chrome's comes back as one `overview.command` – which is what this file drives.
- * "Close All Tabs" asks first on a prompt sheet with a "Don't ask again" row bound to
- * `settings.confirmCloseAll`, and then departs every unpinned card through `tab.closeMany` –
- * the core closing them one after the other, each page's `beforeunload` heard in its turn
- * (PUI-28) – with one toast for the lot; "Recently Closed" lists the contract's entries and a
+ * "Close All Tabs" asks nothing (§9.23: a close with Undo on its toast confirms nothing) and
+ * departs every unpinned card at once through `tab.closeMany` – the core closing them one after
+ * the other, each page's `beforeunload` heard in its turn (PUI-28) – with one toast for the lot,
+ * whose Undo brings them all back in order; "Recently Closed" lists the contract's entries and a
  * tap restores one. On a host with private tabs each VIEW closes its own (TAB-02, TAB-03): the
  * regular view its cards through the same `tab.closeMany`, the private view through
- * `tab.closePrivate`. A group's ⋯ sheet closes it with the one Undo and deletes it after an
+ * `tab.closePrivate` – and that one still asks first on a prompt sheet with no "Don't ask
+ * again", since a private tab is never filed and there is no Undo to stand in for the question.
+ * No path writes a setting. A group's ⋯ sheet closes it with the one Undo and deletes it after an
  * ask, never both (TAB-16 / TAB-13, the Design Lead's option C); the saved card's hold sheet
  * deletes a saved group. Rendered for real in happy-dom with the sheets on the frame's dialog
  * host, the frame loop cranked by hand.
@@ -406,37 +408,18 @@ describe("the ⋯ menu is the bar's", () => {
 // --- Close all tabs (TAB-06) -------------------------------------------------------------------
 
 describe('Close all tabs', () => {
-  it('asks first on a prompt sheet; Cancel keeps every tab and the setting', async () => {
+  it('asks nothing: every unpinned card departs at once, the core closes them one after the other, and one toast offers to undo the lot', async () => {
     show(three())
     await command('close-all')
-    // The question stands on the frame's dialog host (§9.23); no sheet of the overview's is up.
+    // No question on the frame's dialog host and no sheet of the overview's (§9.23: a close
+    // with Undo on its toast confirms nothing); the cards depart where they stand – the pinned
+    // one stays. The core closes the three in turn (`tab.closeMany`, PUI-28): a page that
+    // objects asks "Leave site?" on its own tab; `space.closeUnpinned` would ask no page.
+    expect(dialogTitle()).toBeUndefined()
     expect(sheetRows()).toEqual([])
-    expect(dialogTitle()).toBe('Close 3 tabs?')
-    const checkbox = document.querySelector<HTMLInputElement>(
-      '.zen-frame-dialogs input[type="checkbox"]'
-    )!
-    expect(checkbox.checked).toBe(false)
-    // The checkbox row takes the focus as the sheet opens (§9.22: a sheet whose first control
-    // is a checkbox opens on it; Cancel first is the named failure), so a stray Enter closes
-    // nothing.
-    expect(document.activeElement).toBe(checkbox)
-    await pick('Cancel')
-    expect(dialogTitle()).toBeUndefined()
-    expect(commands()).toEqual([])
-    expect(departStore.get().items).toEqual([])
-  })
-
-  it('Close all departs every unpinned card, closes them one after the other, and one toast offers to undo the lot', async () => {
-    show(three())
-    await command('close-all')
-    await pick('Close all')
-    // The question is gone; the cards depart where they stand – the pinned one stays. The core
-    // closes the three in turn (`tab.closeMany`, PUI-28): a page that objects asks "Leave
-    // site?" on its own tab; `space.closeUnpinned` would ask no page.
-    expect(dialogTitle()).toBeUndefined()
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
     expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]])
-    // The setting is untouched: the row was not ticked.
+    // Nothing is written to the settings: the question has no "Don't ask again" to remember.
     expect(of('settings.update')).toEqual([])
     // The core closes the three in order and files each; the one toast counts them.
     const state = three()
@@ -453,30 +436,15 @@ describe('Close all tabs', () => {
       { id: 'closed:a' }
     ])
     expect(of('tab.activate')).toEqual([{ tabId: 'a' }])
+    expect(of('settings.update')).toEqual([])
   })
 
-  it("Don't ask again turns the setting off with the close; with it off the menu's row closes at once", async () => {
-    show(three())
-    await command('close-all')
-    const checkbox = document.querySelector<HTMLInputElement>(
-      '.zen-frame-dialogs input[type="checkbox"]'
-    )!
-    act(() => checkbox.click())
-    expect(checkbox.checked).toBe(true)
-    await pick('Close all')
-    expect(commands()).toEqual([
-      ['settings.update', { confirmCloseAll: false }],
-      ['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]
-    ])
-
-    // The setting is off: the next Close all goes straight through, no question asked.
-    invoke.mockClear()
-    act(() => clearDepartures())
-    show(three({ confirmCloseAll: false }))
+  it('with nothing to close the row does nothing: no close, no toast', async () => {
+    show(stateOf([tab('p', 'https://pinned.example/', { title: 'Pinned', pinned: true })]))
     await command('close-all')
     expect(dialogTitle()).toBeUndefined()
-    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]])
-    expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
+    expect(commands()).toEqual([])
+    expect(departStore.get().items).toEqual([])
   })
 })
 
@@ -679,10 +647,9 @@ describe('on a host with private tabs', () => {
     expect(cells()).toEqual(['pin', 'r1', 'r2'])
     expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
     await command('close-all')
-    expect(dialogTitle()).toBe('Close 2 tabs?')
-    await pick('Close all')
-    // The regular cards depart, named one by one; not `space.closeUnpinned`, which would take
-    // One and Two too.
+    // No question (§9.23): the regular cards depart at once, named one by one; not
+    // `space.closeUnpinned`, which would take One and Two too.
+    expect(dialogTitle() ?? '').not.toMatch(/^Close /)
     expect(departStore.get().items.map((i) => i.key)).toEqual(['r1', 'r2'])
     expect(commands()).toEqual([['tab.closeMany', { tabIds: ['r1', 'r2'] }]])
     // One toast for the two once the core files them, with Undo.
@@ -703,13 +670,32 @@ describe('on a host with private tabs', () => {
     // Nothing read the recently closed list: the menu's counts are the core's own.
     expect(of('session.recentlyClosed')).toEqual([])
     await command('close-all')
+    // The private view alone still asks (§9.23: no Undo stands in for the question here); the
+    // prompt stands on the frame's dialog host with no "Don't ask again" row and no glyph, and
+    // the focus lands on the dialog itself (§9.22), never on Cancel.
+    expect(sheetRows()).toEqual([])
     expect(dialogTitle()).toBe('Close 2 private tabs?')
-    expect(document.querySelector('.zen-frame-dialogs')!.textContent).toContain(
-      'the private session ends; its history, cookies and site data go with it. There is no undo.'
+    const dialog = document.querySelector<HTMLElement>('.zen-frame-dialogs')!
+    expect(dialog.textContent).toContain(
+      'Every private tab closes and the private session ends; its history, cookies and site data go with it. There is no undo.'
     )
+    expect(dialog.querySelector('input[type="checkbox"]')).toBeNull()
+    expect(dialog.querySelector('.zen-sheet-title-block svg')).toBeNull()
+    expect(document.activeElement?.closest('.zen-frame-dialogs')).toBe(dialog)
+    expect(document.activeElement?.tagName).not.toBe('BUTTON')
+    // Cancel keeps the private tabs, and nothing is written to the settings.
+    await pick('Cancel')
+    expect(dialogTitle()).toBeUndefined()
+    expect(commands()).toEqual([])
+    expect(departStore.get().items).toEqual([])
+    // Asked again, Close all closes them through the core's one command.
+    await command('close-all')
+    expect(dialogTitle()).toBe('Close 2 private tabs?')
     await pick('Close all')
+    expect(dialogTitle()).toBeUndefined()
     expect(departStore.get().items.map((i) => i.key)).toEqual(['p1', 'p2'])
     expect(commands()).toEqual([['tab.closePrivate', undefined]])
+    expect(of('settings.update')).toEqual([])
     // A private tab is never filed: no toast, and no list read to look for one.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)

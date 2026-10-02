@@ -3,8 +3,14 @@ import type { Space, Tab, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn() }))
+// The root back's closes go through the close family's Undo (lib/closeUndo.ts, §9.33); a
+// pass-through here, so the `run` calls below read as the core receives them.
+vi.mock('../closeUndo', () => ({
+  closeWithUndo: vi.fn((request: { close: () => void }) => request.close())
+}))
 
 import { run } from '../api'
+import { closeWithUndo } from '../closeUndo'
 import {
   BackDismissal,
   backStore,
@@ -332,6 +338,69 @@ describe('handleSystemBack at the root of a tab another app sent', () => {
       ['window.minimize', undefined],
       ['tab.close', { tabId: 'sent' }]
     ])
+  })
+})
+
+describe("the root back's close comes with Undo on the toast (lib/closeUndo.ts, §9.33 / OS-40 part B)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(run).mockClear()
+    vi.mocked(closeWithUndo).mockClear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    browserStore.set({ state: null })
+  })
+
+  /** The one undoable close `closeWithUndo` was handed: the tab, as the tab in front, closing through `tab.close`. */
+  function undoableCloseOf(id: string): void {
+    expect(vi.mocked(closeWithUndo)).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(closeWithUndo).mock.calls[0][0]
+    expect(request.tabs.map((t) => t.id)).toEqual([id])
+    expect(request.activeTabId).toBe(id)
+    expect(request.settings).toBe(browserStore.get().state?.settings)
+    expect(vi.mocked(run).mock.calls).toContainEqual(['tab.close', { tabId: id }])
+  }
+
+  it('a child tab closing back to its opener', () => {
+    const child = tab('child', { openerTabId: 'opener' })
+    browserStore.set({ state: state(child, tab('opener')) })
+    expect(handleSystemBack()).toBe(true)
+    undoableCloseOf('child')
+  })
+
+  it('a page starting over as a new-tab page', () => {
+    const page = tab('page')
+    browserStore.set({ state: state(page) })
+    expect(handleSystemBack()).toBe(true)
+    expect(vi.mocked(run).mock.calls.map((c) => c[0])).toEqual(['tab.create', 'tab.close'])
+    undoableCloseOf('page')
+  })
+
+  it('a new-tab page closing with another tab left in the space', () => {
+    const blank = tab('blank', { url: BLANK_URL })
+    browserStore.set({ state: state(blank, tab('other')) })
+    expect(handleSystemBack()).toBe(true)
+    undoableCloseOf('blank')
+  })
+
+  it('a chrome page at its landing closing back to the tab the user was on before it', () => {
+    const settings = tab('settings', { url: 'zen://settings', lastActiveAt: 30 })
+    const before = tab('before', { lastActiveAt: 20 })
+    browserStore.set({ state: state(settings, before) })
+    expect(handleSystemBack()).toBe(true)
+    expect(vi.mocked(run).mock.calls[0]).toEqual(['tab.activate', { tabId: 'before' }])
+    undoableCloseOf('settings')
+  })
+
+  it('a tab another app sent, closing once the app is out of sight', () => {
+    const sent = tab('sent', { fromIntent: true })
+    browserStore.set({ state: state(sent) })
+    expect(handleSystemBack()).toBe(true)
+    // Nothing closes before the leave has run its course.
+    expect(vi.mocked(closeWithUndo)).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(CLOSE_AFTER_LEAVE_MS)
+    undoableCloseOf('sent')
   })
 })
 

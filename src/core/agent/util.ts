@@ -7,6 +7,9 @@ import type { ToolResult } from './protocol'
  */
 export const FOREGROUND_LEASE_MS = 20_000
 
+/** How long a navigating call waits for the page to load (`AgentService.waitForLoad`) before it reports the page still loading. */
+export const LOAD_TIMEOUT_MS = 15_000
+
 /**
  * A connected session quiet this long is a GHOST to the other agents: its groups may be adopted
  * as an orphan's. A client that drops without a DELETE – a killed shim, an editor's HTTP session

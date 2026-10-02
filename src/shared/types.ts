@@ -370,6 +370,16 @@ export interface HostCapabilities {
    */
   agentDialogs: boolean
   /**
+   * An AI agent may say AHEAD of an action how page dialogs on its tabs are to be answered
+   * (`browser_dialog_policy` is listed): the host answers a dialog a rule covers at once from
+   * that `AgentDialogPolicy` and reports it (`PageDialogAnswered` → the agent's next result).
+   * On hosts with `agentDialogs` the core answers before holding the dialog for
+   * `browser_handle_dialog`; a host that answers dialogs itself (Android's WebChromeClient)
+   * takes the policy through `TabView.setDialogPolicy` and reports through
+   * `TabViewEvents.onPageDialogAnswered`. Off until a host does one of the two.
+   */
+  agentDialogPolicy: boolean
+  /**
    * The browser-level prompts this host hands to an AI agent's tab's agent instead of showing
    * them (`AgentPromptKind`; listed by `browser_prompts`). A kind the host leaves out keeps
    * its usual UI on agents' tabs too, and agents are told it is not routed here. Absent: none.
@@ -2967,10 +2977,12 @@ export interface Shortcut {
   extraBindings: KeyBinding[]
   /**
    * The row's words on the system's keyboard-shortcut helper (Android's Meta + / sheet), in the
-   * sentence form Chrome's rows there use ('Duplicate tab', 'Move tab to start'; a product's name
-   * keeps its capitals – 'Toggle Split View grid'). A second register, read by the helper alone:
-   * `label` stays the Settings page's Title Case and is what every other listing prints. Left
-   * out, the helper prints `label`. Never derived from `label` by a case transform.
+   * sentence form Chrome's rows there use ('Duplicate tab', 'Move tab to start'; a coined sense
+   * keeps its capital – 'Create new Space'). The string table's sentence face of the action
+   * (§9.1: the derived face, or the entry's own `sentence`), carried where it differs from
+   * `label`; a second register, read by the helper alone: `label` stays the Settings page's
+   * Title Case and is what every other listing prints. Left out, the helper prints `label` –
+   * or, for a row Chrome's helper has too, Chrome's own words from its table.
    */
   helperLabel?: string
   /**
@@ -4956,6 +4968,92 @@ export interface PageDialog {
 export interface PageDialogResponse {
   accepted: boolean
   value: string | null
+}
+
+/**
+ * How an AI agent wants the page dialogs on its tabs answered, said ahead of an action through
+ * `browser_dialog_policy` (`HostCapabilities.agentDialogPolicy`): the rules of one `set`, for
+ * one tab or for every tab the agent owns. Each kind is a rule of its own; a kind left out
+ * keeps the default answer (confirm Cancel, prompt Cancel, "Leave site?" leave). Alerts have
+ * no rule: OK is their only answer, and they are reported like the rest. A tab's own rules
+ * stand over the session-wide ones kind by kind; the result, resolved, is the tab's
+ * `AgentDialogPolicy`.
+ */
+export interface AgentDialogRules {
+  /** `confirm()`: OK (`accept`) or Cancel (`dismiss`). */
+  confirm?: 'accept' | 'dismiss'
+  /**
+   * `prompt()`: OK with the page's default text (`accept`), Cancel (`dismiss`), or OK with
+   * the agent's own text.
+   */
+  prompt?: 'accept' | 'dismiss' | { text: string }
+  /**
+   * "Leave site?" (`beforeunload`) on a tab the user is not looking at: let the navigation go
+   * (`leave`) or cancel it (`stay`). Governs the agent's own navigations and the page's there;
+   * a close the USER makes on the tab, and every "Leave site?" of a tab in front of the user,
+   * follows the user's rules and is never held by `stay`.
+   */
+  beforeunload?: 'leave' | 'stay'
+}
+
+/**
+ * Which rule of the agent's dialog policy answers a kind, or answered a dialog: the tab's own
+ * (`tab`), the session-wide one (`session`), or none – the default answer (`default`).
+ */
+export type AgentDialogRuleScope = 'tab' | 'session' | 'default'
+
+/**
+ * The EFFECTIVE dialog policy of one tab of an agent – its own rules over the session-wide
+ * ones, each kind resolved to its answer and to the rule that supplies it – as the core hands
+ * it to a host that answers page dialogs itself (`TabView.setDialogPolicy`; `null` when no
+ * rule covers the tab). The host answers a kind from its entry at once, the default for a kind
+ * left out (confirm Cancel, prompt Cancel, "Leave site?" leave; an alert always OK), and
+ * reports every answer through `TabViewEvents.onPageDialogAnswered` with the entry's `rule`
+ * (`default` for a kind left out). The host never spends a rule itself: the core spends a
+ * `once` rule on receiving the report – `rule` says which – and hands the view the policy
+ * that is left (or `null`).
+ */
+export interface AgentDialogPolicy {
+  confirm?: { answer: 'accept' | 'dismiss'; rule: 'tab' | 'session' }
+  prompt?: { answer: 'accept' | 'dismiss' | { text: string }; rule: 'tab' | 'session' }
+  beforeunload?: { answer: 'leave' | 'stay'; rule: 'tab' | 'session' }
+}
+
+/**
+ * The answer a page dialog on an agent's tab got: `accept` (OK) / `dismiss` (Cancel) for
+ * alert, confirm and a prompt answered without text; `{ text }` for a prompt answered OK with
+ * that text (the page's default or the agent's); `leave` / `stay` for "Leave site?".
+ */
+export type AgentDialogAnswer = 'accept' | 'dismiss' | { text: string } | 'leave' | 'stay'
+
+/**
+ * A page dialog on an agent's tab that was answered without the agent – by a rule of its
+ * dialog policy or by the default answer. The core turns it into the `Notice:` line of the
+ * agent's next result, the same words on every host, and spends the `once` rule `rule` names.
+ * A host that answers dialogs itself reports through `TabViewEvents.onPageDialogAnswered`
+ * (Android's WebChromeClient); on hosts whose dialogs reach the core
+ * (`HostCapabilities.agentDialogs`) the core builds the same report for what it answered.
+ */
+export interface PageDialogAnswered {
+  kind: PageDialogKind
+  /** The URL of the document that opened the dialog (the site is derived from it). */
+  url: string
+  /**
+   * The dialog's message, which the core quotes capped at 500 characters (a host may cap it
+   * there too). For `beforeunload` Chrome shows its own line – "Changes you made may not be
+   * saved." – whatever the page set, and that line is what a host reports.
+   */
+  message: string
+  /** `prompt`: the field's initial text, quoted beside the message; left out for the other kinds. */
+  defaultValue?: string
+  answer: AgentDialogAnswer
+  /**
+   * Which rule answered: the entry's `rule` in the tab's `AgentDialogPolicy` (`tab` or
+   * `session`), `default` for a kind the policy left out or when no policy was handed. An
+   * alert has no rule: it carries `tab` when the policy handed to the view has a kind from the
+   * tab's own rules, else `session` when it has any kind, else `default` – the Notice's tag.
+   */
+  rule: AgentDialogRuleScope
 }
 
 /**
@@ -7612,8 +7710,13 @@ export interface Commands {
    * The ambient banner's card is mounted on a surface that draws banners: the prompt counts as
    * shown now and the app's cooldown starts on this word, not on the core's emit (#740). Without
    * it inside the core's grace the prompt counts as undrawn and the cooldown is not spent.
+   * `visible` (absent: true – today's word, the card on screen as it is posted) says whether the
+   * card is on screen: false, a surface ACCEPTED the card but holds it back – the page-edge band
+   * under a cover (a sheet, the keyboard, the open tab overview) – so the core keeps the banner
+   * up, stamps no cooldown yet and waits for the same word with `visible` true (or absent) at
+   * the card's first drawn frame; a cover is not a view (seed #43, the Lead's S3).
    */
-  'webapp.bannerShown': { args: { tabId: string }; result: void }
+  'webapp.bannerShown': { args: { tabId: string; visible?: boolean }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
   /**
@@ -7640,6 +7743,19 @@ export type ToastAction = {
 }[CommandName]
 
 export type UrlbarOpenMode = 'new-tab' | 'edit' | 'search'
+
+/**
+ * The core command a touch host's close row closes its tabs with (`Events['tab.closeUndoable']`,
+ * §9.23): the row's one tab (`tab.close`; `force` is Remove Tab's – a pinned or essential tab
+ * closed outright rather than reset), the directed and other closes from the row
+ * (`tab.closeAbove` / `tab.closeBelow` / `tab.closeOthers`), or the selection's tabs
+ * (`tab.closeMany`, one page after the other as the desktop's "Close N Tabs" loop). Typed per
+ * command, so the chrome runs the command with the args that are its own.
+ */
+export type UndoableTabClose =
+  | { command: 'tab.close'; tabId: string; force: boolean }
+  | { command: 'tab.closeAbove' | 'tab.closeBelow' | 'tab.closeOthers'; tabId: string }
+  | { command: 'tab.closeMany'; tabIds: string[] }
 
 export interface Events {
   state: UIState
@@ -7883,6 +7999,18 @@ export interface Events {
    * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
    */
   'folder.closeUndoable': { folderId: string }
+  /**
+   * Close tabs with Undo on the toast (the touch hosts' tab menus; OS-40 part B, §9.23: on a
+   * touch host, closing a tab never asks "Leave site?" – the page is let go – and the toast's
+   * Undo is the protection). `tabIds` are the tabs the close takes, as the core's own rule reads
+   * them (the row's tab; `closeScope(tabId, 'above' | 'below' | 'others')` – the space's regular
+   * tabs in the window, pinned and Essentials exempt; the selection's tabs), so the chrome
+   * counts and holds the right ones; `close` is the core command that closes them, which the
+   * chrome runs through its one close-with-undo (`lib/closeUndo.ts`), the toast reading "Closed
+   * <title>" or "N tabs closed", Undo bringing them back. The desktop's menus never emit it:
+   * their rows call the core directly, with no toast.
+   */
+  'tab.closeUndoable': { tabIds: string[]; close: UndoableTabClose }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */

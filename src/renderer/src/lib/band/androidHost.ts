@@ -2,6 +2,7 @@ import { bandStore, chooseBand, dismissBand, setBandFrame, shownBand } from '@re
 import type { BandSeam } from '@renderer/lib/motion/band'
 import { moveChromePage, seatChromePage } from '@renderer/lib/pageBand'
 import { holdPage, setPageHold, type PageHold } from '@renderer/lib/pull'
+import { seatDocument } from './seat'
 import { bandFrameOf, subscribeBandSignals, type BandSignals } from './signals'
 
 /**
@@ -32,21 +33,28 @@ import { bandFrameOf, subscribeBandSignals, type BandSignals } from './signals'
  * never carries that pair: it is the layer's alone, the desktop's `seatBand`/`movePage` pair
  * untouched on Android, so no report lays a WebView out under a band or shifts one by it.
  *
- * The layer keeps the desktop seam's contract (`PageBandHost`, `lib/pageBand.ts`): a travel
+ * Both surfaces keep the desktop seam's contract (`PageBandHost`, `lib/pageBand.ts`): a travel
  * TRANSLATES, the rest SEATS. `depart` seats the band at the lesser of its seat and the
  * destination before a travel's first frame, the frames write the offset, and `rest` seats the
- * band at its height – the layer's box inset by it (`top: seat`) with no transform, so a long
- * chrome page (Settings, History) scrolls to its last row above the frame's bottom instead of
- * leaving it under the band (the Design Lead's check on #758). A finger's drag announces no
- * destination (`BandSeam.depart`): its first frame below the seat unseats the layer here, so the
- * page's bottom rides past the frame's edge under the finger and never bares it – the one
- * layout the drag costs, where the desktop keeps the seat and bares the strip. The seat is
- * written only while a chrome-drawn surface is in front and held: the WebView under the pull
- * channel is TRANSLATED at rest (#734/#735, §3.4 Android), its placed rect never laid out under
- * the band, so a document in front always reads seat 0 – the known asymmetry this slice keeps.
- * A surface change puts the old surface home (offset 0, seat 0) in the same synchronous
- * subscriber that re-targets the standing band onto the new one – seated if the band rests,
- * translated if it travels.
+ * band at its height – the surface's box inset by it with no transform, so a long page
+ * (Settings, History, a document) scrolls to its last line above the frame's bottom instead of
+ * leaving it under the band (the Design Lead's check on #758, ruled for documents too). A
+ * finger's drag announces no destination (`BandSeam.depart`): its first frame below the seat
+ * unseats the surface here, so the page's bottom rides past the frame's edge under the finger
+ * and never bares it – the one layout the drag costs, where the desktop keeps the seat and bares
+ * the strip. The chrome's layer reads its seat from the chrome page's seat store (`top: seat`,
+ * `translateY(offset − seat)`); a DOCUMENT's seat goes down a channel of its own beside the pull
+ * channel (`lib/band/seat.ts` → the bridge's `view.setBandSeat` → `TabHost.setBandSeat`):
+ * Kotlin places the WebView at top = seat, height = frame − seat, and translates it by the pull
+ * channel's offset less the seat (`PageSeat.kt`) – the offset still travels the pull channel
+ * whole, so a pull's takeover and the classifier's reading are as they were, and the one
+ * message that changes the seat changes the layout and the translation together, so no frame
+ * shows the page anywhere but where it was. The seat is written only for the surface in front
+ * and held; a pull that takes the page over (`displaced`) has the seat written 0 before its
+ * first frame and owns the whole displacement. A surface change puts the old surface home
+ * (seat 0 first, then offset 0) in the same synchronous subscriber that re-targets the standing
+ * band onto the new one (its offset, then its seat) – seated if the band rests, translated if
+ * it travels.
  *
  * The page the band stands on is the front tab's. A tab leaving the front with its page held
  * has it put home at once – a view in the back must not keep its translation for its return –
@@ -99,10 +107,12 @@ export function createAndroidBandHost(): AndroidBandHost {
   /**
    * The band's seat as the desktop seats it (`PageBandHost`): the height it rests at, the
    * lesser of that and the destination through a travel, 0 shut. Published to the chrome page's
-   * seat store while the chrome's layer is the surface in front (`publishSeat`); a WebView
-   * reads 0.
+   * seat store while the chrome's layer is the surface in front, and down the seat channel for
+   * a WebView the host holds (`publishSeat`).
    */
   let seat = 0
+  /** The document the seat channel last carried a seat above 0 for, with that seat (written on change alone). */
+  let seated: { tabId: string; seat: number } | null = null
   /** A `depart` was heard and no `rest` yet: the frames are a travel's, not a finger's. */
   let travelling = false
 
@@ -121,26 +131,53 @@ export function createAndroidBandHost(): AndroidBandHost {
   /**
    * The chrome page's seat store carries the band's seat for the chrome's layer alone, and
    * only while the band has the layer (a frame above 0 written); a document in front, or a
-   * layer no band stands on, reads 0. The desktop's pair (`seatBand`), the layout report's, is
-   * never written here.
+   * layer no band stands on, reads 0. The seat channel carries it for the document in front
+   * while the host holds its page (a frame above 0 accepted), written when it changes: 0 to a
+   * document that was seated and is no longer, the seat to the one that is. The desktop's pair
+   * (`seatBand`), the layout report's, is never written here.
    */
   const publishSeat = (): void => {
     seatChromePage(front?.layer && layerHeld ? seat : 0)
+    const doc = front !== null && !front.layer && held === front.tabId && seat > 0 ? front.tabId : null
+    if (seated !== null && seated.tabId !== doc) seatDocument(seated.tabId, 0)
+    if (doc !== null && (seated?.tabId !== doc || seated.seat !== seat)) seatDocument(doc, seat)
+    seated = doc === null ? null : { tabId: doc, seat }
+  }
+
+  /**
+   * `surface` gives its seat up ahead of a write that moves it home: the layer's store reads 0,
+   * a seated WebView is placed as reported – translated by the offset it still has, the same
+   * picture – before its offset follows. The other way round a WebView would stand a seat
+   * above its frame for any frame that fell between the two.
+   */
+  const unseat = (surface: Surface): void => {
+    if (surface.layer) {
+      seatChromePage(0)
+      return
+    }
+    if (seated === null || seated.tabId !== surface.tabId) return
+    seatDocument(surface.tabId, 0)
+    seated = null
   }
 
   /** Whether a frame moves `surface`: the band holds it already, or a band stands on it (its entrance). */
   const holds = (surface: Surface): boolean => (surface.layer ? layerHeld : held === surface.tabId)
 
   const home = (): void => {
+    seat = 0
+    if (seated !== null) unseat({ tabId: seated.tabId, layer: false })
     if (layerHeld) write({ tabId: front?.tabId ?? '', layer: true }, 0)
     if (held !== null) write({ tabId: held, layer: false }, 0)
-    seat = 0
     publishSeat()
   }
 
   const hold: PageHold = {
     displaced: (tabId) => {
       if (held === tabId) held = null
+      // The pull has the page from where it sits, whole: the seat the layout carried goes back
+      // to the translation before the pull's first frame (the same picture), or the pull's
+      // return home would carry the view a seat above its frame.
+      publishSeat()
       // §3.4 Android: a pull while a band stands dismisses the band first – an offer goes (not
       // the user's answer: `program`); a state holds and waits for the pull to end. The pull
       // has already told the model the frame is not the band's, so the band that stood is read
@@ -160,13 +197,14 @@ export function createAndroidBandHost(): AndroidBandHost {
     setBandFrame(bandFrameOf(signals))
     const next = surfaceOf(signals)
     if (sameSurface(next, front)) return
-    // The surface leaving the front comes home at once – the chrome's layer with its seat (its
-    // seat store reads 0 before the WebView arriving is written to); the one arriving takes the
-    // standing band's offset, and the layer its seat with it (seated where the band rests,
-    // translated while it travels). A page changing kind under the band (the new tab page
-    // navigating to a web page) is a leave and an arrival on the same tab.
+    // The surface leaving the front comes home at once – its seat first (the layer's seat store
+    // reads 0, a seated WebView is placed as reported, before the one arriving is written to),
+    // then its offset; the one arriving takes the standing band's offset, and its seat with it
+    // (seated where the band rests, translated while it travels). A page changing kind under
+    // the band (the new tab page navigating to a web page) is a leave and an arrival on the
+    // same tab.
+    if (front !== null) unseat(front)
     if (front !== null && holds(front)) write(front, 0)
-    if (front?.layer) seatChromePage(0)
     front = next
     if (front !== null && offset > 0 && shownBand() !== null) write(front, offset)
     publishSeat()
@@ -178,14 +216,15 @@ export function createAndroidBandHost(): AndroidBandHost {
     },
     depart: (to) => {
       // The desktop's seat before a travel's first frame: the lesser of the seat and the
-      // destination, so the layer's bottom rides past the frame's edge while it travels.
+      // destination, so the surface's bottom rides past the frame's edge while it travels (a
+      // WebView unseated here keeps its place: the seat it gives up goes to its translation).
       travelling = true
       seat = Math.min(seat, to)
       publishSeat()
     },
     translate: (x) => {
       offset = Math.max(0, x)
-      // A frame below the seat with no travel announced is a finger's: the layer is unseated
+      // A frame below the seat with no travel announced is a finger's: the surface is unseated
       // for the drag (translated from here on), so the page keeps covering the frame under it.
       if (!travelling && offset < seat) {
         seat = 0
@@ -199,10 +238,10 @@ export function createAndroidBandHost(): AndroidBandHost {
     },
     rest: (height) => {
       travelling = false
-      // At rest the band is seated at its height: the chrome's layer is laid out under it (its
-      // box inset, no transform), as the desktop lays the page out once per travel; the WebView
-      // stays where the hold has it (translated, §3.4 Android). At 0 everything is home and the
-      // hold is let go (the pull is free to take the page).
+      // At rest the band is seated at its height: the surface in front is laid out under it
+      // (its box inset, no transform – the chrome's layer by its store, the WebView by Kotlin's
+      // placement), as the desktop lays the page out once per travel. At 0 everything is home
+      // and the hold is let go (the pull is free to take the page).
       if (height === 0) {
         home()
         return

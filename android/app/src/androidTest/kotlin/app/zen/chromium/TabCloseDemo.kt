@@ -23,11 +23,16 @@ import kotlin.math.roundToInt
  *     at its index;
  *  2. a card of the Research group swiped off the grid: the same toast; Undo puts it back into
  *     the group at its index;
- *  3. the header menu's Close All Tabs: the `Close 7 tabs?` prompt; a touch on Close all closes
- *     every unpinned tab of the space (Essentials stay), one `7 tabs closed` toast; Undo brings
+ *  3. the header menu's Close All Tabs asks nothing (v2 draft 9.23: a close with Undo on its
+ *     toast confirms nothing): the touch on the row closes every unpinned tab of the space at
+ *     once (Essentials stay), with no prompt on the way, one `7 tabs closed` toast; Undo brings
  *     the seven back in their order, group included;
- *  4. the prompt's Don't ask again: touched, then Close all; `settings.confirmCloseAll` is off
- *     in the core; Undo; the next Close all closes without a prompt; Undo;
+ *  4. the private view's Close Private Tabs still asks (a private tab is never filed, so no Undo
+ *     stands in for the question): a private tab opened through the core, the menu's Private
+ *     Tabs (1) row, then Close Private Tabs; the `Close 1 private tab?` prompt with no "Don't
+ *     ask again"; a real touch on its Close all ends the session, no toast follows. Skipped,
+ *     as a line in the findings, on a WebView without profiles (`capabilities.privateTabs` off:
+ *     the API 34 images' own WebView 113), where the host hides private browsing;
  *  5. Recently Closed: a card closed with its X, the menu's row opens the sheet, a touch on the
  *     entry restores the tab and the overview leaves on it.
  *
@@ -80,8 +85,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
 
         closeByX(start)
         swipeOff(start)
-        closeAllWithPrompt(start)
-        dontAskAgain(start)
+        closeAllAtOnce(start)
+        closePrivateAsks()
         recentlyClosed()
 
         still("end")
@@ -139,15 +144,17 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         awaitToastGone()
     }
 
-    /** 3. Close all tabs from the header menu, the prompt, Close all touched, one toast, Undo. */
-    private fun closeAllWithPrompt(start: List<Pair<String, String?>>) {
-        finding("\n3. Close all tabs: the prompt, Close all, one toast, Undo restores the seven")
-        openMenuRow("Close All Tabs") { promptUp() }
-        expect("the prompt asks 'Close 7 tabs?'", awaitText(".zen-frame-dialogs", PROMPT))
-        expect("the prompt carries Don't ask again, unticked", awaitDom("$CHECKBOX_IN_DOM && !$CHECKBOX_CHECKED"))
-        still("closeall-prompt")
-        val bulk = closeAllThenUndo("Close all on the prompt", { footerButton("Close all") }, "closeall-toast")
+    /**
+     * 3. Close all tabs from the header menu: no prompt, the seven close at once, one toast, Undo.
+     * The prompt is watched for from the touch on the row to the toast: it must never show.
+     */
+    private fun closeAllAtOnce(start: List<Pair<String, String?>>) {
+        finding("\n3. Close all tabs: no prompt, the seven close at once, one toast, Undo restores the seven")
+        openMenu()
+        still("closeall-menu")
+        val bulk = closeAllThenUndo("'Close All Tabs' in the menu", { steadyRect { menuRow("Close All Tabs") } }, "closeall-toast")
         expect("one toast reads '7 tabs closed': '${bulk.toast}'", bulk.toast.startsWith(BULK_TOAST))
+        expect("with no prompt on the way", !bulk.promptSeen)
         expectClosedAtToast(bulk)
         expect("Undo brings the seven back", awaitUnpinned(7, RESTORE_ALL_WAIT))
         SystemClock.sleep(SETTLE)
@@ -162,37 +169,50 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     private fun footerButton(label: String): Rect? =
         steadyRect({ textRect(".zen-frame-dialogs .zen-sheet-footer button", label) })
 
-    private fun promptUp(): Boolean = hasText(".zen-frame-dialogs", PROMPT)
+    private fun promptUp(): Boolean = hasText(".zen-frame-dialogs", PRIVATE_PROMPT)
 
-    /** 4. Don't ask again touched: the setting turns off with the close; the next Close all has no prompt. */
-    private fun dontAskAgain(start: List<Pair<String, String?>>) {
-        finding("\n4. Don't ask again, then Close all twice: the second time without the prompt")
-        openMenuRow("Close All Tabs") { promptUp() }
-        expect("the prompt is up", awaitText(".zen-frame-dialogs", PROMPT))
-        val ticked = touchUntil("the Don't ask again checkbox", { steadyRect({ domRect(CHECKBOX) }) }, { isChecked() })
-        expect("the checkbox is ticked by the touch", ticked)
-        still("dont-ask-checked")
-        val first = closeAllThenUndo("Close all on the prompt", { footerButton("Close all") }, null)
-        expect("the tabs close, one toast '${first.toast}'", first.toast.startsWith(BULK_TOAST))
-        expectClosedAtToast(first)
-        expect("Undo brings the seven back", awaitUnpinned(7, RESTORE_ALL_WAIT))
-        expect("settings.confirmCloseAll is off in the core", awaitSetting("confirmCloseAll", false))
+    /**
+     * 4. The private view's Close Private Tabs asks first; a real touch on Close all ends the
+     * session with no toast. The private tab comes from the core (`tab.newPrivate`, the Tabs
+     * button's quick menu's command), and the overview is brought back onto the private view
+     * through its menu's Private Tabs (1) row when the new tab took it elsewhere.
+     */
+    private fun closePrivateAsks() {
+        finding("\n4. Close Private Tabs: the prompt, no Don't ask again, a touch on Close all ends the session, no toast")
+        if (!privateTabsCapability()) {
+            finding("  SKIPPED: capabilities.privateTabs is false on this WebView (no profiles); the claim runs where the Chromium snapshot WebView is swapped in")
+            return
+        }
+        val id = coreInvoke("tab.newPrivate", "{}").trim('"')
+        expect("the core opened a private tab ($id)", id.isNotEmpty() && id != "null" && awaitUntil(8_000) { privateCount() == 1 })
         SystemClock.sleep(SETTLE)
-        restoreForNextScenario(start)
-        awaitToastGone()
+        if (!overviewOpen()) openOverview()
+        if (overviewView() != "private") {
+            openMenuRow("Private Tabs (") { overviewView() == "private" }
+            SystemClock.sleep(1_000)
+        }
+        expect("the overview shows the private view", overviewView() == "private")
+        openMenuRow("Close Private Tabs") { promptUp() }
+        expect("the prompt asks '$PRIVATE_PROMPT'", awaitText(".zen-frame-dialogs", PRIVATE_PROMPT))
+        expect("the prompt carries no checkbox (no Don't ask again)", !inDom(CHECKBOX))
+        expect("the prompt says there is no undo", hasText(".zen-frame-dialogs", "There is no undo."))
+        still("closeprivate-prompt")
+        val closed = touchUntil("Close all on the prompt", { footerButton("Close all") }, { privateCount() == 0 }, waitMs = SHEET_WAIT)
+        expect("the touch on Close all ends the private session", closed)
+        expect("the prompt is gone", awaitDom("!document.querySelector('.zen-frame-dialogs .zen-sheet-footer')"))
+        expect("the overview hands over to the regular view", awaitUntil(8_000) { overviewView() == "tabs" })
+        SystemClock.sleep(CLOSE_SETTLE_WAIT)
+        expect("no toast follows a private close", !inDom(".zen-message-toast"))
+        still("closeprivate-closed")
+    }
 
-        // The prompt is watched for from the touch on the row to the toast: it must never show.
-        openMenu()
-        val second = closeAllThenUndo("'Close All Tabs' in the menu", { steadyRect { menuRow("Close All Tabs") } }, "closeall-noprompt-toast")
-        expect("the toast reads '7 tabs closed': '${second.toast}'", second.toast.startsWith(BULK_TOAST))
-        expect("with no prompt on the way", !second.promptSeen)
-        expectClosedAtToast(second)
-        expect("Undo brings the seven back", awaitUnpinned(7, RESTORE_ALL_WAIT))
-        SystemClock.sleep(SETTLE)
-        expect("in their order", trackOrder() == start)
-        still("closeall-noprompt-undone")
-        restoreForNextScenario(start)
-        awaitToastGone()
+    /** The core's word on private tabs: on only where the WebView keeps profiles (`androidCapabilities`). */
+    private fun privateTabsCapability(): Boolean =
+        runCatching { coreState().getJSONObject("capabilities").optBoolean("privateTabs") }.getOrDefault(false)
+
+    private fun privateCount(): Int {
+        val tabs = coreState().getJSONObject("tabs")
+        return tabs.keys().asSequence().count { tabs.optJSONObject(it)?.optString("containerId") == PRIVATE_CONTAINER }
     }
 
     /** What [closeAllThenUndo] saw: the toast's text, whether the prompt showed on the way, the state at the toast. */
@@ -210,8 +230,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
      * go, the emulator's main thread is held for seconds (their WebViews going away, the
      * Essential that takes over loading): every read of the chrome, and every touch, waits a
      * second or two in its queue, while the toast's clock and its entry run in the chrome's
-     * renderer, which does not wait. So: `trigger` (the prompt's Close all, or the menu row when
-     * there is no prompt) is touched, and touched again when the sheet still stands after
+     * renderer, which does not wait. So: `trigger` (the menu's Close All Tabs row) is touched,
+     * and touched again when the sheet still stands after
      * [SHEET_WAIT] with no toast up; the toast is watched for with ONE read per poll, which also
      * has the core snapshot its state the first time the toast is seen; and the Undo is touched
      * at the first sighting – where the read found it, or, when the card was still coming up,
@@ -666,8 +686,6 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
                 "function(n){return n.textContent.indexOf(${JSONObject.quote(text)})>=0})?'yes':''})()"
         ) == "yes"
 
-    private fun isChecked(): Boolean = jsString("(function(){return ($CHECKBOX_CHECKED)?'yes':''})()") == "yes"
-
     /** The box of `selector`, waiting for it to be in the DOM; the demo cannot go on without it. */
     private fun box(selector: String): Rect =
         awaitRect({ domRect(selector) }, LOOKUP_WAIT) ?: error("nothing matches $selector")
@@ -754,12 +772,6 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     private fun awaitUnpinned(count: Int, timeoutMs: Long): Boolean =
         awaitUntil(timeoutMs) { trackOrder().size == count }
 
-    private fun awaitSetting(name: String, value: Boolean, timeoutMs: Long = 6_000): Boolean =
-        awaitUntil(timeoutMs) {
-            val settings = coreState().optJSONObject("settings")
-            settings != null && settings.optBoolean(name, !value) == value
-        }
-
     /** The folder a tab is in per the core, null when loose (or gone). */
     private fun folderOf(tabId: String, state: JSONObject = coreState()): String? {
         val tab = state.getJSONObject("tabs").optJSONObject(tabId) ?: return null
@@ -801,7 +813,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
             "group $name [${order.filter { it.second == folderId }.joinToString(", ") { title(it.first) }}]"
         }
         val loose = order.filter { it.second == null }.joinToString(", ") { title(it.first) }
-        return "${if (groups.isEmpty()) "no groups" else groups}; loose [$loose]; confirmCloseAll ${state.optJSONObject("settings")?.opt("confirmCloseAll")}"
+        return "${if (groups.isEmpty()) "no groups" else groups}; loose [$loose]"
     }
 
     // --- findings --------------------------------------------------------------------------------
@@ -876,13 +888,18 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         private const val BULK_TOAST_WAIT = 20_000L
         /** How long the core's snapshot asked for at the toast may trail the toast's exit. */
         private const val SNAPSHOT_WAIT = 8_000L
+        /** The question the regular view's Close All used to ask: watched for, it must never show. */
         private const val PROMPT = "Close 7 tabs?"
         private const val BULK_TOAST = "7 tabs closed"
+        /** The private view's question (one private tab opened by the driver). */
+        private const val PRIVATE_PROMPT = "Close 1 private tab?"
+        private const val PRIVATE_CONTAINER = "private"
+        /** After a private close: long enough for a toast to have come if one were coming (CLOSE_SETTLE_MS and the entry). */
+        private const val CLOSE_SETTLE_WAIT = 3_000L
         /** A row of the Recently closed sheet: the shared row primitive with the phone modifier (#201). */
         private const val ROW = ".zen-frame-dialogs .zen-v2-row.zen-phone-row"
+        /** A checkbox on a prompt sheet: none is expected on either question any more. */
         private const val CHECKBOX = ".zen-frame-dialogs input.zen-v2-checkbox"
-        private const val CHECKBOX_IN_DOM = "!!document.querySelector('$CHECKBOX')"
-        private const val CHECKBOX_CHECKED = "($CHECKBOX_IN_DOM && document.querySelector('$CHECKBOX').checked)"
         private const val RECT_JS = "var r=e.getBoundingClientRect();" +
             "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})"
 

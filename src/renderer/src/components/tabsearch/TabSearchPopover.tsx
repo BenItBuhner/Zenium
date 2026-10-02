@@ -5,6 +5,7 @@ import { searchHost } from '@shared/tabSearch'
 import type { TabSearchCandidate, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { closeTabFromChrome } from '@renderer/lib/closeUndo'
 import { useBackSurface } from '@renderer/lib/back'
 import {
   ChromePortal,
@@ -442,7 +443,8 @@ function TabRow({
           tabIndex={selected ? 0 : -1}
           onClick={(e) => {
             e.stopPropagation()
-            run('tab.close', { tabId: tab.id })
+            // With Undo on the toast on a touch layout, as a row's × (§9.23).
+            closeTabFromChrome(tab.id)
           }}
         >
           <CloseGlyph />

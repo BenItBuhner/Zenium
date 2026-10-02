@@ -62,7 +62,7 @@ describe('the hover fade (§11: 120 ms on --zen-ease, one curve both ways)', () 
   it('is the row’s background transition to --v2-window-fill-hover', () => {
     const tab = rule('.zen-tab')
     expect(tab).toMatch(
-      /transition:\s*background 120ms var\(--zen-ease\),\s*opacity 120ms var\(--zen-ease\);/
+      /transition:\s*background var\(--zen-motion-state\) var\(--zen-ease\),\s*opacity var\(--zen-motion-state\) var\(--zen-ease\);/
     )
     expect(
       rule(
@@ -159,7 +159,7 @@ describe('the edge fades (§9.37: 24 px where the regular region overflows, no a
       /mask-image: linear-gradient\(\s*to right,\s*transparent,\s*#000 var\(--zen-fade-start\),\s*#000 calc\(100% - var\(--zen-fade-end\)\),\s*transparent\s*\)/
     )
     expect(rule('[data-fade-axis]')).toMatch(
-      /transition:\s*--zen-fade-start 180ms var\(--zen-ease\),\s*--zen-fade-end 180ms var\(--zen-ease\)/
+      /transition:\s*--zen-fade-start var\(--zen-motion-state\) var\(--zen-ease\),\s*--zen-fade-end var\(--zen-motion-state\) var\(--zen-ease\)/
     )
     // No scrollbar and no arrows: the fades alone say there is more.
     expect(rule('.zen-strip-scroller')).toContain('scrollbar-width: none')

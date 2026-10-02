@@ -2554,6 +2554,51 @@ describe('the app menu', () => {
     }
   })
 
+  it('offers no Open in <shortcut> for a shortcut to a page (`kind` shortcut, seed D5), whichever way its box stood and in every layout – it claims no page – and keeps Create Shortcut… on offer for the page it points at', () => {
+    // The desktop's shortcut record: the page's URL as id, start URL and scope, no manifest. It
+    // is on record for Settings › Apps and its own launcher, not as the page's app: a shortcut
+    // captures no navigation (Chrome's shortcut apps have no scope), so the menu treats the page
+    // as no app's – no Open row, the install row as before.
+    const shortcut = (mode: { openAsWindow?: boolean }): Record<string, string> => ({
+      'webapps.json': JSON.stringify({
+        version: 1,
+        pinned: [
+          {
+            id: 'https://notes.example/today',
+            kind: 'shortcut',
+            name: 'Notes',
+            startUrl: 'https://notes.example/today',
+            scope: 'https://notes.example/today',
+            pinnedAt: 1,
+            icon: 'file:///icons/notes.png',
+            bounds: null,
+            ...mode
+          }
+        ],
+        engagement: {}
+      })
+    })
+    const layouts: HarnessOptions[] = [{}, { formFactor: 'tablet' }, { formFactor: 'phone' }]
+    for (const layout of layouts) {
+      for (const mode of [{ openAsWindow: true }, { openAsWindow: false }, {}]) {
+        const phone = layout.formFactor === 'phone'
+        const h = harness(
+          { ...(phone ? ANDROID : DESKTOP), pinShortcuts: true },
+          { ...layout, shortcuts: true, files: shortcut(mode) }
+        )
+        h.browser.tabs.createTab({ url: 'https://notes.example/today', active: true }, h.win)
+        h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+        const menu = appMenu(h)
+        expect(menu.filter((l) => /Open (in )?Notes/.test(l))).toEqual([])
+        expect(menu).toContain(phone ? 'Add to Home Screen' : 'Save and Share > Create Shortcut…')
+        // The record is on the list all the same (Settings › Apps' Open and Uninstall).
+        expect(h.browser.webApps.installed().map((a) => [a.id, a.kind])).toEqual([
+          ['https://notes.example/today', 'shortcut']
+        ])
+      }
+    }
+  })
+
   describe("a web app's standalone window", () => {
     /** An installed app on record, so its window is the app's (`appId`) and can be uninstalled. */
     const NOTES = JSON.stringify({
@@ -6687,7 +6732,8 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'New Live Folder…',
       'New Space…',
       '-',
-      'Clear Unpinned Tabs',
+      // The key table's words (P-9), read from the string table.
+      'Close Unpinned Tabs',
       '-',
       'Task Manager',
       '-',
@@ -6716,10 +6762,10 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     tablet.browser.handleCommand(tablet.win, 'newtab.contextMenu', {})
     expect(topLabels(tablet.shown())).not.toContain('Name Window…')
     // The window rows are a windowed host's alone: the phone has one window, no task manager
-    // window and no Close for it – its sheet ends at Clear Unpinned Tabs.
+    // window and no Close for it – its sheet ends at Close Unpinned Tabs.
     const phone = pageHarness(ANDROID, { formFactor: 'phone' })
     phone.browser.handleCommand(phone.win, 'newtab.contextMenu', {})
-    expect(topLabels(phone.shown()).at(-1)).toBe('Clear Unpinned Tabs')
+    expect(topLabels(phone.shown()).at(-1)).toBe('Close Unpinned Tabs')
     expect(topLabels(phone.shown())).not.toContain('Task Manager')
     expect(topLabels(phone.shown())).not.toContain('Close Window')
   })
@@ -6729,7 +6775,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
     const menu = topLabels(h.shown())
     expect(menu.slice(0, 5)).toEqual(['Restore', 'Minimize', 'Maximize', '-', 'New Tab'])
-    expect(menu.slice(-5)).toEqual(['Clear Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
+    expect(menu.slice(-5)).toEqual(['Close Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
     expect(menu).not.toContain('Close Window')
     // Move and Size stay out: Electron has no way into the OS's keyboard move and size modes.
     expect(menu).not.toContain('Move')

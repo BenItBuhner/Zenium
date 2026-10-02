@@ -70,7 +70,8 @@ import {
   type ShortcutAction,
   type SuggestionKind,
   type SyncRemoteTab,
-  type Tab
+  type Tab,
+  type UndoableTabClose
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import {
@@ -107,6 +108,7 @@ import {
   splitViewSubmenu,
   tabDirectionLabels
 } from './menuBar'
+import { S } from '../shared/strings'
 import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { isSendableUrl } from './sync/sendTab'
 import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
@@ -339,6 +341,26 @@ export class Menus {
       this.applicationMenuTimer = null
       this.syncApplicationMenu()
     }, APPLICATION_MENU_DEBOUNCE_MS)
+  }
+
+  /**
+   * A tab menu's close row (§9.23, OS-40 part B). On a touch host the row closes nothing itself:
+   * its click emits `tab.closeUndoable` with the tabs the close takes (`tabIds`, read as the row
+   * is picked) and the core command that closes them (`close`), and the chrome runs that command
+   * through its one close-with-undo (`lib/closeUndo.ts`): the pages are let go without "Leave
+   * site?", and the toast's Undo is the protection. On the desktop the row runs `direct` in the
+   * core, as it always did – its page may still ask.
+   */
+  private closeRow(
+    win: ZenWindow,
+    tabIds: () => string[],
+    close: UndoableTabClose,
+    direct: () => void
+  ): () => void {
+    return () => {
+      if (!touchLayout(win.formFactor)) return direct()
+      this.browser.emit('tab.closeUndoable', { tabIds: tabIds(), close }, win)
+    }
   }
 
   private popup(
@@ -2639,31 +2661,58 @@ export class Menus {
         // nothing to close is greyed, not gone (§9.30).
         label: 'Close Multiple Tabs',
         submenu: [
+          // Every close row: with Undo on the toast on a touch host, the core's own close on the
+          // desktop (`closeRow`, §9.23).
           {
             label: direction.closeBefore,
             enabled: tabs.closeScope(tabId, 'above', win).length > 0,
-            click: () => tabs.closeAbove(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'above', win),
+              { command: 'tab.closeAbove', tabId },
+              () => tabs.closeAbove(tabId, win)
+            )
           },
           {
             label: direction.closeAfter,
             enabled: tabs.closeScope(tabId, 'below', win).length > 0,
-            click: () => tabs.closeBelow(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'below', win),
+              { command: 'tab.closeBelow', tabId },
+              () => tabs.closeBelow(tabId, win)
+            )
           },
           {
             label: 'Close Other Tabs',
             enabled: tabs.closeScope(tabId, 'others', win).length > 0,
-            click: () => tabs.closeOthers(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'others', win),
+              { command: 'tab.closeOthers', tabId },
+              () => tabs.closeOthers(tabId, win)
+            )
           }
         ]
       },
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
         ...key('tab.close'),
-        click: () => void tabs.requestClose(tabId, false, win)
+        click: this.closeRow(
+          win,
+          () => [tabId],
+          { command: 'tab.close', tabId, force: false },
+          () => void tabs.requestClose(tabId, false, win)
+        )
       },
       ...when(tab.pinned || tab.essential, {
         label: 'Remove Tab',
-        click: () => void tabs.requestClose(tabId, true, win)
+        click: this.closeRow(
+          win,
+          () => [tabId],
+          { command: 'tab.close', tabId, force: true },
+          () => void tabs.requestClose(tabId, true, win)
+        )
       })
     ]
 
@@ -2831,11 +2880,18 @@ export class Menus {
         { type: 'separator' },
         {
           label: `Close ${n} Tabs`,
-          click: () =>
-            // One at a time, so a page that objects asks before the next one is touched.
-            void (async () => {
-              for (const t of selected) await tabs.requestClose(t.id, false, win)
-            })()
+          // With Undo on the toast on a touch host, through the core's `tab.closeMany` (`closeRow`,
+          // §9.23); the desktop's loop as it was.
+          click: this.closeRow(
+            win,
+            () => selected.map((t) => t.id),
+            { command: 'tab.closeMany', tabIds: selected.map((t) => t.id) },
+            () =>
+              // One at a time, so a page that objects asks before the next one is touched.
+              void (async () => {
+                for (const t of selected) await tabs.requestClose(t.id, false, win)
+              })()
+          )
         }
       ],
       win,
@@ -2848,16 +2904,16 @@ export class Menus {
    * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
    * it. Chrome's strip rows first – New tab, Reopen closed tab, Bookmark all tabs…, and on the
    * desktop Name window… (context-menus-108) – then Zenium's own: the space's folders and
-   * spaces, Clear Unpinned Tabs; last the window's own rows, as Chrome's frame menu
-   * (`SystemMenuModelBuilder`) ends: Task manager after a separator, then the window's Close.
-   * The window rows are a windowed host's alone (`capabilities.windows`): the phone has one
-   * window, no task manager window and no Close for it, so its sheet ends at Clear Unpinned
-   * Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's rows inside it, so
-   * the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize –
-   * and the OS's Close ends the menu; Move and Size stay out, Electron having no way into the
-   * OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's "Use system title bar
-   * and borders" stays out too: the browser window is frameless by design, the toggle would
-   * have nothing to switch.
+   * spaces, Close Unpinned Tabs (P-9: the key table's words); last the window's own rows, as
+   * Chrome's frame menu (`SystemMenuModelBuilder`) ends: Task manager after a separator, then
+   * the window's Close. The window rows are a windowed host's alone (`capabilities.windows`):
+   * the phone has one window, no task manager window and no Close for it, so its sheet ends at
+   * Close Unpinned Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's
+   * rows inside it, so the frameless window's system items lead in the OS's words – Restore,
+   * Minimize, Maximize – and the OS's Close ends the menu; Move and Size stay out, Electron
+   * having no way into the OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's
+   * "Use system title bar and borders" stays out too: the browser window is frameless by
+   * design, the toggle would have nothing to switch.
    */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
@@ -2948,7 +3004,7 @@ export class Menus {
               { type: 'separator' as const }
             ]),
         {
-          label: 'Clear Unpinned Tabs',
+          label: S.menu('space.closeUnpinned'),
           ...(space.id === win.activeSpaceId ? { action: 'space.closeUnpinned' as const } : {}),
           enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
           click: () => tabs.closeUnpinned(space.id, win)
@@ -3073,7 +3129,7 @@ export class Menus {
           click: () => this.browser.unloadOtherSpaces(win)
         },
         { label: 'Freeze Other Tabs', click: () => void this.browser.governor.freezeOthers() },
-        { label: 'Close Unpinned Tabs', click: () => tabs.closeUnpinned(spaceId, win) },
+        { label: S.menu('space.closeUnpinned'), click: () => tabs.closeUnpinned(spaceId, win) },
         { type: 'separator' },
         {
           label: 'Space Routing Settings…',
@@ -4013,7 +4069,10 @@ export class Menus {
    * (Chrome), the phone goes to the app's start URL in this tab. An app whose shortcut opens a
    * tab ("Open as window" off, `openAsWindow` false) has no row: its launcher opens a tab like
    * this one, and Chrome offers none for it (the Design Lead's ruling on #761's second seam).
-   * The phone's flat row and the sidebar layouts' More Tools row are both this one.
+   * A shortcut to a page without a manifest (`PinnedWebApp.kind` `shortcut`) has none either,
+   * whichever way its box stood: it has no scope and claims no page, so `pinnedFor` never
+   * answers with it, and Create Shortcut… stays on offer instead (`installItems`). The phone's
+   * flat row and the sidebar layouts' More Tools row are both this one.
    */
   private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser

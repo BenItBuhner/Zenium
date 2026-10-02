@@ -97,11 +97,12 @@ describe('the overview menu template (§4)', () => {
     expect(a.calls).toEqual(['switchSpace:home'])
   })
 
-  it('in selection mode is the selection’s three rows, Close Selected in the danger ink', () => {
+  it('in selection mode is the selection’s three rows, Close Selected in the danger ink after the one separator', () => {
     const a = acts()
     const items = overviewMenuTemplate({ ...AT_REST, selection: { selected: 2, total: 3 } }, a)
-    expect(labels(items)).toEqual(['Select All', 'Deselect All', 'Close Selected (2)'])
-    expect(items[2]!.danger).toBe(true)
+    expect(labels(items)).toEqual(['Select All', 'Deselect All', '—', 'Close Selected (2)'])
+    expect(items.filter((i) => i.type === 'separator')).toHaveLength(1)
+    expect(items[3]!.danger).toBe(true)
     for (const item of items) item.click?.()
     expect(a.calls).toEqual(['chrome:select-all', 'chrome:deselect-all', 'chrome:close-selected'])
   })
@@ -145,7 +146,7 @@ describe('the overview menu through the bar’s ⋯ (§4)', () => {
       overview: { view: 'tabs', selection: { selected: 1, total: 2 } }
     })
     expect(h.where()?.title).toBe('1 selected')
-    expect(labels(h.shown())).toEqual(['Select All', 'Deselect All', 'Close Selected (1)'])
+    expect(labels(h.shown())).toEqual(['Select All', 'Deselect All', '—', 'Close Selected (1)'])
     // The app menu, with no overview up, is the source's own: no title of its own.
     h.browser.handleCommand(h.win, 'app.menu', {})
     expect(h.where()?.title).toBeUndefined()

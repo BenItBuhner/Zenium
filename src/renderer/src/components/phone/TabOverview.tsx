@@ -1472,9 +1472,15 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
     closeSet(regularAll)
   }
+  /**
+   * The regular view's Close All asks nothing (v2 §9.23: a close that can be taken back from
+   * its toast confirms nothing, and `closeSet`'s one Undo brings the lot back); the private
+   * view's Close Private Tabs still asks (`CloseAllSheet`), since a private tab is never filed
+   * and there is no Undo to stand in for the question.
+   */
   const closeAllAsked = (): void => {
     if (regularAll.length === 0) return
-    if (state.settings.confirmCloseAll) setSheet({ kind: 'close-all' })
+    if (privatePane) setSheet({ kind: 'close-all' })
     else closeAll()
   }
   /**
@@ -2449,13 +2455,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       {interactive && sheet?.kind === 'close-all' && (
         <CloseAllSheet
           count={regularAll.length}
-          spaceName={space.name}
-          privateTabs={privatePane}
           onClose={() => leaveSheet('close-all')}
-          onConfirm={(askAgain) => {
-            if (!askAgain) run('settings.update', { confirmCloseAll: false })
-            closeAll()
-          }}
+          onConfirm={closeAll}
         />
       )}
       {interactive && sheet?.kind === 'recently-closed' && (
@@ -2696,20 +2697,31 @@ function LiftGhost({
   if (lift.phase === 'idle' || !lift.ghost || !lift.tabId) return null
   const tab = state.tabs[lift.tabId]
   if (!tab) return null
+  // Two elements (motion spec §0.4): the SEAT follows the finger by a per-frame `translate` –
+  // `left`/`top` per frame laid the page out on every frame – and the CARD inside it carries the
+  // lift's scale, whose 120 ms stylesheet transition would otherwise smear the follow when both
+  // sat on one `transform`. The seat is snapped to the device pixel grid as the layout box was,
+  // so the card's text stays sharp wherever the follow rests.
+  const dpr = window.devicePixelRatio || 1
+  const x = Math.round(lift.ghost.x * dpr) / dpr
+  const y = Math.round(lift.ghost.y * dpr) / dpr
   return (
     <div
-      className="zen-overview-card zen-overview-ghost pointer-events-none fixed z-30 flex flex-col overflow-hidden"
-      data-active={tab.id === activeTabId}
-      data-landing={lift.phase === 'dropping' || undefined}
+      className="zen-overview-ghost-seat pointer-events-none fixed z-30"
       style={{
-        left: lift.ghost.x,
-        top: lift.ghost.y,
         width: lift.ghost.width,
         height: lift.ghost.height,
-        transform: `scale(${lift.scale})`
+        transform: `translate(${x}px, ${y}px)`
       }}
     >
-      <CardBody tab={tab} closable={false} />
+      <div
+        className="zen-overview-card zen-overview-ghost flex h-full w-full flex-col overflow-hidden"
+        data-active={tab.id === activeTabId}
+        data-landing={lift.phase === 'dropping' || undefined}
+        style={{ transform: `scale(${lift.scale})` }}
+      >
+        <CardBody tab={tab} closable={false} />
+      </div>
     </div>
   )
 }

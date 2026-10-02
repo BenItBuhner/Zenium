@@ -71,7 +71,7 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { closeGroupUndoable } from '@renderer/lib/closeUndo'
+import { closeGroupUndoable, closeUndoable } from '@renderer/lib/closeUndo'
 import { requestAgentRelease } from '@renderer/lib/agentRelease'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { dispatchOverviewCommand } from '@renderer/lib/overviewCommands'
@@ -414,6 +414,11 @@ export function useMainEvents(): void {
       // saved", whose Undo brings them back into the group. Inert on the desktop, whose folder
       // menu never emits it (`showFolderContextMenu` calls the core's `closeFolder` itself).
       onEvent('folder.closeUndoable', ({ folderId }) => closeGroupUndoable(folderId)),
+      // The touch hosts' tab menus' close rows, the same way (§9.23: Close Tab, Remove Tab, the
+      // directed and other closes, the selection's Close N Tabs – the tabs the close takes and the
+      // core command that closes them, `lib/closeUndo.ts`); the desktop's rows close in the core
+      // and never emit it.
+      onEvent('tab.closeUndoable', ({ tabIds, close }) => closeUndoable(tabIds, close)),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {

@@ -107,8 +107,11 @@ describe('conflictPrompt', () => {
     expect(conflictPrompt([byId('key_reload'), byId('key_newNavigatorTab')])).toBe(
       'Already used by Reload and New Tab: replace?'
     )
+    // A holder whose row is an ask is named without the ellipsis: the prose names the act.
+    expect(byId('key_find').label).toBe('Find in Page…')
     expect(
       conflictPrompt([byId('key_reload'), byId('key_newNavigatorTab'), byId('key_find')])
     ).toBe('Already used by Reload, New Tab and Find in Page: replace?')
+    expect(conflictPrompt([byId('printKb')])).toBe('Already used by Print: replace?')
   })
 })

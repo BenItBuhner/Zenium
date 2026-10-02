@@ -257,6 +257,7 @@ export function androidCapabilities({
     placementAnswered: true,
     // Kotlin's WebChromeClient answers page dialogs itself, so none reaches an agent yet.
     agentDialogs: false,
+    agentDialogPolicy: false, // Android's half flips it (`TabView.setDialogPolicy`, `onPageDialogAnswered`)
     // The prompts the core itself raises for the WebView (sign-in, site permissions, opening
     // another app) go to an agent's tab's agent, and so do the three Kotlin would otherwise
     // answer with system UI over the page: the file chooser (`onShowFileChooser`), the
