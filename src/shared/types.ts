@@ -3567,11 +3567,6 @@ export interface Settings {
    * absent in profiles from before it existed (read as true).
    */
   showSelectionMenu?: boolean
-  /**
-   * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
-   * again" turns this off. Absent in profiles from before it existed (read as true).
-   */
-  confirmCloseAll: boolean
   /** After an unclean exit: offer the last session's pages, bring them back, or start fresh. */
   crashRestore: CrashRestoreMode
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
