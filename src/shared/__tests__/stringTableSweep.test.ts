@@ -58,10 +58,6 @@ const PENDING: ReadonlyArray<readonly [file: string, text: string, until: string
   // The Bookmarks menu's import and export rows: the bookmark menus' family (PR-8).
   ['src/core/menuBar.ts', 'Import Bookmarks and Settings…', 'PR-8'],
   ['src/core/menuBar.ts', 'Export Bookmarks…', 'PR-8'],
-  // The app menu's rows (PR-2b): the Help menu's report form; `space.new`'s second label, the
-  // app menu's "New Space…" over the key table's "Create New Space".
-  ['src/core/menuBar.ts', 'Report an Unsafe Site…', 'PR-2b'],
-  ['src/core/menuBar.ts', 'New Space…', 'PR-2b'],
   // The Tab menu's folder row: the noun axis (P-11, PR-4).
   ['src/core/menuBar.ts', 'New Folder…', 'PR-4']
 ]

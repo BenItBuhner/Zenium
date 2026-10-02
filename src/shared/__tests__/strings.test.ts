@@ -14,6 +14,7 @@ import {
   type Entry
 } from '../strings'
 import { ACTIONS } from '../strings/actions'
+import { APP_MENU } from '../strings/appMenu'
 import {
   DEFAULT_GROUP_NAME,
   GROUP_NOUN,
@@ -274,11 +275,13 @@ describe('nouns.ts: the words, re-exported where they were', () => {
 })
 
 describe('the merged table', () => {
-  it('holds the action tables (PR-2) and nothing else yet: the families land one PR each (§D)', () => {
+  it('holds the action tables (PR-2) and the app menu (PR-2b) and nothing else yet: the families land one PR each (§D)', () => {
     const ids = tableEntries().map(([id]) => id)
-    expect(ids).toEqual(Object.keys(ACTIONS))
-    expect(ids.length).toBeGreaterThan(120)
+    expect(ids).toEqual([...Object.keys(ACTIONS), ...Object.keys(APP_MENU)])
+    expect(ids.length).toBeGreaterThan(130)
     expect(new Set(ids).size).toBe(ids.length)
+    // One entry per act: a family cannot name an act another family holds.
+    for (const id of Object.keys(APP_MENU)) expect(ACTIONS).not.toHaveProperty(id)
     expect(tableValues().get('Copy Link')).toBe('tab.copyUrl')
     expect(tableValues().get('Copy link')).toBe('tab.copyUrl')
     expect(tableValues().get('Find in Page…')).toBe('find.open')
@@ -327,9 +330,40 @@ describe('the merged table', () => {
     expect(S.menu('tab.closeBefore')).toBe('Close Tabs to the Left')
     // The helper's derived faces (P-45 and §B) and the explicit sentences.
     expect(S.title('focus.bookmarksBar')).toBe('Focus bookmarks bar')
-    expect(S.title('space.new')).toBe('Create new Space')
+    expect(S.title('space.new')).toBe('New Space')
     expect(S.title('space.next')).toBe('Jump to the next Space')
     expect(S.title('tab.togglePin')).toBe('Pin or unpin tab')
     expect(S.title('tab.togglePin', { state: true })).toBe('Unpin tab')
+  })
+
+  it('reads the app menu’s faces (PR-2b): the acts it shares with the tables, resolved; its own', () => {
+    // P-6 and Q2: the page's name on the row, the page title and the extension's own menu.
+    expect(S.menu('addons.open')).toBe('Extensions and Mods')
+    expect(S.title('addons.open')).toBe('Extensions and Mods')
+    // P-33: the translate bar asks; P-36: a settings page is a destination, not an ask.
+    expect(S.menu('translate.open')).toBe('Translate Page…')
+    expect(S.button('translate.open')).toBe('Translate page')
+    expect(S.menu('resources.open')).toBe('Resource Settings')
+    expect(S.menu('search.manageEngines')).toBe('Manage Search Engines')
+    expect(S.menu('newTab.customise')).toBe('Customise New Tab Page')
+    expect(S.row('newTab.customise')).toBe('Customise New Tab page')
+    expect(S.menu('toolbar.customise')).toBe('Customise Toolbar')
+    expect(S.menu('languages.open')).toBe('Language Settings')
+    // `space.new`: one label for the key table, the palette and the menus; the dialog asks.
+    expect(S.menu('space.new')).toBe('New Space…')
+    expect(S.button('space.new')).toBe('New Space')
+    // The app menu's own acts.
+    expect(S.menu('tab.newPrivate')).toBe('New Private Tab')
+    expect(S.menu('tab.closePrivate')).toBe('Close Private Tabs')
+    expect(S.menu('window.closePrivate', { n: 1 })).toBe('Close Private Window')
+    expect(S.menu('window.closePrivate', { n: 2 })).toBe('Close 2 Private Windows')
+    expect(S.menu('window.closePrivate')).toBe('Close Private Window')
+    expect(S.menu('reader.textPreferences')).toBe('Text Preferences…')
+    expect(S.title('reader.textPreferences')).toBe('Text preferences')
+    expect(S.menu('readAloud.start')).toBe('Listen to This Page')
+    expect(S.menu('help.reportUnsafeSite')).toBe('Report an Unsafe Site…')
+    expect(tableValues().get('Close {n} Private Windows')).toBe('window.closePrivate')
+    expect(tableValues().get('Extensions and Mods')).toBe('addons.open')
+    expect(tableValues().get('Add-ons and Themes')).toBeUndefined()
   })
 })

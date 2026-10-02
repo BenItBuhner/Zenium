@@ -2,6 +2,7 @@ import { touchLayout } from '../formFactor'
 import type { FormFactor, Platform } from '../types'
 import { ACTIONS } from './actions'
 import type { ActId } from './acts'
+import { APP_MENU } from './appMenu'
 import type { Noun, NounWords } from './nouns'
 
 export type { ActId, MenuAct, PaletteAct } from './acts'
@@ -15,10 +16,10 @@ export type { Noun, NounWords } from './nouns'
  * surface cannot invent a word; §9.1's two registers are two FACES of one entry – the menu's
  * Title Case and the derived sentence case – never two typed strings.
  *
- * The table is one key space split into per-family modules (`actions.ts`, `tabsFolders.ts`,
- * `copyShare.ts`, …) merged here; a family lands with its call sites and its sweep root
- * (`src/shared/__tests__/stringTableSweep.test.ts`), one PR each (§D). `TableId` is the acts
- * the table names so far and becomes `Record<ActId, Entry>` when the last family lands.
+ * The table is one key space split into per-family modules (`actions.ts`, `appMenu.ts`,
+ * `tabsFolders.ts`, `copyShare.ts`, …) merged here; a family lands with its call sites and its
+ * sweep root (`src/shared/__tests__/stringTableSweep.test.ts`), one PR each (§D). `TableId` is
+ * the acts the table names so far and becomes `Record<ActId, Entry>` when the last family lands.
  */
 
 /** The strip's orientation axis (P-34): a horizontal strip says Right and Left, a vertical one Below and Above. */
@@ -260,10 +261,11 @@ export function face(entry: Entry, kind: Face, ctx: Ctx = {}): string {
 
 /**
  * The families merged (§C): each adds its module here as it lands (§D) – `actions.ts`, the
- * action tables, first. `satisfies` over each family proves every key is an act and every value
- * an entry; the keys are disjoint by construction (one family per act).
+ * action tables, first; `appMenu.ts`, the ⋯ menu's own acts, second. `satisfies` over each
+ * family proves every key is an act and every value an entry; the keys are disjoint by
+ * construction (one family per act).
  */
-const TABLE = { ...ACTIONS } satisfies Partial<Record<ActId, Entry>>
+const TABLE = { ...ACTIONS, ...APP_MENU } satisfies Partial<Record<ActId, Entry>>
 
 /** The acts the table names so far: `Record<ActId, Entry>` when the last family lands. */
 export type TableId = keyof typeof TABLE
