@@ -622,6 +622,31 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
       })
     }
   }
+  /**
+   * Make the fake's navigations go the way of a host that answers "Leave site?" itself
+   * (Android's `TabWebView.onJsBeforeUnload`): the page objects, the host answers at once from
+   * the policy the core handed its view (`setDialogPolicy`; leave without an entry), keeps the
+   * page on stay, and reports – posted to the core as the wire posts it, so the report lands
+   * while the navigating call waits on the load.
+   */
+  const reportingHost = (fake: FakeBrowser): void => {
+    const tabs = fake.browser.tabs as unknown as { navigate(id: string, url: string): void }
+    const real = tabs.navigate.bind(tabs)
+    tabs.navigate = (id, url) => {
+      const entry = fake.dialogPolicies.get(id)?.at(-1)?.beforeunload
+      const stay = entry?.answer === 'stay'
+      setTimeout(() => {
+        fake.service.onPageDialogAnswered(id, {
+          kind: 'beforeunload',
+          url: fake.model.tabs[id]?.url ?? '',
+          message: 'Changes you made may not be saved.',
+          answer: stay ? 'stay' : 'leave',
+          rule: entry?.rule ?? 'default'
+        })
+        if (!stay) real(id, url)
+      }, 30)
+    }
+  }
 
   it('is listed only where the host has the policy, and the instructions say what the host does', async () => {
     const desktop = browser()
@@ -1185,6 +1210,92 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
         `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left by your dialog policy.`
       )
     }
+  })
+
+  it('a host that answers "Leave site?" itself reports the policy\'s stay, and the navigating call reads it as the core\'s own: the headline and the Notice; a reported leave marks nothing', async () => {
+    const fake = browser({ agentDialogs: false, agentDialogPolicy: true })
+    reportingHost(fake)
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    // The real wait: the host's report lands while the call waits on the load, as on the wire.
+    fake.service.waitForLoad = AgentService.prototype.waitForLoad
+    await policy(fake, a, { tabId: tab, beforeunload: 'stay' })
+    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({
+      beforeunload: { answer: 'stay', rule: 'tab' }
+    })
+    const stayed = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(stayed.isError, textOf(stayed)).toBeFalsy()
+    // The desktop path's words (the test above), from the host's report.
+    expect(textOf(stayed)).toContain(
+      'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.'
+    )
+    expect(textOf(stayed)).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a "Leave site?" dialog: "Changes you made may not be saved." – answered stayed by your dialog policy.`
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://billing.test')
+    // The reading was the call's: nothing is left over for a later one.
+    expect(fake.service.takeStayed(tab)).toBeNull()
+
+    // A reported leave: the page goes with the normal headline, the Notice beside it.
+    await policy(fake, a, { tabId: tab, beforeunload: 'leave' })
+    const left = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(left.isError, textOf(left)).toBeFalsy()
+    expect(textOf(left)).toContain('Navigated to https://next.test')
+    expect(textOf(left)).not.toContain('Did not navigate')
+    expect(textOf(left)).toContain(
+      `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left by your dialog policy.`
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+
+    // The mark itself, report by report: a stay sets the policy's reading, a leave sets nothing.
+    const report = (answer: 'stay' | 'leave', rule: AgentDialogRuleScope): void =>
+      fake.service.onPageDialogAnswered(tab, {
+        kind: 'beforeunload',
+        url: 'https://next.test/',
+        message: 'Changes you made may not be saved.',
+        answer,
+        rule
+      })
+    report('leave', 'default')
+    expect(fake.service.takeStayed(tab)).toBeNull()
+    report('stay', 'session')
+    expect(fake.service.takeStayed(tab)).toBe('policy')
+    expect(fake.service.takeStayed(tab)).toBeNull()
+    const notices = await next(fake, a)
+    expect(notices).toContain(
+      `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left (no policy; browser_dialog_policy sets one).`
+    )
+    expect(notices).toContain(
+      `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered stayed by your dialog policy.`
+    )
+  })
+
+  it("a host's reported stay that no call was navigating to read is dropped by the next prepare: the Notice alone", async () => {
+    const fake = browser({ agentDialogs: false, agentDialogPolicy: true })
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { tabId: tab, beforeunload: 'stay' })
+    // The page's own navigation on the hidden tab: the host answered stay from the policy and
+    // reported so, and no call of the agent was navigating to read it.
+    fake.service.onPageDialogAnswered(tab, {
+      kind: 'beforeunload',
+      url: 'https://billing.test/',
+      message: 'Changes you made may not be saved.',
+      answer: 'stay',
+      rule: 'tab'
+    })
+    // The agent's next navigation, which the page lets go without a word (the fake's pages
+    // have nothing to save): the normal headline – the stay that kept the page before is not
+    // read against this navigation – and the Notice of the page's own.
+    const went = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(went.isError, textOf(went)).toBeFalsy()
+    expect(textOf(went)).toContain('Navigated to https://next.test')
+    expect(textOf(went)).not.toContain('Did not navigate')
+    expect(textOf(went)).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a "Leave site?" dialog: "Changes you made may not be saved." – answered stayed by your dialog policy.`
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+    expect(fake.service.takeStayed(tab)).toBeNull()
   })
 
   it("the user outranks the policy: a hidden tab's \"Leave site?\" is the policy's, a shown tab's is the user's whoever navigates it", async () => {
