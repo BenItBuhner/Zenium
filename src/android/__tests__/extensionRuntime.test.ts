@@ -874,6 +874,40 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     })
   })
 
+  it('hears nothing of the tabs that moved while no extension was installed: the snapshot follows the browser through the gap', async () => {
+    const h = harness()
+    const tabEvents = ['tabs.onCreated', 'tabs.onActivated', 'tabs.onRemoved']
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', tabEvents)
+    await h.runtime.detach(ID)
+    // The gap: a tab opened and brought to the front, the first one closed – nothing installed.
+    h.tabs.t2 = makeTab('t2', 'https://two.example/')
+    h.active.id = 't2'
+    h.notifyState()
+    delete h.tabs.t1
+    h.notifyState()
+    // Installed into the browser as it stands: the first change after the install is the
+    // first one heard – no onCreated for t2, no onRemoved for t1, no onActivated for the tab
+    // already in front (Chrome fires none of them for a fresh install).
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg2', tabEvents)
+    h.notifyState()
+    for (const event of tabEvents) expect(events(h, 'bg2', event)).toHaveLength(0)
+    h.tabs.t3 = makeTab('t3', 'https://three.example/')
+    h.active.id = 't3'
+    h.notifyState()
+    expect(events(h, 'bg2', 'tabs.onCreated')).toHaveLength(1)
+    const activated = events(h, 'bg2', 'tabs.onActivated')
+    expect(activated).toHaveLength(1)
+    expect((activated[0].args as Array<Record<string, unknown>>)[0]).toEqual({
+      tabId: h.runtime.api.tabs.chromeIdFor('t3'),
+      windowId: 1
+    })
+    delete h.tabs.t2
+    h.notifyState()
+    expect(events(h, 'bg2', 'tabs.onRemoved')).toHaveLength(1)
+  })
+
   it('keeps private tabs from an extension not allowed in them: no events, unknown to tabs.*', async () => {
     const h = harness()
     const rec = record(h)

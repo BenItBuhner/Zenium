@@ -3356,16 +3356,26 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.emitForTab(tabId, 'webNavigation', event, [details], details.url)
   }
 
-  /** The core's state snapshot changed: diff tabs for onCreated / onRemoved / onActivated. */
+  /**
+   * The core's state snapshot changed: diff tabs for onCreated / onRemoved / onActivated. The
+   * snapshot follows the browser whether or not an extension is installed: one installed into
+   * a browser whose tabs moved while none was hears only what happens after its install, as in
+   * Chrome – not a tab opened, closed or brought to the front in the gap. (A snapshot left
+   * standing through the gap handed Save Page WE a `tabs.onActivated` for the tab already in
+   * front at its install, 22 ms after its worker's ready and before its own startup had stored
+   * the state the listener reads – its `TypeError` at `local["tabs-pagetype"][tab.id]`.)
+   */
   private onStateChanged(): void {
-    if (this.extensions.size === 0) return
+    const listening = this.extensions.size > 0
     const win = this.windowOf()
     const active = this.browser.tabs.activeTabFor(win)?.id ?? null
     const tabs = Object.values(this.browser.tabs.model.tabs)
     const now = this.snapshotTabs()
-    for (const tab of tabs) {
-      if (!this.knownTabs.has(tab.id))
-        this.emitForTab(tab.id, 'tabs', 'onCreated', [this.api.tabs.chromeTab(tab)])
+    if (listening) {
+      for (const tab of tabs) {
+        if (!this.knownTabs.has(tab.id))
+          this.emitForTab(tab.id, 'tabs', 'onCreated', [this.api.tabs.chromeTab(tab)])
+      }
     }
     for (const id of this.knownTabs.keys()) {
       if (now.has(id)) continue
@@ -3391,7 +3401,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
     if (active !== this.activeTabId) {
       this.activeTabId = active
-      if (active)
+      if (active && listening)
         this.emitForTab(active, 'tabs', 'onActivated', [
           { tabId: this.api.tabs.chromeIdFor(active), windowId: 1 }
         ])
