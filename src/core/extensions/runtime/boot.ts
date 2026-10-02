@@ -212,6 +212,15 @@ export interface BootErrorStat {
   inline: string | null
   /** The sub-frame's document URL when the error is a sub-frame's; null for the document's own. */
   frame: string | null
+  /**
+   * True for an error an extension callback or listener threw that the runtime surfaces as the
+   * page's own uncaught error on the next tick (`core/extensions/api/rethrow.ts`), recorded as
+   * it was handed over, with the stack of its construction: the page's `error` event of such a
+   * throw is sanitized when the runtime's script is the document-start one (`Script error.`,
+   * line 0, no stack), so this record is the one that names the site. `source`, `line` and
+   * `column` are empty here; `message` is `<name>: <message>`.
+   */
+  rethrown?: boolean
 }
 
 export type PageContext = 'background' | 'popup' | 'options' | 'offscreen' | 'page'

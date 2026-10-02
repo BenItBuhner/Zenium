@@ -32,6 +32,7 @@ import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } fr
 import { getMessage, normalizeSubstitutions, predefinedMessages, type LocaleMessages } from './i18n'
 import { captureIconWireEnv, compactIconDetails, type IconWireEnv } from './iconWire'
 import { redirectUrl } from './identity'
+import { noteRethrow, rethrowLater } from './rethrow'
 import {
   installExtensionApi,
   type EventDelivery,
@@ -391,11 +392,11 @@ export function createEmulatedEngine(
   /** A web page's engine: its messages and ports go out marked for the external events. */
   const external = config.externalSender === true
 
-  const rethrow = (error: unknown): void => {
-    primordials.setTimeout(() => {
-      throw error
-    }, 0)
-  }
+  // A listener's throw as the page's own uncaught error, the debug hook told first (rethrow.ts).
+  const rethrow = (error: unknown): void =>
+    rethrowLater(error, (fn) => {
+      primordials.setTimeout(fn, 0)
+    })
 
   /**
    * [message] stamped for the host and serialized; undefined (logged) when it cannot be. The
@@ -1110,7 +1111,8 @@ export function createEmulatedEngine(
       {
         root,
         ...(optional.length > 0 ? { granted: config.permissions } : {}),
-        ...(receiver ? { receiver } : {})
+        ...(receiver ? { receiver } : {}),
+        onUncaught: noteRethrow
       }
     )
     // The shim always builds `storage`; Chrome only exposes it with the permission.

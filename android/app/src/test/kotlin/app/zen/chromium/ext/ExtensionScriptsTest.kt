@@ -254,6 +254,69 @@ class ExtensionScriptsTest {
     }
 
     @Test
+    fun `a group's literal is named by what its files do with the frame tree, counted exactly, the same through every path`() {
+        val id = group.extensionId
+        val idiom = "if (window === window.top) { document.title = 'top' }"
+        val walk = "var win = document.defaultView, parentwin = win.parent;\nwhile (win != window.top) { win = parentwin; parentwin = parentwin.parent }"
+        val plain = "console.log(document.title)"
+        // A transient source is written once, so every assembly below gets its own.
+        fun transientGroup() = ExtensionScripts.Group(id, 5, listOf(ExtensionScripts.Source.transient(walk)), "with")
+        val named = mapOf(
+            ExtensionScripts.Group.of(id, 0, listOf(idiom), "with") to "function__zenScopeFrames(window,",
+            ExtensionScripts.Group.of(id, 1, listOf(walk), "with") to "function__zenPageFrames(window,",
+            ExtensionScripts.Group.of(id, 2, listOf(plain), "with") to "function(window,",
+            // The walk in one file and the idiom in another of the same group: the idiom's name.
+            ExtensionScripts.Group.of(id, 3, listOf(walk, idiom), "with") to "function__zenScopeFrames(window,",
+            // A world group is named the same way (the bootstrap reads the name whatever the isolation).
+            ExtensionScripts.Group.of(id, 4, listOf(walk), "world") to "function__zenPageFrames(window,",
+            // Transient and rewritten sources carry the reading too.
+            transientGroup() to "function__zenPageFrames(window,",
+            ExtensionScripts.Group(id, 6, listOf(RelativeImports.source(walk + "\nimport('./x.js')", RelativeImports.edits(walk + "\nimport('./x.js')", id, "a.js"), false)), "with") to "function__zenPageFrames(window,",
+        )
+        for ((g, head) in named) {
+            val mirror = ExtensionScripts.mirrorOf(g)
+            val sb = StringBuilder()
+            ExtensionScripts.appendGroupFunction(sb, g, mirror)
+            assertTrue("group ${g.index}: ${sb.take(60)}", sb.startsWith(head + "self,globalThis,chrome,browser,__zenMirror){"))
+            assertEquals("group ${g.index}", sb.length, ExtensionScripts.groupFunctionChars(g, mirror))
+        }
+        fun groups() = named.keys.map { if (it.index == 5) transientGroup() else it }
+        val assembled = ExtensionScripts.documentStartSized("/*bootstrap*/", "{}", groups(), emptyMap(), true)
+        assertEquals(assembled.script.length, assembled.presized)
+        assertFalse(assembled.grown)
+        assertTrue(assembled.script.contains("\"$id/1\":function__zenPageFrames(window,"))
+        assertTrue(assembled.script.contains("\"$id/2\":function(window,"))
+        assertTrue(assembled.script.contains("\"$id/5\":function__zenPageFrames(window,"))
+        val sink = StringBuilder()
+        val written = ExtensionScripts.documentStartTo(sink, "/*bootstrap*/", "{}", groups(), emptyMap(), true)
+        assertEquals(assembled.script, sink.toString())
+        assertEquals(sink.length, written.chars)
+        // The executeScript wrapper's literal the same way – Save Page WE's `content-frame.js` is an
+        // injection, not a manifest script – in the composed form and the streamed one, for code, files and a func.
+        val execWalk = ExtensionScripts.exec("tok", id, "js", JSONObject(), walk, null, null, scoped = true)
+        assertTrue(execWalk, execWalk.contains(",function__zenPageFrames(window,self,globalThis,chrome,browser,__zenMirror,__zenCompletion){with(window){\n"))
+        val execIdiom = ExtensionScripts.exec("tok", id, "js", JSONObject(), idiom, null, null)
+        assertTrue(execIdiom, execIdiom.contains(",function__zenScopeFrames(window,self,globalThis,chrome,browser,__zenMirror,__zenCompletion){\n"))
+        val execFunc = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "() => window === window.top", "[]")
+        assertTrue(execFunc, execFunc.contains(",function__zenScopeFrames(window,"))
+        val execPlain = ExtensionScripts.exec("tok", id, "js", JSONObject(), plain, null, null)
+        assertTrue(execPlain, execPlain.contains(",function(window,self,globalThis,chrome,browser,__zenMirror,__zenCompletion){\n"))
+        val dir = createTempDir("ext-scripts-frames")
+        try {
+            val a = File(dir, "a.js").apply { writeText(plain) }
+            val b = File(dir, "b.js").apply { writeText(walk) }
+            val streamed = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(a, b), null, null, null, true, scoped = true)
+            assertEquals(ExtensionScripts.named(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), plain + "\n;\n" + walk, null, null, scoped = true))), streamed)
+            assertTrue(streamed.contains(",function__zenPageFrames(window,"))
+            val anonymous = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(a), null, null, "/*boot*/", false)
+            assertEquals("/*boot*/\n" + ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), plain, null, null)), anonymous)
+            assertFalse(anonymous.contains("__zenPageFrames"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `the quoted CSS is bounded from above for both org json implementations, and the builder with it never grows`() {
         // Every class of character the two `JSONObject.quote`s treat differently or escape: the
         // backslash escapes, `/` (Android's always, the public one's after `<`), the controls, the

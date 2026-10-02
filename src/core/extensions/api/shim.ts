@@ -119,6 +119,14 @@ export interface ShimOptions {
    * (`EngineOptions.receiver`).
    */
   receiver?: object
+  /**
+   * Sees an extension callback's or listener's throw before the shim surfaces it as the page's
+   * own uncaught error on the next tick (the emulated engine's debug record of its stack: an
+   * uncaught error of a document-start script reaches the page's `error` event sanitized, with
+   * neither site nor stack; `core/extensions/api/rethrow.ts`). Absent on the desktop, whose
+   * options cross `executeInMainWorld` serialization; the rethrow itself does not depend on it.
+   */
+  onUncaught?: (error: unknown) => void
 }
 
 /**
@@ -171,6 +179,25 @@ export function installExtensionApi(
    */
   const receiver: object | undefined =
     options?.receiver ?? (host.kind === 'worker' ? (real as object) : undefined)
+  /**
+   * A callback's or listener's throw surfaced as the page's own uncaught error on the next
+   * tick, as Chrome does – the API call that ran it returns – after `options.onUncaught` saw
+   * it ([ShimOptions.onUncaught]: a debug record of the stack the sanitized `error` event of a
+   * document-start script's throw does not carry). Every rethrow of the shim goes through here.
+   */
+  const onUncaught = options?.onUncaught
+  const rethrowLater = (error: unknown): void => {
+    if (onUncaught) {
+      try {
+        onUncaught(error)
+      } catch {
+        /* the record is a debug aid; the rethrow below is the contract */
+      }
+    }
+    setTimeout(() => {
+      throw error
+    }, 0)
+  }
   /** How long an event pushed before any listener exists waits for one (worker start-up). */
   const PENDING_TTL = 10_000
   const MARK = '__zeniumExtensionApi'
@@ -494,9 +521,7 @@ export function installExtensionApi(
         try {
           Reflect.apply(callback, receiver, value === undefined ? [] : [value])
         } catch (error) {
-          setTimeout(() => {
-            throw error
-          }, 0)
+          rethrowLater(error)
         }
       },
       (error) => {
@@ -505,9 +530,7 @@ export function installExtensionApi(
           try {
             Reflect.apply(callback, receiver, [])
           } catch (thrown) {
-            setTimeout(() => {
-              throw thrown
-            }, 0)
+            rethrowLater(thrown)
           }
         })
       }
@@ -752,9 +775,7 @@ export function installExtensionApi(
       const result: unknown = Reflect.apply(fn, receiver, args)
       if (results) results.push(result)
     } catch (error) {
-      setTimeout(() => {
-        throw error
-      }, 0)
+      rethrowLater(error)
     }
   }
 
@@ -1213,16 +1234,12 @@ export function installExtensionApi(
       if (isThenable(result)) {
         result.then(answer, (error: unknown) => {
           answer(undefined)
-          setTimeout(() => {
-            throw error
-          }, 0)
+          rethrowLater(error)
         })
       } else if (!registration.asyncBlocking || result !== undefined) answer(result)
     } catch (error) {
       answer(undefined)
-      setTimeout(() => {
-        throw error
-      }, 0)
+      rethrowLater(error)
     }
   }
 
@@ -1351,9 +1368,7 @@ export function installExtensionApi(
             waiting = true
             result.then(sendResponse, (error: unknown) => {
               close()
-              setTimeout(() => {
-                throw error
-              }, 0)
+              rethrowLater(error)
             })
           }
         }

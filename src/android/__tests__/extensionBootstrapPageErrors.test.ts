@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { noteRethrow, rethrowLater } from '@core/extensions/api/rethrow'
 import type { BootErrorStat, ExtensionBoot } from '@core/extensions/runtime/boot'
 import { extensionUrl } from '@core/extensions/runtime/plan'
 import { describe, expect, it } from 'vitest'
@@ -8,8 +9,9 @@ import { describe, expect, it } from 'vitest'
  * popup, an options page) keep the document's first uncaught errors as the content world's
  * stats do, with the stack: a console line gives an error thrown inside the document-start
  * script as `<document URL>:2` – the bootstrap's own line, the config on line 1 – which names
- * neither the code nor the caller, and the compat sweep reads the record for the column that
- * does (Save Page WE's worker, compat round 27).
+ * neither the code nor the caller, and the event of such a throw is sanitized (`Script error.`,
+ * no stack), so the runtime's own hand-over of a callback's throw (rethrow.ts) is what the
+ * compat sweep reads for the site (Save Page WE's worker, compat round 27).
  */
 
 interface Bridge {
@@ -108,9 +110,38 @@ describe('the page bootstrap keeps the document’s uncaught errors in its debug
     expect(record?.stack).toContain("reading '1'")
     expect(typeof record?.at).toBe('number')
 
+    // A callback's throw the runtime rethrows as the page's own uncaught error is recorded as
+    // it is handed over (`rethrown`), with the stack of its construction – the `error` event
+    // of that throw is sanitized for a document-start script – and still thrown on its tick.
+    const scheduled: Array<() => void> = []
+    const fromCallback = new TypeError("Cannot read properties of undefined (reading '1')")
+    rethrowLater(fromCallback, (fn) => {
+      scheduled.push(fn)
+    })
+    expect(stats?.errors).toHaveLength(2)
+    expect(stats?.errors?.[1]).toMatchObject({
+      message: "TypeError: Cannot read properties of undefined (reading '1')",
+      source: '',
+      line: 0,
+      column: 0,
+      frame: null,
+      inline: null,
+      rethrown: true
+    })
+    expect(stats?.errors?.[1]?.stack).toContain('extensionBootstrapPageErrors.test.ts')
+    expect(scheduled).toHaveLength(1)
+    expect(() => scheduled[0]()).toThrow(fromCallback)
+    // What the shim hands its `onUncaught` option (the engine's `noteRethrow`) lands the same way.
+    noteRethrow('a string thrown')
+    expect(stats?.errors?.[2]).toMatchObject({
+      message: 'Error: a string thrown',
+      stack: null,
+      rethrown: true
+    })
+
     // The capture is bounded: twelve records, the rest dropped.
     for (let i = 0; i < 20; i += 1) window.dispatchEvent(errorEvent(2, 100 + i))
     expect(stats?.errors).toHaveLength(12)
-    expect(stats?.errors?.[11]?.column).toBe(110)
+    expect(stats?.errors?.[11]?.column).toBe(108)
   })
 })

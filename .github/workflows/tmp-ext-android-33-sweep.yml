@@ -76,6 +76,12 @@ name: TEMPORARY - compat round 27 sweep and frame budget trigger
 #     the popup's close in `bridge-redirect-path.txt`, the runtime's redirect-pair lines in logcat,
 #     the worker's `storage.session` dumped from the popup. One boot per WebView, no second boot.
 #     Not planned this round; only for a run the coordinator grants.
+#   - `[savepagewe]`: Save Page WE's row alone on both WebViews (round 27 §5.1 and R27-8: the
+#     `[lane]` run's 113 renderer OOM was the saver's frame walk against the scope proxy's `top`;
+#     the guard names the unit's literal by its text and the scope answers the page's own): the
+#     row's grade, the driver's host-side renderer series through the wait (`hostSamples`), the
+#     bridge, and the worker's rethrown-error stacks for the `reading '1'` TypeError (§3.1.1).
+#     One boot per WebView, no second boot; one run, stated in the report before the push.
 #   - `[browserlock]`: Browser Lock's row alone on the System WebView lane (API 34 Google image)
 #     under the shared workflow's `emulator-gpu: swiftshader_indirect` (round 24's four host GL
 #     deaths at `screen.html` were all under `swangle`, the default; round 26's one job under this
@@ -371,6 +377,53 @@ jobs:
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
         SWEEP_ONLY=aomidfkchockcldhbkggjokdkkebmdll
+        SWEEP_LAST=
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  # Save Page WE's row alone on both WebViews (round 27 §5.1, R27-8: the scope's `top` for a
+  # unit that walks a DOM-handed window chain): one boot each; the row's grade, its host-side
+  # renderer series (`hostSamples`), its bridge (`bridge-save-page-we.txt`) and the worker's
+  # rethrown-error stacks (`bridge-save-page-we-background.txt`) the reading.
+  savepagewe-system-webview:
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[savepagewe]'))
+    name: Save Page WE alone - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-savepagewe
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=dhhpefjklgkmgeafimnjhojgjamoafof
+        SWEEP_LAST=
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  savepagewe-modern-webview:
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[savepagewe]'))
+    name: Save Page WE alone - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-savepagewe-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=dhhpefjklgkmgeafimnjhojgjamoafof
         SWEEP_LAST=
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64

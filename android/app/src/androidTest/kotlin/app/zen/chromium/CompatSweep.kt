@@ -8870,6 +8870,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * for are listed from the bridge at the end (`loadResources`), and the renderer's own
      * logcat lines of the wait (`rendererLog`: V8's heap-limit line, the chrome's renderer-gone
      * line) place a crash in time.
+     *
+     * The host-side readings (`rendererKb`, `bridge`) are taken by a thread of their own every
+     * 2.5 s (`hostSamples`, 60 at most): the page samples ride the download poll, and that poll's
+     * own core read stalls with the renderer's thread when a saver holds it – round 27's `[lane]`
+     * run on 113 took one page sample in the 76 s climb to V8's heap limit, and the workflow's
+     * process monitor was what gave the renderer's series. A thread that reads `ps` and the
+     * host's bridge ring needs neither the page nor the core.
      */
     private fun pageDownload(label: String, page: String, name: Regex, probe: String? = null, press: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -8915,19 +8922,43 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 samples.put(entry)
             }
         }
-        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        var item = poll(scaled(40_000, factor), 700) {
-            sample()
-            downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
-        }
-        // A press late in the wait leaves the saver its own time to build and hand over the file.
-        if (item == null && presses.length() > 0) {
-            item = poll(scaled(20_000, factor), 700) {
+        // The host-side series on its own thread: the renderer's resident size and the bridge
+        // every 2.5 s whether or not the page's thread, and with it the poll's core read, is held.
+        val hostSamples = java.util.Collections.synchronizedList(ArrayList<JSONObject>())
+        val sampling = java.util.concurrent.atomic.AtomicBoolean(true)
+        val sampler = Thread({
+            while (sampling.get() && hostSamples.size < 60) {
+                val entry = JSONObject().put("t", SystemClock.uptimeMillis() - started)
+                runCatching { entry.put("rendererKb", rendererRssKb()) }.onFailure { entry.put("rendererKb", JSONObject.NULL) }
+                runCatching { entry.put("bridge", bridgeNow()) }.onFailure { entry.put("bridge", JSONObject.NULL) }
+                hostSamples.add(entry)
+                var waited = 0L
+                while (sampling.get() && waited < 2_500) {
+                    SystemClock.sleep(250)
+                    waited += 250
+                }
+            }
+        }, "compat-sweep-host-sampler").apply { isDaemon = true }
+        sampler.start()
+        var item: JSONObject?
+        try {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            item = poll(scaled(40_000, factor), 700) {
                 sample()
                 downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
             }
+            // A press late in the wait leaves the saver its own time to build and hand over the file.
+            if (item == null && presses.length() > 0) {
+                item = poll(scaled(20_000, factor), 700) {
+                    sample()
+                    downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
+                }
+            }
+        } finally {
+            sampling.set(false)
+            runCatching { sampler.join(3_000) }
         }
-        extra.put("samples", samples).put("presses", presses)
+        extra.put("samples", samples).put("presses", presses).put("hostSamples", JSONArray(synchronized(hostSamples) { hostSamples.toList() }))
         if (item != null) {
             val id = item.optString("id")
             item = poll(scaled(15_000, factor), 500) { downloadRows().firstOrNull { it.optString("id") == id }?.takeIf { it.optString("state") == "completed" } }

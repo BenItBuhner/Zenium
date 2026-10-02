@@ -5,9 +5,13 @@ import {
   createScopeProxy,
   frameLocation,
   installTrustedTypesShield,
+  noteFrameIdiom,
   ownScriptMatcher,
+  PAGE_FRAMES_NAME,
+  SCOPE_FRAMES_NAME,
   stackFrame,
   type Any,
+  type ScopeFrames,
   type ShieldedWorld
 } from '../extensionIsolation'
 
@@ -101,6 +105,65 @@ describe('the scope proxy of the with-fallback', () => {
     expect(childScope.top).toBe(top)
     expect(childScope.parent).toBe(top)
     expect(childScope.top === childScope.window).toBe(false)
+  })
+
+  it('reads `top` and `parent` as the page’s own window for a scope whose unit walks a window chain', () => {
+    const top = fakeWindow()
+    const proto = Object.getPrototypeOf(top) as object
+    Object.defineProperty(proto, 'top', { value: top, configurable: true })
+    Object.defineProperty(proto, 'parent', { value: top, configurable: true })
+    Object.defineProperty(top, 'document', { value: { defaultView: top }, configurable: true })
+    const frames: ScopeFrames = { page: false, locked: false }
+    const scope = createScopeProxy(top, collectBuiltins(top), new Set(), frames)
+    expect(scope.top).toBe(scope)
+    // Save Page WE's `content-frame.js` keys the frame it runs in by walking from the window the
+    // DOM hands it up to `window.top`: the proxy is never on that chain, so against the scope the
+    // walk would not end; against the page's window it ends at once.
+    const walk = new Function(
+      'window',
+      `with (window) {
+         var steps = 0, win = document.defaultView;
+         while (win != window.top && steps < 3) { win = win.parent; steps++ }
+         return steps;
+       }`
+    ) as (w: unknown) => number
+    expect(walk(scope)).toBe(3)
+    // The host names a unit's function literal by what its text does with the frame tree
+    // (`FrameIdioms.kt` spells the same two names); an anonymous property value carries the key.
+    expect(SCOPE_FRAMES_NAME).toBe('__zenScopeFrames')
+    expect(PAGE_FRAMES_NAME).toBe('__zenPageFrames')
+    const sources = {
+      'ext/0': function __zenPageFrames(): string {
+        return 'walk'
+      },
+      'ext/1': function (): string {
+        return 'plain'
+      },
+      'ext/2': function __zenScopeFrames(): string {
+        return 'idiom'
+      }
+    }
+    expect(sources['ext/1'].name).toBe('ext/1')
+    noteFrameIdiom(frames, sources['ext/1'])
+    expect(frames).toEqual({ page: false, locked: false })
+    noteFrameIdiom(frames, sources['ext/0'])
+    expect(frames).toEqual({ page: true, locked: false })
+    expect(scope.top).toBe(top)
+    expect(scope.parent).toBe(top)
+    expect(walk(scope)).toBe(0)
+    // `window`, `self`, `globalThis` and `frames` stay the scope either way.
+    expect(scope.window).toBe(scope)
+    expect(scope.frames).toBe(scope)
+    // A unit with the idiom (`window === window.top`) locks the scope's reading for good: a
+    // later walk unit cannot flip it, an anonymous unit or no function changes nothing.
+    noteFrameIdiom(frames, sources['ext/2'])
+    expect(frames).toEqual({ page: false, locked: true })
+    expect(scope.top).toBe(scope)
+    noteFrameIdiom(frames, sources['ext/0'])
+    expect(frames).toEqual({ page: false, locked: true })
+    noteFrameIdiom(frames, sources['ext/1'])
+    noteFrameIdiom(frames, undefined)
+    expect(frames).toEqual({ page: false, locked: true })
   })
 
   it('binds native methods to the real window and keeps constructors as they are', () => {
