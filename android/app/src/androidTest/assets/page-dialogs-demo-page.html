@@ -38,8 +38,15 @@
 <script>
   // What the page's calls returned, for the driver to read once the dialog has gone (the page
   // is blocked inside each call while its dialog is up).
-  var log = window.__log = { alerts: 0, confirms: 0, prompts: 0, confirm: null, prompt: null, armed: false, slow: false };
+  var log = window.__log = { alerts: 0, confirms: 0, prompts: 0, confirm: null, prompt: null, armed: false, slow: false, beforeunloads: 0, pagehide: 0, unload: 0 };
   function show() { document.getElementById('log').textContent = JSON.stringify(log, null, 1); }
+  // The document's leaving as the page sees it: pagehide (every document on its way out) and
+  // unload (where the engine still fires it), counted in the log – readable while the document
+  // is still there – and told to the server as a beacon, the count that outlives the document.
+  // Scene 13 reads off both that nothing but the one navigation that went fired them: the
+  // host's unload probe ahead of a typed address commits nothing and takes no document away.
+  window.addEventListener('pagehide', function () { log.pagehide++; navigator.sendBeacon('/beacon/pagehide'); });
+  window.addEventListener('unload', function () { log.unload++; navigator.sendBeacon('/beacon/unload'); });
   document.getElementById('alert').onclick = function () { alert('Hello from the page.'); log.alerts++; show(); };
   document.getElementById('confirm').onclick = function () { log.confirm = confirm('Delete the draft?'); log.confirms++; show(); };
   document.getElementById('prompt').onclick = function () { log.prompt = prompt('What is your name?', 'Ada'); log.prompts++; show(); };
@@ -67,7 +74,7 @@
     log.armed = true;
     this.setAttribute('data-armed', '');
     this.textContent = 'beforeunload armed';
-    window.addEventListener('beforeunload', function (e) { e.preventDefault(); e.returnValue = 'unsaved'; return 'unsaved'; });
+    window.addEventListener('beforeunload', function (e) { log.beforeunloads++; e.preventDefault(); e.returnValue = 'unsaved'; return 'unsaved'; });
     show();
   };
   // A handler busy past Chromium's beforeunload budget (500 ms) before it objects: the renderer's
@@ -80,6 +87,7 @@
     this.setAttribute('data-armed', '');
     this.textContent = 'slow beforeunload armed';
     window.addEventListener('beforeunload', function (e) {
+      log.beforeunloads++;
       var until = performance.now() + 800;
       while (performance.now() < until) {}
       e.preventDefault();
