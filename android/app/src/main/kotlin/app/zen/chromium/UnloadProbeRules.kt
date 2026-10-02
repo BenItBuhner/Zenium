@@ -13,9 +13,6 @@ object UnloadProbeRules {
      */
     const val ORIGIN = "http://unload-probe.zen.invalid"
 
-    /** TEMPORARY (W6-S27-d measurement, removed before READY): the probe switched off for the baseline arm of the latency scene. */
-    @Volatile var measurementEnabled: Boolean = true
-
     /** The `n`th probe's address: its own, so a late word about an earlier probe is told from the one up. */
     fun probeUrl(n: Int): String = "$ORIGIN/$n"
 

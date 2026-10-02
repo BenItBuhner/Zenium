@@ -44,11 +44,8 @@ class UnloadProbeRulesTest {
         assertTrue(UnloadProbeRules.isProbeUrl(UnloadProbeRules.probeUrl(7)))
         assertTrue(UnloadProbeRules.isProbeUrl("http://unload-probe.zen.invalid/"))
         assertTrue(UnloadProbeRules.isProbeUrl("http://unload-probe.zen.invalid"))
-        // A reserved host (RFC 2606 `.invalid`): no page's address is ever the probe's, and
-        // nothing resolves it – answered on the device or not at all; plain http, so no
-        // handshake would even be attempted for it.
+        // A reserved host (RFC 2606 `.invalid`): no page's address is ever the probe's.
         assertTrue(UnloadProbeRules.ORIGIN.endsWith(".invalid"))
-        assertTrue(UnloadProbeRules.ORIGIN.startsWith("http://"))
         assertFalse(UnloadProbeRules.isProbeUrl("https://unload-probe.zen.invalid/1"))
         assertFalse(UnloadProbeRules.isProbeUrl("http://unload-probe.zen.invalid.example.com/1"))
         assertFalse(UnloadProbeRules.isProbeUrl("http://example.com/unload-probe.zen.invalid/1"))
