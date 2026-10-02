@@ -24,6 +24,9 @@ name: Android page dialogs demo
 # rather than on the runner.
 on:
   workflow_dispatch:
+  # TEMPORARY (W6-S27-d): the evidence runs for the A7 fix ride on pushes to its branch; reverted before READY.
+  push:
+    branches: [cursor/android-leave-site-cancel-9271]
 
 permissions:
   contents: read
