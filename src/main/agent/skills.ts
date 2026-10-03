@@ -45,20 +45,34 @@ export interface SkillTargetSpec {
 }
 
 /**
- * Targets researched 2026-09-24. Claude Code reads only its own directory (not `.agents`);
- * Cursor's own; Codex still reads its own (its preferred location is the shared one); the
- * shared `~/.agents/skills/` is the open standard's folder, read by Codex, Cursor, Gemini CLI,
- * GitHub Copilot CLI and OpenCode – one row, detected when any of those harnesses is present.
+ * Targets researched 2026-09-24, first-class OpenCode / Gemini CLI / Copilot rows 2026-10-03.
+ * Each named tool gets its own global skills directory; Shared is only `~/.agents/skills`
+ * (the open standard's folder, which Codex, Cursor, Gemini CLI, Copilot and OpenCode also
+ * read). Detection is the harness's own config folder so Settings can offer a pre-install
+ * switch before that tool has been used on this machine.
  */
 export const SKILL_TARGETS: readonly SkillTargetSpec[] = [
   { id: 'claude', label: 'Claude Code', skillsDir: ['.claude', 'skills'], detect: [['.claude']] },
   { id: 'cursor', label: 'Cursor', skillsDir: ['.cursor', 'skills'], detect: [['.cursor']] },
   { id: 'codex', label: 'Codex', skillsDir: ['.codex', 'skills'], detect: [['.codex']] },
   {
+    id: 'opencode',
+    label: 'OpenCode',
+    skillsDir: ['.config', 'opencode', 'skills'],
+    detect: [['.config', 'opencode']]
+  },
+  { id: 'gemini', label: 'Gemini CLI', skillsDir: ['.gemini', 'skills'], detect: [['.gemini']] },
+  {
+    id: 'copilot',
+    label: 'GitHub Copilot',
+    skillsDir: ['.copilot', 'skills'],
+    detect: [['.copilot']]
+  },
+  {
     id: 'agents',
     label: 'Shared skills folder',
     skillsDir: ['.agents', 'skills'],
-    detect: [['.agents'], ['.gemini'], ['.copilot'], ['.config', 'opencode']]
+    detect: [['.agents']]
   }
 ]
 

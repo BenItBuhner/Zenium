@@ -5147,14 +5147,16 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
 /**
  * Settings › AI Agents › Agent skill (desktop hosts, `capabilities.agentSkills`): the
  * `zenium-browser` Agent Skill – the file that teaches a coding agent to drive this browser
- * politely – installed into each detected agent's global skills folder from a switch per
- * agent, or all at once; a status row above them. The rows say "agent", never the developer's
- * "harness" (the #460 gate). The status row's error state trails §10.4's 16 status glyph in the
- * danger ink through the row's one `tone`; its neutral states stay bare. A failure that is one
- * agent's – the same sentence as that row's `note` – is said once, by the row it is about,
- * while any agent has the skill: the status row keeps its count in the danger tone with the
- * glyph (the lead's tidy from the #460 r3 delta read); the line carries the sentence itself when
- * the operation failed as a whole (its record could not be saved – a sentence no row carries) or
+ * politely – installed into each notable agent's global skills folder from a switch per
+ * agent, or all at once; a status row above them. Every notable tool is listed even when its
+ * folder is not on this machine yet, so a switch can pre-install. Detection still drives the
+ * status line's "found" wording. The rows say "agent", never the developer's "harness" (the
+ * #460 gate). The status row's error state trails §10.4's 16 status glyph in the danger ink
+ * through the row's one `tone`; its neutral states stay bare. A failure that is one agent's –
+ * the same sentence as that row's `note` – is said once, by the row it is about, while any
+ * agent has the skill: the status row keeps its count in the danger tone with the glyph (the
+ * lead's tidy from the #460 r3 delta read); the line carries the sentence itself when the
+ * operation failed as a whole (its record could not be saved – a sentence no row carries) or
  * when no agent has the skill. An agent's row wears the ink of its sentence's kind, not of its
  * place (the lead's #468 delta read): a failure takes the danger ink wherever it is said, a
  * caution – an edited copy left in place, a copy Zenium did not install – the warn ink; no
@@ -5164,18 +5166,23 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
  * back in one click. No modal: the group is the nudge.
  */
 function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
-  const detected = skills.targets.filter((t) => t.detected)
-  const installed = detected.filter((t) => t.installed)
-  const allInstalled = detected.length > 0 && installed.length === detected.length
+  const listed = skills.targets
+  const detected = listed.filter((t) => t.detected)
+  const installed = listed.filter((t) => t.installed)
+  const foundInstalled = detected.filter((t) => t.installed)
+  const allInstalled = listed.length > 0 && installed.length === listed.length
   const count =
-    detected.length === 0
-      ? 'No coding agent found on this computer'
-      : installed.length === 0
-        ? 'Not installed'
-        : `Installed for ${installed.length} of ${detected.length} agents found · version ${installed[0].installedVersion ?? skills.version}`
+    installed.length === 0
+      ? detected.length === 0
+        ? 'No coding agent found on this computer'
+        : 'Not installed'
+      : detected.length === 0
+        ? `Installed · version ${installed[0]?.installedVersion ?? skills.version}`
+        : `Installed for ${foundInstalled.length} of ${detected.length} agents found · version ${foundInstalled[0]?.installedVersion ?? installed[0]?.installedVersion ?? skills.version}`
   const rowSaysWhy =
-    skills.error !== null && installed.length > 0 && detected.some((t) => t.note === skills.error)
+    skills.error !== null && installed.length > 0 && listed.some((t) => t.note === skills.error)
   const status = skills.error && !rowSaysWhy ? skills.error : count
+  const allIds = listed.map((t) => t.id)
   const rows: SettingsRow[] = [
     {
       kind: 'info',
@@ -5188,7 +5195,7 @@ function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
       ) : undefined,
       keywords: ['skill', 'claude code', 'cursor', 'codex', 'opencode', 'gemini cli', 'copilot']
     },
-    ...detected.map((t): SettingsRow => ({
+    ...listed.map((t): SettingsRow => ({
       kind: 'switch',
       id: `skill:${t.id}`,
       label: t.label,
@@ -5207,21 +5214,21 @@ function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
           label: 'Remove everywhere',
           description: 'Takes Zenium’s copy out of each folder above; a copy you edited stays.',
           button: 'Remove',
-          onPress: () => run('agent.uninstallSkill', {})
+          onPress: () => run('agent.uninstallSkill', { targets: allIds })
         }
       : {
           kind: 'action',
           id: 'skill-all',
           label: 'Install for every agent found',
           description:
-            detected.length === 0
-              ? 'Install Claude Code, Cursor, Codex, Gemini CLI, Copilot CLI or OpenCode first, then check again.'
+            listed.length === 0
+              ? 'Install Claude Code, Cursor, Codex, Gemini CLI, GitHub Copilot or OpenCode first, then check again.'
               : 'Writes the skill into each folder above and keeps it current when Zenium updates.',
-          button: detected.length === 0 ? 'Check again' : 'Install',
+          button: listed.length === 0 ? 'Check again' : 'Install',
           onPress: () =>
-            detected.length === 0
+            listed.length === 0
               ? run('agent.refreshSkill', undefined)
-              : run('agent.installSkill', {})
+              : run('agent.installSkill', { targets: allIds })
         }
   ]
   return {

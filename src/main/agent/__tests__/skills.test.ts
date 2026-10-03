@@ -315,16 +315,25 @@ describe('SkillInstaller', () => {
     expect(byId.get('claude')?.detected).toBe(true)
     expect(byId.get('cursor')?.detected).toBe(true)
     expect(byId.get('codex')?.detected).toBe(false)
-    // The shared folder's row stands for Gemini CLI too.
-    expect(byId.get('agents')?.detected).toBe(true)
+    expect(byId.get('opencode')?.detected).toBe(false)
+    // Gemini CLI is first-class: `~/.gemini` detects it, not the shared folder.
+    expect(byId.get('gemini')?.detected).toBe(true)
+    expect(byId.get('copilot')?.detected).toBe(false)
+    expect(byId.get('agents')?.detected).toBe(false)
     expect(status.targets.every((t) => !t.installed && t.installedVersion === null)).toBe(true)
     expect(byId.get('claude')?.dir).toBe('~/.claude/skills/zenium-browser')
+    expect(byId.get('gemini')?.dir).toBe('~/.gemini/skills/zenium-browser')
+    expect(byId.get('opencode')?.dir).toBe('~/.config/opencode/skills/zenium-browser')
+    expect(byId.get('copilot')?.dir).toBe('~/.copilot/skills/zenium-browser')
     // The rows' labels (§6: no parenthesised aside – the path beneath says `.agents`), and
     // nothing that reaches the UI says "harness" (the #460 gate).
     expect(status.targets.map((t) => t.label)).toEqual([
       'Claude Code',
       'Cursor',
       'Codex',
+      'OpenCode',
+      'Gemini CLI',
+      'GitHub Copilot',
       'Shared skills folder'
     ])
     expect(byId.get('agents')?.dir).toBe('~/.agents/skills/zenium-browser')
@@ -332,11 +341,23 @@ describe('SkillInstaller', () => {
     expect(await manifest()).toBeNull()
   })
 
+  it('detects OpenCode, Copilot and the shared folder by their own directories', async () => {
+    await fs.mkdir(join(home, '.config', 'opencode'), { recursive: true })
+    await fs.mkdir(join(home, '.copilot'), { recursive: true })
+    await fs.mkdir(join(home, '.agents'), { recursive: true })
+    const status = await make().status()
+    const byId = new Map(status.targets.map((t) => [t.id, t]))
+    expect(byId.get('opencode')?.detected).toBe(true)
+    expect(byId.get('copilot')?.detected).toBe(true)
+    expect(byId.get('agents')?.detected).toBe(true)
+    expect(byId.get('gemini')?.detected).toBe(true)
+  })
+
   it('installs real files into every detected harness and records their hashes', async () => {
     const status = await make().install()
     const installed = status.targets.filter((t) => t.installed).map((t) => t.id)
-    expect(installed).toEqual(['claude', 'cursor', 'agents'])
-    for (const dir of ['.claude/skills', '.cursor/skills', '.agents/skills']) {
+    expect(installed).toEqual(['claude', 'cursor', 'gemini'])
+    for (const dir of ['.claude/skills', '.cursor/skills', '.gemini/skills']) {
       const stat = await fs.lstat(skillPath(dir))
       expect(stat.isFile()).toBe(true)
       expect(stat.isSymbolicLink()).toBe(false)
@@ -347,7 +368,7 @@ describe('SkillInstaller', () => {
     expect(await fs.stat(join(home, '.codex')).catch(() => null)).toBeNull()
     const m = await manifest()
     expect(m?.version).toBe(version)
-    expect(m?.installed.map((e) => e.target)).toEqual(['claude', 'cursor', 'agents'])
+    expect(m?.installed.map((e) => e.target)).toEqual(['claude', 'cursor', 'gemini'])
     for (const entry of m!.installed) {
       expect(entry.files).toEqual([
         { path: 'SKILL.md', sha256: sha256(stampVersion(shippedSkill(), version)) }
@@ -361,6 +382,14 @@ describe('SkillInstaller', () => {
     const status = await make().install(['codex'])
     expect(status.targets.filter((t) => t.installed).map((t) => t.id)).toEqual(['codex'])
     expect(await fs.readFile(skillPath('.codex/skills'), 'utf8')).toContain('name: zenium-browser')
+    const opencode = await make().install(['opencode'])
+    expect(opencode.targets.filter((t) => t.installed).map((t) => t.id)).toEqual([
+      'codex',
+      'opencode'
+    ])
+    expect(await fs.readFile(skillPath('.config/opencode/skills'), 'utf8')).toContain(
+      'name: zenium-browser'
+    )
   })
 
   it('uninstalls what it wrote and leaves an edited copy in place', async () => {
@@ -388,8 +417,8 @@ describe('SkillInstaller', () => {
     const installer = make()
     await installer.install()
     const status = await installer.uninstall(['claude'])
-    expect(status.targets.filter((t) => t.installed).map((t) => t.id)).toEqual(['cursor', 'agents'])
-    expect((await manifest())?.installed.map((e) => e.target)).toEqual(['cursor', 'agents'])
+    expect(status.targets.filter((t) => t.installed).map((t) => t.id)).toEqual(['cursor', 'gemini'])
+    expect((await manifest())?.installed.map((e) => e.target)).toEqual(['cursor', 'gemini'])
   })
 
   it('rewrites every installed copy once when the app version changed', async () => {
@@ -399,7 +428,7 @@ describe('SkillInstaller', () => {
     await make().status()
     expect(versionOf(await fs.readFile(skillPath('.claude/skills'), 'utf8'))).toBe('0.4.50')
     const synced = await make().status({ sync: true })
-    for (const dir of ['.claude/skills', '.cursor/skills', '.agents/skills'])
+    for (const dir of ['.claude/skills', '.cursor/skills', '.gemini/skills'])
       expect(versionOf(await fs.readFile(skillPath(dir), 'utf8'))).toBe(version)
     expect((await manifest())?.version).toBe(version)
     expect(synced.targets.find((t) => t.id === 'claude')?.installedVersion).toBe(version)
@@ -420,7 +449,7 @@ describe('SkillInstaller', () => {
     expect((await manifest())?.installed.map((e) => e.target)).toEqual([
       'claude',
       'cursor',
-      'agents'
+      'gemini'
     ])
     expectShowable(status)
     // A plain look afterwards carries no failure: the line was the operation's, not the state's.
@@ -439,7 +468,7 @@ describe('SkillInstaller', () => {
       true
     )
     expect(status.targets.every((t) => !t.installed && t.note === null)).toBe(true)
-    for (const dir of ['.claude/skills', '.cursor/skills', '.agents/skills']) {
+    for (const dir of ['.claude/skills', '.cursor/skills', '.gemini/skills']) {
       expect(await onDisk(dir)).toBe(false)
       expect(await fs.stat(join(home, ...dir.split('/'), SKILL_NAME)).catch(() => null)).toBeNull()
     }
@@ -454,7 +483,7 @@ describe('SkillInstaller', () => {
     expect(again.targets.filter((t) => t.installed).map((t) => t.id)).toEqual([
       'claude',
       'cursor',
-      'agents'
+      'gemini'
     ])
   })
 
@@ -469,9 +498,9 @@ describe('SkillInstaller', () => {
     expect(byId(status, 'claude')).toMatchObject({ installed: true, note: null })
     expect(await onDisk('.claude/skills')).toBe(true)
     expect(byId(status, 'cursor')).toMatchObject({ installed: false, note: null })
-    expect(byId(status, 'agents')).toMatchObject({ installed: false, note: null })
+    expect(byId(status, 'gemini')).toMatchObject({ installed: false, note: null })
     expect(await onDisk('.cursor/skills')).toBe(false)
-    expect(await onDisk('.agents/skills')).toBe(false)
+    expect(await onDisk('.gemini/skills')).toBe(false)
     expect((await manifest())?.installed.map((e) => e.target)).toEqual(['claude'])
   })
 
@@ -483,7 +512,7 @@ describe('SkillInstaller', () => {
       'Could not refresh: Zenium could not save its record in its profile folder (no permission to write); the copies were removed again.'
     )
     expect(status.targets.every((t) => !t.installed && t.note === null)).toBe(true)
-    for (const dir of ['.claude/skills', '.cursor/skills', '.agents/skills'])
+    for (const dir of ['.claude/skills', '.cursor/skills', '.gemini/skills'])
       expect(await onDisk(dir)).toBe(false)
     expect((await manifest())?.version).toBe('0.4.50')
     expectShowable(status)
@@ -517,7 +546,7 @@ describe('SkillInstaller', () => {
     expect((await manifest())?.installed.map((e) => e.target)).toEqual([
       'claude',
       'cursor',
-      'agents'
+      'gemini'
     ])
     const later = await make().status()
     expect(later.targets.every((t) => !t.installed && t.note === null)).toBe(true)
