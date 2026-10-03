@@ -378,6 +378,8 @@ describe('the merged table', () => {
 
   it('reads the copy-and-share family’s faces (PR-3a): Copy Link Address once; the page’s own stays Copy Link', () => {
     expect(S.menu('link.copyAddress')).toBe('Copy Link Address')
+    expect(S.menu('link.copyAddress', { n: 1 })).toBe('Copy Link Address')
+    expect(S.menu('link.copyAddress', { n: 2 })).toBe('Copy Link Addresses')
     expect(S.title('link.copyAddress')).toBe('Copy link address')
     expect(S.row('link.copyAddress')).toBe('Copy link address')
     expect(tableValues().get('Copy Link')).toBe('tab.copyUrl')
