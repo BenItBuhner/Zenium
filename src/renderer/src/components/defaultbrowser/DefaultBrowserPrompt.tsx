@@ -35,8 +35,8 @@ const START_GRACE_MS = 400
 
 /**
  * The browser-role promo (DEF-01): shown when the core's `DefaultBrowserService` decides a
- * session is due one, as a prompt sheet on touch and a prompt dialog where a mouse drives the
- * chrome (DeX, a tablet with a trackpad) – the one §9.23 composition in the two chromes: a
+ * session is due one, as the phone's prompt sheet and PromoDialog on tablet and DeX – the one
+ * §9.23 composition in the two chromes: a
  * prompt about Zenium itself, so the 48 px app icon stands above the chassis' title block (no
  * inline glyph: the identity is the title's own word, and an icon beside it would read as a
  * row), the paragraph as the block's description, over a §9.11 footer, both in the frame's
@@ -68,7 +68,7 @@ export function DefaultBrowserLayer(): JSX.Element | null {
   return <CampaignLayer />
 }
 
-/** The core's campaign (`defaultBrowser.prompt === 'sheet'`): the sheet on touch, the dialog on a mouse. */
+/** The core's campaign (`defaultBrowser.prompt === 'sheet'`): the phone's sheet; PromoDialog on tablet and DeX. */
 function CampaignLayer(): JSX.Element | null {
   const due = browserStore.use((s) => s.state?.defaultBrowser.prompt === 'sheet')
   const viewport = useViewport()
