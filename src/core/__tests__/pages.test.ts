@@ -80,6 +80,8 @@ function fixture(
      * answer unless given: false is the phone, whose new tab is the empty one.
      */
     newTabPage?: boolean
+    /** Host OS. Android by default so existing page-tab cases stay on the phone. */
+    os?: PlatformOs
     profile?: unknown
     pages?: InternalPageRegistry
   } = {}
@@ -100,7 +102,7 @@ function fixture(
     ...(opts.newTabPage === undefined ? {} : { newTabPage: opts.newTabPage })
   })
   const platform: Platform = {
-    info: { os: 'android' as PlatformOs, version: '0.0.0' },
+    info: { os: opts.os ?? 'android', version: '0.0.0' },
     capabilities,
     io: memoryIo(opts.profile === undefined ? null : JSON.stringify(opts.profile)),
     windows: {
@@ -920,6 +922,23 @@ describe('the address the user gets (zen:// never leaves tab.url)', () => {
     f.browser.handleCommand(f.win, 'tab.copyUrl', { tabId: id, markdown: true })
     expect(f.copied).toEqual(['zenium://settings/privacy', '[Settings](zenium://settings/privacy)'])
     expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings/privacy')
+  })
+
+  it('on desktop, toasts Link copied and Link copied as Markdown', () => {
+    for (const os of ['linux', 'darwin', 'win32'] as const) {
+      const f = fixture({ os, windows: true })
+      const tab = openSite(f, 'https://a.test/')
+      const title = f.browser.tabs.tab(tab.id)?.title ?? ''
+      f.sent.length = 0
+      f.browser.tabs.copyUrl(tab.id)
+      f.browser.tabs.copyUrl(tab.id, true)
+      expect(f.copied).toEqual(['https://a.test/', `[${title}](https://a.test/)`])
+      expect(
+        f.sent
+          .filter((e) => e.name === 'toast')
+          .map((e) => (e.payload as { message: string }).message)
+      ).toEqual(['Link copied', 'Link copied as Markdown'])
+    }
   })
 
   it('shares the alias – the deep link another app opens the page by', () => {
