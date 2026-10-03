@@ -89,7 +89,7 @@ describe("an agent's dialog policy on Android: Kotlin's report (agentDialogs.ts)
     })
     expect(confirm).not.toBeNull()
     expect(confirm).not.toHaveProperty('defaultValue')
-    // A prompt without the field's text is still a report (an empty default is left out by Kotlin).
+    // The decoder also accepts a prompt report without defaultValue (an older APK's).
     expect(
       pageDialogAnsweredOf({
         kind: 'prompt',

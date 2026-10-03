@@ -230,7 +230,7 @@ class DialogPolicyDemo : DemoHarness("page-dialogs-demo-state.json", "dialog-pol
         )
         val promptReport = report(before + 1)
         expect(
-            "reported with the field's own text: $promptReport",
+            "reported with the policy's text, the field's default beside it: $promptReport",
             promptReport.matches("prompt", ZENIUM_TEXT, "session", "What is your name?") &&
                 promptReport?.optString("defaultValue") == "Ada"
         )
