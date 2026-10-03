@@ -3,6 +3,7 @@ import type { FormFactor, Platform } from '../types'
 import { ACTIONS } from './actions'
 import type { ActId } from './acts'
 import { APP_MENU } from './appMenu'
+import { COPY_SHARE } from './copyShare'
 import type { Noun, NounWords } from './nouns'
 
 export type { ActId, MenuAct, PaletteAct } from './acts'
@@ -261,11 +262,12 @@ export function face(entry: Entry, kind: Face, ctx: Ctx = {}): string {
 
 /**
  * The families merged (§C): each adds its module here as it lands (§D) – `actions.ts`, the
- * action tables, first; `appMenu.ts`, the ⋯ menu's own acts, second. `satisfies` over each
- * family proves every key is an act and every value an entry; the keys are disjoint by
- * construction (one family per act).
+ * action tables, first; `appMenu.ts`, the ⋯ menu's own acts, second; `copyShare.ts`, the
+ * copy-and-share family's first slice, third (PR-3a). `satisfies` over each family proves
+ * every key is an act and every value an entry; the keys are disjoint by construction
+ * (one family per act).
  */
-const TABLE = { ...ACTIONS, ...APP_MENU } satisfies Partial<Record<ActId, Entry>>
+const TABLE = { ...ACTIONS, ...APP_MENU, ...COPY_SHARE } satisfies Partial<Record<ActId, Entry>>
 
 /** The acts the table names so far: `Record<ActId, Entry>` when the last family lands. */
 export type TableId = keyof typeof TABLE

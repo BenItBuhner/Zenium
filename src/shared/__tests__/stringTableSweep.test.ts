@@ -47,14 +47,21 @@ type Root = string | { file: string; region: string; from: RegExp; to: RegExp }
 
 /**
  * The roots walked: a family's call sites once it has landed – the action tables first (PR-2:
- * the key table, the palette, the mac menu bar), then the app menu (PR-2b: `Menus.showAppMenu`,
- * one method of `menus.ts`, whose row menus are PR-3's, PR-4's and PR-8's).
+ * the key table, the palette, the mac menu bar), then the app menu (PR-2b: `Menus.showAppMenu`),
+ * then the copy-and-share helper (PR-3a: `linkCopyItem`); the remaining row menus of `menus.ts`
+ * are later families.
  */
 const SWEPT: readonly Root[] = [
   'src/shared/shortcuts.ts',
   'src/shared/commands.ts',
   'src/core/menuBar.ts',
-  { file: 'src/core/menus.ts', region: 'showAppMenu', from: /^ {2}showAppMenu\(/, to: /^ {2}}$/ }
+  { file: 'src/core/menus.ts', region: 'showAppMenu', from: /^ {2}showAppMenu\(/, to: /^ {2}}$/ },
+  {
+    file: 'src/core/menus.ts',
+    region: 'linkCopyItem',
+    from: /^export function linkCopyItem\(/,
+    to: /^export function selectionUrl\(/
+  }
 ]
 
 /** A root's name in the assertions: the path, with the region after `#` for a method. */
@@ -266,17 +273,19 @@ describe('the string table sweep (§9 item 10)', () => {
   const literals = sources.flatMap((s) => literalsOf(s.file, s.text))
   const values = tableValues()
 
-  it('sweeps the roots of the families that have landed: the action tables, the app menu', () => {
+  it('sweeps the roots of the families that have landed: the action tables, the app menu, linkCopyItem', () => {
     expect(SWEPT.map(rootName)).toEqual([
       'src/shared/shortcuts.ts',
       'src/shared/commands.ts',
       'src/core/menuBar.ts',
-      'src/core/menus.ts#showAppMenu'
+      'src/core/menus.ts#showAppMenu',
+      'src/core/menus.ts#linkCopyItem'
     ])
     expect(files.map(rel)).toEqual([
       'src/shared/shortcuts.ts',
       'src/shared/commands.ts',
       'src/core/menuBar.ts',
+      'src/core/menus.ts',
       'src/core/menus.ts'
     ])
     expect(literals.length).toBeGreaterThan(100)
