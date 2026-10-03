@@ -450,7 +450,7 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val expectedRows = tileMenuRows(privateTabs)
             val items = expectedRows.filter { findByLabel(it) != null }
             finding("  the hold menu ${if (menu) "opened" else "MISSING"} (capabilities.privateTabs $privateTabs): ${items.joinToString(", ")}")
-            expect("a hold on a pinned tile opens its menu with Open in New Tab${if (privateTabs) ", Open in Private Tab" else ""}, Copy Link, Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove", menu && items == expectedRows, "tile-menu")
+            expect("a hold on a pinned tile opens its menu with Open in New Tab${if (privateTabs) ", Open in Private Tab" else ""}, Copy Link Address, Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove", menu && items == expectedRows, "tile-menu")
             still("tile-menu")
             val edit = touchTapLabelExpecting(EDIT_LABEL, "the shortcut's form sheet is up", timeoutMs = 8_000) {
                 chromeValue("String(!!document.querySelector('$EDIT_DIALOG'))") == "true"
@@ -1212,7 +1212,7 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
          */
         private fun tileMenuRows(privateTabs: Boolean): List<String> =
             listOf("Open in New Tab") + (if (privateTabs) listOf("Open in Private Tab") else emptyList()) +
-                listOf("Copy Link", EDIT_LABEL, "Move Left", "Move Right", "Unpin Shortcut", "Remove")
+                listOf("Copy Link Address", EDIT_LABEL, "Move Left", "Move Right", "Unpin Shortcut", "Remove")
         /** The shortcut's form sheet (`NewTabShortcutDialog`'s `ShortcutSheet`) on the Settings sheets' chassis (`SettingsSheet`'s panel class), its two fields: the URL's carries `inputmode`. */
         private const val EDIT_SHEET = ".zen-sheet.zen-settings-sheet"
         /** The focused element, described (tag, its first classes, its role), for the focus claim's finding. */

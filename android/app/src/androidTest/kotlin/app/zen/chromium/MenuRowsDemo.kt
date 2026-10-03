@@ -38,7 +38,7 @@ import org.junit.runner.RunWith
  *     private tabs (`capabilities.privateTabs`: a WebView with profiles, Chrome 111+; the shared
  *     recipe's API 34 image ships WebView 113 without them, so there the menu is as it was and
  *     the row's touch is the API 35 run's); on a host that offers it a real touch on the row opens
- *     the shortcut in a PRIVATE tab in front; Copy Link follows the open rows and Remove closes
+ *     the shortcut in a PRIVATE tab in front; Copy Link Address follows the open rows and Remove closes
  *     the list either way.
  *
  * Findings in `menu-rows-findings.txt` (one `OK` or `FAIL` per claim; a claim that does not hold
@@ -263,7 +263,7 @@ class MenuRowsDemo : GroupsDemoBase("menu-rows", "menu-rows-demo") {
             if (privateTabs) rows.indexOf(PRIVATE_ROW) == 1 else PRIVATE_ROW !in rows,
             "privateTabs $privateTabs, rows $rows"
         )
-        check("D: Copy Link follows the open rows", rows.indexOf("Copy Link") == (if (privateTabs) 2 else 1), "rows $rows")
+        check("D: Copy Link Address follows the open rows", rows.indexOf("Copy Link Address") == (if (privateTabs) 2 else 1), "rows $rows")
         check("D: Remove closes the list", rows.lastOrNull() == "Remove", "rows $rows")
         still("tile-menu")
         if (!privateTabs) {
