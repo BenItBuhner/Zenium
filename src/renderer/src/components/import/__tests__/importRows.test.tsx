@@ -18,6 +18,7 @@ import { idleDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { onLayout } from '../../pages/settings/model'
 import { GroupList } from '../../pages/settings/rows'
 import type { SectionContext } from '../../pages/settings/sections'
+import { V2_TRAILING_GLYPH } from '../../v2/controls'
 import { foundLine, importGroups } from '../importRows'
 
 /*
@@ -227,6 +228,13 @@ describe('the pane’s Last import row', () => {
     const glyph = trailing.querySelector('svg')
     expect(glyph).not.toBeNull()
     expect(glyph?.classList.contains('lucide-circle-check')).toBe(true)
+    // #788 nit: the trailing slot CSS sizes the svg to 16; pin that in JSX so the claim is 16,
+    // not ResultGlyph's default V2_GLYPH (20 via --v2-icon on the phone).
+    const cls = glyph!.getAttribute('class') ?? ''
+    expect(cls).toContain(V2_TRAILING_GLYPH)
+    expect(cls).toContain('h-4')
+    expect(cls).toContain('w-4')
+    expect(cls).not.toMatch(/h-\[var\(--v2-icon\)\]/)
     const dismiss = trailing.querySelector<HTMLButtonElement>('[data-testid="import-dismiss-last"]')
     expect(dismiss?.textContent).toBe('Dismiss')
     expect(glyph!.compareDocumentPosition(dismiss!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -253,6 +261,8 @@ describe('the pane’s Last import row', () => {
     const glyph = row.querySelector('svg')
     expect(glyph?.classList.contains('lucide-circle-alert')).toBe(true)
     expect(glyph?.getAttribute('class')).toContain('text-[var(--v2-danger)]')
+    expect(glyph?.getAttribute('class')).toContain(V2_TRAILING_GLYPH)
+    expect(glyph?.getAttribute('class')).not.toMatch(/h-\[var\(--v2-icon\)\]/)
     expect(row.children[0]!.querySelector('svg')).toBeNull()
     expect(glyph!.parentElement?.classList.contains('zen-settings-trailing')).toBe(true)
   })
@@ -264,6 +274,7 @@ describe('the pane’s Last import row', () => {
     const row = rowOf(pane(empty), 'import-last-summary')
     expect(row.querySelector('.zen-settings-label')?.textContent).toBe('Nothing was imported')
     expect(row.querySelector('svg')?.classList.contains('lucide-info')).toBe(true)
+    expect(row.querySelector('svg')?.getAttribute('class')).toContain(V2_TRAILING_GLYPH)
     expect(row.classList.contains('zen-settings-row-danger')).toBe(false)
   })
 
