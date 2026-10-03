@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCheck, EllipsisVertical, Globe } from 'lucide-react'
+import { S } from '@shared/strings'
 import type { ReadingListEntry, UIState } from '@shared/types'
 import { filterReadingList, isUnread, sortReadingList } from '@shared/readingList'
 import { displayHost } from '@shared/url'
@@ -29,7 +30,7 @@ import { noteSheetOpener, useScrolled } from './phonePanel'
  * when it was added; a tap opens the page in the current tab and marks the entry read
  * (`readingList.open`, which brings a tab already showing the page forward instead), and the
  * panel leaves on it. The row's ⋮ – or the row held – hangs the desktop row menu's items from
- * the row's own name: Open in New Tab, Mark as Read / Mark as Unread, Copy Link, Remove. While
+ * the row's own name: Open in New Tab, Mark as Read / Mark as Unread, Copy Link Address, Remove. While
  * anything is unread and nothing is searched, the top row marks every entry read at once, where
  * the desktop's title block holds the same action.
  *
@@ -113,7 +114,7 @@ export function PhoneReadingListPanel({ state }: { state: UIState }): JSX.Elemen
           onSelect: () => setRead(id, unread)
         },
         MENU_GAP,
-        { label: 'Copy Link', onSelect: () => copyLink(id) },
+        { label: S.menu('link.copyAddress'), onSelect: () => copyLink(id) },
         { label: 'Remove', danger: true, onSelect: () => remove(id) }
       ],
       tab?.id ?? null,

@@ -13,9 +13,10 @@ import { createBookmarkRoots, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@s
  * word, W6-E6b: its sheet is HB-16's "Edit folder", so the item is Chrome's Edit and not the
  * core's "Rename…", which the desktop keeps for the manager's in-place rename of a folder in
  * view, a rename alone), Move to…, the open rows – Open in Private Tab only
- * where the host has private tabs – Copy Link, Share… where the host shares, and Delete; Select
+ * where the host has private tabs – Copy Link Address, Share… where the host shares, and Delete; Select
  * starts selection mode with that row picked; the selection header's More hangs Edit… for
- * exactly one picked row, Move to… for any, then the open rows, Copy Link(s) and Delete. Move
+ * exactly one picked row, Move to… for any, then the open rows, Copy Link Address or Copy Link
+ * Addresses and Delete. Move
  * to… is the `BookmarkMoveSheet` in the frame's dialog host: every folder the rows can land in
  * as radio rows, the current folder checked and Move disabled on it, New folder naming a
  * folder inside the checked one, the core's `bookmark.move` run once the sheet is gone. No
@@ -371,7 +372,7 @@ const newFolder = (): HTMLButtonElement =>
 // --- the row menu ------------------------------------------------------------------------------
 
 describe("the bookmark row's menu (HB-12)", () => {
-  it('opens at the top level and hangs Chrome’s rows from a page: Select, Edit…, Move to…, the open rows, Copy Link, then Delete – no reading-list row', async () => {
+  it('opens at the top level and hangs Chrome’s rows from a page: Select, Edit…, Move to…, the open rows, Copy Link Address, then Delete – no reading-list row', async () => {
     await show()
     expect(titles()).toEqual(['Mobile bookmarks', 'Other bookmarks'])
     // The roots carry no menu (they neither move nor delete).
@@ -387,7 +388,7 @@ describe("the bookmark row's menu (HB-12)", () => {
         'Move to…',
         'Open in New Tab',
         'Open in Private Tab',
-        'Copy Link',
+        'Copy Link Address',
         '-',
         'Delete'
       ]
@@ -403,7 +404,7 @@ describe("the bookmark row's menu (HB-12)", () => {
       'Edit…',
       'Move to…',
       'Open in New Tab',
-      'Copy Link',
+      'Copy Link Address',
       'Share…',
       '-',
       'Delete'
@@ -495,7 +496,7 @@ describe("the bookmark row's menu (HB-12)", () => {
 // --- the selection bar -------------------------------------------------------------------------
 
 describe('the selection bar’s More (HB-15)', () => {
-  it('hangs Edit… for exactly one picked page, Move to…, the open rows, Copy Link and Delete', async () => {
+  it('hangs Edit… for exactly one picked page, Move to…, the open rows, Copy Link Address and Delete', async () => {
     await show()
     await tap('Mobile bookmarks')
     await openMenu('News')
@@ -508,7 +509,7 @@ describe('the selection bar’s More (HB-15)', () => {
         'Move to…',
         'Open in New Tab',
         'Open in Private Tab',
-        'Copy Link',
+        'Copy Link Address',
         '-',
         'Delete'
       ]
@@ -532,7 +533,7 @@ describe('the selection bar’s More (HB-15)', () => {
         'Move to…',
         'Open All (2)',
         'Open All in Private (2)',
-        'Copy Links',
+        'Copy Link Addresses',
         '-',
         'Delete 2 Items'
       ]

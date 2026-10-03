@@ -4959,13 +4959,13 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     return topLabels(h.shown())
   }
 
-  it('a pinned tile: Open in New Tab, Open in Private Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
+  it('a pinned tile: Open in New Tab, Open in Private Tab, Copy Link Address, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
     expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'Edit Shortcut…',
       'Move Left',
@@ -5013,7 +5013,7 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     expect(tileMenu(h, 'https://often.example/', 'Often')).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'Pin Shortcut',
       'Remove'
@@ -5051,7 +5051,7 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     const bare = pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'phone' })
     expect(tileMenu(bare, 'https://often.example/', 'Often')).toEqual([
       'Open in New Tab',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'Pin Shortcut',
       'Remove'
@@ -5085,7 +5085,7 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
     expect(tileMenu(h)).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'Remove'
     ])
@@ -5104,13 +5104,13 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
   })
 
-  it("a touch host's third row is Copy Link (NTP-35, the phone's hold menu's third): the tile's address goes to the clipboard, and no tab opens", () => {
+  it("a touch host's third row is Copy Link Address (NTP-35, the phone's hold menu's third): the tile's address goes to the clipboard, and no tab opens", () => {
     const h = pageHarness(ANDROID, { formFactor: 'tablet' })
     let copied = ''
     h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
     tileMenu(h)
     const before = Object.keys(h.browser.state.model.tabs).length
-    h.click('Copy Link')
+    h.click('Copy Link Address')
     expect(copied).toBe(TILE.url)
     expect(Object.keys(h.browser.state.model.tabs).length).toBe(before)
   })
@@ -5119,16 +5119,16 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
     expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'Remove'
     ])
-    // Copy Link is gated on the windows alone (a touch host cannot drag the address, whichever
+    // Copy Link Address is gated on the windows alone (a touch host cannot drag the address, whichever
     // way it keeps private browsing): a host without profiles still carries it, and not the
     // private open.
     expect(
       tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
-    ).toEqual(['Open in New Tab', 'Copy Link', '-', 'Remove'])
+    ).toEqual(['Open in New Tab', 'Copy Link Address', '-', 'Remove'])
     expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
       'Open in New Tab',
       'Open in New Window',
@@ -5808,7 +5808,7 @@ describe('the history row menu', () => {
       'Open in New Window',
       'Open in New Private Window',
       '-',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'Select',
       'Remove from History',
@@ -5832,7 +5832,7 @@ describe('the history row menu', () => {
       'Open in New Window',
       'Open in New Private Window',
       '-',
-      'Copy Link',
+      'Copy Link Address',
       '-',
       'More from This Site'
     ])

@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Globe, History, Trash2, X } from 'lucide-react'
+import { S } from '@shared/strings'
 import type { SyncRemoteTab, UIState } from '@shared/types'
 import { displayUrl } from '@shared/url'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
@@ -245,7 +246,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
           picked.map((row) => row.url),
           exitSelection
         ),
-        { label: picked.length === 1 ? 'Copy Link' : 'Copy Links', onSelect: () => copy(picked) },
+        { label: S.menu('link.copyAddress', { n: picked.length }), onSelect: () => copy(picked) },
         MENU_GAP,
         { label: 'Remove from History', danger: true, onSelect: () => remove(picked) }
       ],

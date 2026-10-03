@@ -10,6 +10,7 @@ import {
   ListFilter,
   Trash2
 } from 'lucide-react'
+import { S } from '@shared/strings'
 import type { BookmarkNode, UIState } from '@shared/types'
 import { isBookmarkRoot, searchBookmarks } from '@shared/bookmarks'
 import { sortBookmarkRows, type BookmarkRowDisplay } from '@shared/bookmarkRows'
@@ -287,7 +288,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
             { label: 'Move to…', onSelect: () => moveTo([node.id]) },
             { label: 'Open in New Tab', onSelect: () => openInNewTabs([node.id]) },
             ...openInPrivateItems(state.capabilities, urlsUnder([node.id]), exitSelection),
-            { label: 'Copy Link', onSelect: () => copyLinks([node.id]) },
+            { label: S.menu('link.copyAddress'), onSelect: () => copyLinks([node.id]) },
             // The system share sheet, where the host has one (`app.share`, capabilities.share).
             ...(state.capabilities.share
               ? [
@@ -308,8 +309,8 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   // Chrome's selection toolbar (HB-15) behind the header's More: Edit for exactly one picked
   // row (`selection_mode_edit_menu_id`; `BookmarkToolbarMediator` l.433 `showEdit =
   // !hasPartnerBookmark && numSelected == 1`, a lone folder included – it reads Edit…, as the
-  // row's own does; the per-door word above), Move to… for any, then the open rows, Copy link,
-  // Delete.
+  // row's own does; the per-door word above), Move to… for any, then the open rows, Copy Link
+  // Address, Delete.
   const selectionMenu = (): void => {
     noteSheetOpener()
     const ids = orderedSelection(selection, order)
@@ -327,7 +328,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
         },
         ...openInPrivateItems(state.capabilities, urlsUnder(ids), exitSelection),
         {
-          label: urlCount === 1 ? 'Copy Link' : 'Copy Links',
+          label: S.menu('link.copyAddress', { n: urlCount }),
           enabled: urlCount > 0,
           onSelect: () => copyLinks(ids)
         },
