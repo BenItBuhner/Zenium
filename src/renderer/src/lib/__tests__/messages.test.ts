@@ -12,6 +12,7 @@ const {
   dismissScreenshotCard,
   dismissToast,
   forgetBanner,
+  forgetScreenshotCard,
   forgetToast,
   holdBanner,
   holdScreenshotCard,
@@ -160,6 +161,20 @@ describe('toasts', () => {
     forgetToast(id)
     expect(toasts()).toHaveLength(0)
   })
+
+  it('forgetting a held toast drops the finger so the next one still times out', () => {
+    pushToast('Hold me')
+    const id = toasts()[0].id
+    holdToast(id, true)
+    forgetToast(id)
+    expect(toasts()).toHaveLength(0)
+    pushToast('Next')
+    const next = toasts()[0].id
+    expect(next).not.toBe(id)
+    holdToast(id, false)
+    vi.advanceTimersByTime(TOAST_DURATION)
+    expect(live(toasts())).toHaveLength(0)
+  })
 })
 
 describe("the screenshot card in the toast's slot (SH-07, v2 §9.33)", () => {
@@ -227,6 +242,20 @@ describe("the screenshot card in the toast's slot (SH-07, v2 §9.33)", () => {
     pushToast('Screenshot deleted')
     expect(liveInSlot()).toBe(1)
     expect(live(toasts()).map((t) => t.message)).toEqual(['Screenshot deleted'])
+  })
+
+  it('forgetting a held card drops the finger so the next one still times out', () => {
+    showScreenshotCard(saved)
+    const id = cards()[0].id
+    holdScreenshotCard(id, true)
+    forgetScreenshotCard(id)
+    expect(cards()).toHaveLength(0)
+    showScreenshotCard({ ...saved, uri: 'content://media/external/images/media/3' })
+    const next = cards()[0].id
+    expect(next).not.toBe(id)
+    holdScreenshotCard(id, false)
+    vi.advanceTimersByTime(TOAST_ACTION_DURATION)
+    expect(live(cards())).toHaveLength(0)
   })
 })
 
