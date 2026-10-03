@@ -14395,11 +14395,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val (rowSamplesNow, marks) = synchronized(lock) { ArrayList(rowSamples) to ArrayList(rowMarks) }
             val peaks = SweepHeapSteps.attribute(rowSamplesNow, marks, segments)
             val peak = SweepHeapSteps.peak(peaks)
+            val maxHeapBytes = Runtime.getRuntime().maxMemory()
+            val gate = SweepHeapSteps.peakGate(rowPeakHeapBytes, maxHeapBytes, null)
             return JSONObject()
                 .put("samples", samples - rowSamplesAtMark)
                 .put("peakPssKb", rowPeakPssKb)
                 .put("peakJavaHeapBytes", rowPeakHeapBytes)
-                .put("maxHeapBytes", Runtime.getRuntime().maxMemory())
+                .put("maxHeapBytes", maxHeapBytes)
+                .put("withinTenthOfCap", gate.withinTenthOfCap)
+                .put("grown20MiB", gate.grown20MiB)
                 .put("sampleMs", HEAP_SAMPLE_MS)
                 .put("peakStep", peak?.step ?: JSONObject.NULL)
                 .put(

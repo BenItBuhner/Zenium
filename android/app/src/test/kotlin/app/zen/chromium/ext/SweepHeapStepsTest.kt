@@ -121,4 +121,33 @@ class SweepHeapStepsTest {
         assertNull(SweepHeapSteps.peak(emptyList()))
         assertEquals(emptyList<SweepHeapSteps.StepPeak>(), SweepHeapSteps.attribute(emptyList(), marks, segments))
     }
+
+    @Test
+    fun `a peak within a tenth of the cap, or twenty mebibytes above its before, is a regression of its own`() {
+        val mib = 1_048_576L
+        val cap = 192_000_000L
+        val atTenth = 172_800_000L
+        val near = SweepHeapSteps.peakGate(atTenth, cap)
+        assertEquals(true, near.withinTenthOfCap)
+        assertEquals(false, near.grown20MiB)
+        assertEquals(true, near.regression)
+        val under = SweepHeapSteps.peakGate(atTenth - 1, cap)
+        assertEquals(false, under.withinTenthOfCap)
+        assertEquals(false, under.regression)
+
+        val before = 100 * mib
+        val grown = SweepHeapSteps.peakGate(120 * mib, 512 * mib, before)
+        assertEquals(false, grown.withinTenthOfCap)
+        assertEquals(true, grown.grown20MiB)
+        assertEquals(true, grown.regression)
+        val shy = SweepHeapSteps.peakGate((119.9 * mib).toLong(), 512 * mib, before)
+        assertEquals(false, shy.grown20MiB)
+        assertEquals(false, shy.regression)
+        val noBefore = SweepHeapSteps.peakGate(120 * mib, 512 * mib, null)
+        assertEquals(false, noBefore.grown20MiB)
+        assertEquals(false, noBefore.regression)
+        assertEquals(false, SweepHeapSteps.peakGate(0, cap).withinTenthOfCap)
+        assertEquals(false, SweepHeapSteps.peakGate(atTenth, 0, before).grown20MiB)
+        assertEquals(false, SweepHeapSteps.peakGate(0, 0, before).regression)
+    }
 }
