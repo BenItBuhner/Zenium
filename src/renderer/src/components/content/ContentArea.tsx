@@ -523,7 +523,7 @@ function SidePanelStrip({
   bodyRef: RefObject<HTMLDivElement | null>
 }): JSX.Element {
   return (
-    <aside
+    <section
       className="flex w-[360px] shrink-0 flex-col border-l border-[var(--zen-border)] bg-[var(--zen-bg)]"
       aria-label={`${panel.name} side panel`}
       // The side panel pane of the F6 rotation (lib/panes.ts): the strip's controls are what
@@ -543,7 +543,7 @@ function SidePanelStrip({
         </button>
       </div>
       <div ref={bodyRef} className="min-h-0 flex-1" />
-    </aside>
+    </section>
   )
 }
 

@@ -120,7 +120,7 @@ const CHROME = `
     <button id="chip1" tabindex="-1">Docs</button>
     <button id="chip2" tabindex="0">News</button>
   </div>
-  <aside data-pane="sidepanel"><button id="close-panel">Close side panel</button></aside>
+  <section data-pane="sidepanel" aria-label="Probe side panel"><button id="close-panel">Close side panel</button></section>
 `
 
 const byId = (id: string): HTMLElement => document.getElementById(id) as HTMLElement
