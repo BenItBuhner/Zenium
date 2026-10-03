@@ -171,7 +171,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Chromium's viewer prints its own document; no PDF hand-off to a system print flow.
   pdfPrint: false,
   agents: true,
-  // Claude Code, Cursor and Codex run beside the browser: the skill installs into their folders.
+  // Claude Code, Cursor, Codex, OpenCode, Gemini CLI and GitHub Copilot run beside the browser:
+  // the skill installs into each tool's folder, plus the shared `~/.agents/skills` folder.
   agentSkills: true,
   updates: true,
   share: false,

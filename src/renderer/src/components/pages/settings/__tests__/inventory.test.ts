@@ -676,11 +676,13 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Show the agent’s cursor',
     'Ask before a new agent connects',
     'Allow agents to run JavaScript in pages',
-    // The Agent skill group (desktop hosts): the status row, a switch per coding agent found
-    // (the fixture's two; Codex is not on this computer) and the install-everywhere action.
+    // The Agent skill group (desktop hosts): the status row, a switch per notable coding agent
+    // (the fixture lists three; Codex is not on this computer but still has a pre-install row)
+    // and the install-everywhere action.
     'zenium-browser skill',
     'Claude Code',
     'Cursor',
+    'Codex',
     'Install for every agent found'
   ],
   passwords: ['Manage passwords', 'Offer to save passwords', 'Ask again before showing or copying'],
@@ -911,10 +913,10 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
 /*
  * The AI Agents › Agent skill group (S2 of the MCP program): the `zenium-browser` Agent Skill's
  * install state per coding agent, as `agentSkills` reports it – a status line, a switch per
- * agent found on this computer and one action for all of them (the #460 gate: no "Kept current"
- * row, its sentence rides the install row; Remove everywhere asks nothing and wears no danger
- * ink; the status row's error state trails its glyph). Desktop hosts only: a phone has no
- * agent to install into.
+ * notable agent (detected or not, so a user can pre-install) and one action for all of them
+ * (the #460 gate: no "Kept current" row, its sentence rides the install row; Remove everywhere
+ * asks nothing and wears no danger ink; the status row's error state trails its glyph). Desktop
+ * hosts only: a phone has no agent to install into.
  */
 describe('the AI Agents › Agent skill group', () => {
   const section = availableSections(PAGE, ELECTRON, 'desktop', 'linux').find(
@@ -963,7 +965,7 @@ describe('the AI Agents › Agent skill group', () => {
     const ids = model.groups.map((g) => g.id)
     expect(ids.indexOf('skill')).toBe(ids.indexOf('connect') + 1)
     // Two lines at 664 (§10.5): the etiquette in a sentence, the folder in another – no product
-    // list, the rows name the agents found.
+    // list in the group copy; the rows name the notable agents, detected or not.
     expect(skill(model)?.description).toBe(
       'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs. Zenium keeps a copy in each agent’s skills folder.'
     )
@@ -972,7 +974,7 @@ describe('the AI Agents › Agent skill group', () => {
     ).not.toContain('skill')
   })
 
-  it('offers a switch per agent found and one install for all of them while any is missing', () => {
+  it('offers a switch per notable agent, including ones not found yet, and one install for all of them while any is missing', () => {
     invoke.mockClear()
     const group = skill(
       build({
@@ -990,6 +992,7 @@ describe('the AI Agents › Agent skill group', () => {
       'skill-status',
       'skill:claude',
       'skill:cursor',
+      'skill:codex',
       'skill-all'
     ])
     const status = group.rows[0]
@@ -1008,6 +1011,8 @@ describe('the AI Agents › Agent skill group', () => {
       cursor.onChange(false)
       expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', { targets: ['cursor'] })
     }
+    const codex = findRow([group], 'skill:codex')!
+    expect(codex.kind === 'switch' && codex.checked).toBe(false)
     const all = findRow([group], 'skill-all')!
     expect(all.kind === 'action' && all.label).toBe('Install for every agent found')
     if (all.kind === 'action') {
@@ -1017,7 +1022,9 @@ describe('the AI Agents › Agent skill group', () => {
       expect(all.button).toBe('Install')
       expect(all.confirm).toBeUndefined()
       all.onPress?.()
-      expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', {})
+      expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', {
+        targets: ['claude', 'cursor', 'codex']
+      })
     }
   })
 
@@ -1064,7 +1071,77 @@ describe('the AI Agents › Agent skill group', () => {
       expect(remove.destructive).toBeUndefined()
       expect(remove.confirm).toBeUndefined()
       remove.onPress?.()
-      expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', {})
+      expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', {
+        targets: ['claude', 'cursor']
+      })
+    }
+  })
+
+  it('lists every notable agent even when none of them are on this computer', () => {
+    const group = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [
+          target('claude', 'Claude Code', false, false),
+          target('cursor', 'Cursor', false, false),
+          target('codex', 'Codex', false, false),
+          {
+            ...target('opencode', 'OpenCode', false, false),
+            dir: '~/.config/opencode/skills/zenium-browser'
+          },
+          target('gemini', 'Gemini CLI', false, false),
+          {
+            ...target('copilot', 'GitHub Copilot', false, false),
+            dir: '~/.copilot/skills/zenium-browser'
+          },
+          {
+            ...target('agents', 'Shared skills folder', false, false),
+            dir: '~/.agents/skills/zenium-browser'
+          }
+        ]
+      })
+    )!
+    expect(group.rows.map((r) => r.id)).toEqual([
+      'skill-status',
+      'skill:claude',
+      'skill:cursor',
+      'skill:codex',
+      'skill:opencode',
+      'skill:gemini',
+      'skill:copilot',
+      'skill:agents',
+      'skill-all'
+    ])
+    expect(group.rows[0].kind === 'info' && group.rows[0].description).toBe(
+      'No coding agent found on this computer'
+    )
+    expect(findRow([group], 'skill:opencode')?.label).toBe('OpenCode')
+    expect(findRow([group], 'skill:gemini')?.label).toBe('Gemini CLI')
+    expect(findRow([group], 'skill:copilot')?.label).toBe('GitHub Copilot')
+    expect(findRow([group], 'skill:agents')?.label).toBe('Shared skills folder')
+    expect(findRow([group], 'skill:opencode')?.description).toBe(
+      '~/.config/opencode/skills/zenium-browser'
+    )
+  })
+
+  it('lists a notable agent that is not on this computer so it can be pre-installed', () => {
+    invoke.mockClear()
+    const group = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [target('codex', 'Codex', false, false)]
+      })
+    )!
+    expect(group.rows.map((r) => r.id)).toEqual(['skill-status', 'skill:codex', 'skill-all'])
+    const status = group.rows[0]
+    expect(status.kind === 'info' && status.description).toBe(
+      'No coding agent found on this computer'
+    )
+    const all = findRow([group], 'skill-all')!
+    if (all.kind === 'action') {
+      expect(all.button).toBe('Install')
+      all.onPress?.()
+      expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', { targets: ['codex'] })
     }
   })
 
@@ -1073,7 +1150,7 @@ describe('the AI Agents › Agent skill group', () => {
     const group = skill(
       build({
         ...emptyAgentSkillStatus('0.3.77-test'),
-        targets: [target('codex', 'Codex', false, false)]
+        targets: []
       })
     )!
     expect(group.rows.map((r) => r.id)).toEqual(['skill-status', 'skill-all'])

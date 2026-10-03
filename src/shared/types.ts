@@ -178,7 +178,8 @@ export interface HostCapabilities {
   /**
    * The host can install the `zenium-browser` Agent Skill into the coding harnesses' global
    * skills directories on this machine (Settings › AI Agents › Agent skill): the desktop, where
-   * Claude Code, Cursor and Codex run beside the browser. A phone has no harness to install into.
+   * Claude Code, Cursor, Codex, OpenCode, Gemini CLI and GitHub Copilot run beside the browser.
+   * A phone has no harness to install into.
    */
   agentSkills: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
@@ -4125,7 +4126,7 @@ export interface AgentServerStatus {
  * Agents › Agent skill): its user-level skills directory and whether Zenium's copy is in it.
  */
 export interface AgentSkillTarget {
-  /** `claude`, `cursor`, `codex` or `agents` (the shared `~/.agents/skills` folder). */
+  /** `claude`, `cursor`, `codex`, `opencode`, `gemini`, `copilot` or `agents` (the shared `~/.agents/skills` folder). */
   id: string
   /** The harness's name as the row's label ("Claude Code"). */
   label: string
