@@ -383,10 +383,9 @@ describe('the string table sweep (§9 item 10)', () => {
       if (entry.count && !entry.count.other.includes('{n}')) {
         // A numbered count names `{n}` in other. A word-only plural (the phone's Copy Link
         // Addresses) has no hole: the words change, not a number.
-        expect(
-          entry.count.other,
-          `${id}.count.other has no {n} and matches one`
-        ).not.toBe(entry.count.one)
+        expect(entry.count.other, `${id}.count.other has no {n} and matches one`).not.toBe(
+          entry.count.one
+        )
       }
       if (/\{noun\}/.test(entry.menu))
         expect(entry.noun, `${id} has a {noun} hole and no noun`).toBeDefined()
