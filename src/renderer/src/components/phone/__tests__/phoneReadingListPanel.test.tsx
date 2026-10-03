@@ -12,7 +12,7 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
  * the page over its host and when it was added; a tap opens the page in the current tab and
  * marks it read through the desktop's one command (`readingList.open`) and the panel leaves;
  * the row's ⋮ – or the row held – hangs the desktop row menu's items from the row's name (Open
- * in New Tab, Mark as Read / Mark as Unread, Copy Link, Remove); the top row marks every entry
+ * in New Tab, Mark as Read / Mark as Unread, Copy Link Address, Remove); the top row marks every entry
  * read while any is unread. The rows are keyed by id and the list re-renders from
  * `UIState.readingList`: an entry that goes under the open panel leaves no row behind, and a
  * menu still up for it drops what is picked. A synced entry arrives without a favicon and shows
@@ -270,13 +270,13 @@ describe("the phone's reading list panel (HB-20)", () => {
     expect(of('readingList.setRead')).toEqual([])
   })
 
-  it('hangs the desktop row menu’s items from the row’s name on its ⋮ and on a hold: Mark as Read flips the entry, Remove takes it out, Copy Link copies, Open in New Tab keeps the panel', async () => {
+  it('hangs the desktop row menu’s items from the row’s name on its ⋮ and on a hold: Mark as Read flips the entry, Remove takes it out, Copy Link Address copies, Open in New Tab keeps the panel', async () => {
     await show(stateOf(list()))
     act(() => more('A long read').click())
     await settle()
     expect(menu()).toEqual({
       title: 'A long read',
-      items: ['Open in New Tab', '-', 'Mark as Read', '-', 'Copy Link', 'Remove']
+      items: ['Open in New Tab', '-', 'Mark as Read', '-', 'Copy Link Address', 'Remove']
     })
     await pick('Mark as Read')
     expect(of('readingList.setRead')).toEqual([{ id: 'rl_a', read: true }])
@@ -298,7 +298,7 @@ describe("the phone's reading list panel (HB-20)", () => {
 
     act(() => more('Notes on B').click())
     await settle()
-    await pick('Copy Link')
+    await pick('Copy Link Address')
     expect(of('clipboard.writeText')).toEqual([
       { text: 'https://b.example/notes', confirmation: 'Link copied' }
     ])

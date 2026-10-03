@@ -65,7 +65,11 @@ export interface Entry {
    * know ("Full Screen", "Pin / Unpin Tab").
    */
   state?: { on: string; off: string }
-  /** A counted row, "{n}" inside: "Put 1 Tab to Sleep" / "Put {n} Tabs to Sleep". `plural()` picks. */
+  /**
+   * A counted row. Usually "{n}" inside: "Put 1 Tab to Sleep" / "Put {n} Tabs to Sleep". A
+   * word-only plural has no `{n}` when the surface says the plural, not a number ("Copy Link
+   * Address" / "Copy Link Addresses"). `plural()` picks.
+   */
   count?: { one: string; other: string }
   /**
    * The platform's own words where its convention differs from the house label (Q4). A string

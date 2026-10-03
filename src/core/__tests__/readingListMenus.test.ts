@@ -502,7 +502,7 @@ describe('the app menu', () => {
 })
 
 describe('the row’s menu and the open', () => {
-  it('offers Open, Open in New Tab, the read flip, Copy Link and Remove', () => {
+  it('offers Open, Open in New Tab, the read flip, Copy Link Address and Remove', () => {
     const f = fixture()
     f.open('https://page.test/')
     const entry = f.browser.readingList.add(URL, 'Long Read')!
@@ -513,14 +513,14 @@ describe('the row’s menu and the open', () => {
       '-',
       'Mark as Read',
       '-',
-      'Copy Link',
+      'Copy Link Address',
       'Remove'
     ])
     item(f.shown(), 'Mark as Read').click!()
     expect(f.browser.readingList.get(entry.id)!.readAt).toBeGreaterThan(0)
     f.browser.handleCommand(f.win, 'readingList.contextMenu', { id: entry.id })
     expect(labels(f.shown())).toContain('Mark as Unread')
-    item(f.shown(), 'Copy Link').click!()
+    item(f.shown(), 'Copy Link Address').click!()
     expect(f.copied).toEqual([URL])
     item(f.shown(), 'Remove').click!()
     expect(f.browser.readingList.get(entry.id)).toBeNull()

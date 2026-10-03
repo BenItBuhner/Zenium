@@ -683,7 +683,7 @@ export class Menus {
       ...(!caps.windows
         ? [
             {
-              label: 'Copy Link',
+              label: S.menu('link.copyAddress'),
               click: () => this.browser.platform.clipboard.writeText(tile.url)
             }
           ]
@@ -1976,7 +1976,7 @@ export class Menus {
 
   /**
    * A reading list row's menu (the page's ⋮ and right-click): Open and Open in New Tab, the
-   * read flip, Copy Link, Remove – the Downloads page's row menu's shape.
+   * read flip, Copy Link Address, Remove – the Downloads page's row menu's shape.
    */
   showReadingListContextMenu(id: string, anchor: MenuAnchor, win: ZenWindow): void {
     const { readingList, platform } = this.browser
@@ -1996,7 +1996,7 @@ export class Menus {
           click: () => readingList.setRead(id, unread)
         },
         { type: 'separator' },
-        { label: 'Copy Link', click: () => platform.clipboard.writeText(entry.url) },
+        { label: S.menu('link.copyAddress'), click: () => platform.clipboard.writeText(entry.url) },
         { label: 'Remove', click: () => readingList.remove(id) }
       ],
       win,
@@ -3054,7 +3054,7 @@ export class Menus {
             ]
           : []),
         {
-          label: 'Copy Link',
+          label: S.menu('link.copyAddress'),
           click: () => this.browser.platform.clipboard.writeText(url)
         },
         { type: 'separator' },
@@ -3815,7 +3815,10 @@ export class Menus {
             ]
           : []),
         { type: 'separator' },
-        { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
+        {
+          label: S.menu('link.copyAddress'),
+          click: () => this.browser.platform.clipboard.writeText(url)
+        },
         ...visit,
         { type: 'separator' },
         {
