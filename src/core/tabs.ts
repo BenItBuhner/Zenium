@@ -4960,12 +4960,13 @@ export class TabManager {
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
       : presentedUrl(tab.url)
-    // The one copy desktop has always confirmed, in its own words.
+    // The one copy desktop has always confirmed, now the same words on every host.
+    const confirmation = markdown ? 'Link copied as Markdown' : 'Link copied'
     this.browser.copyText(
       markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url,
-      markdown ? 'Link copied as Markdown' : 'Link copied',
+      confirmation,
       this.windowFor(tabId),
-      markdown ? 'Copied URL as Markdown' : 'Copied URL'
+      confirmation
     )
   }
 

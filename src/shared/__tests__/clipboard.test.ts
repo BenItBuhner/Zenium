@@ -12,7 +12,7 @@ describe('copyConfirmation', () => {
 
   it('stays quiet on Android 13+, where the clipboard chip already says so', () => {
     expect(copyConfirmation('android', chip, 'Link copied')).toBeNull()
-    expect(copyConfirmation('android', chip, 'Link copied', 'Copied URL')).toBeNull()
+    expect(copyConfirmation('android', chip, 'Link copied', 'Link copied')).toBeNull()
   })
 
   it('keeps desktop silent, whatever it reports about a chip', () => {
@@ -22,12 +22,14 @@ describe('copyConfirmation', () => {
     }
   })
 
-  it('keeps the toast desktop always had, in its own words', () => {
-    expect(copyConfirmation('linux', noChip, 'Link copied', 'Copied URL')).toBe('Copied URL')
+  it('toasts Link copied on every host that confirms, the same words', () => {
+    expect(copyConfirmation('linux', noChip, 'Link copied', 'Link copied')).toBe('Link copied')
     expect(
-      copyConfirmation('darwin', noChip, 'Link copied as Markdown', 'Copied URL as Markdown')
-    ).toBe('Copied URL as Markdown')
-    // On Android the same copy follows the Android rule, not desktop's wording.
-    expect(copyConfirmation('android', noChip, 'Link copied', 'Copied URL')).toBe('Link copied')
+      copyConfirmation('darwin', noChip, 'Link copied as Markdown', 'Link copied as Markdown')
+    ).toBe('Link copied as Markdown')
+    // On Android the same copy follows the Android rule, not a distinct desktop string.
+    expect(copyConfirmation('android', noChip, 'Link copied', 'Link copied as Markdown')).toBe(
+      'Link copied'
+    )
   })
 })
