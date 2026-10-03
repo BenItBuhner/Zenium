@@ -31,7 +31,7 @@ import java.io.FileInputStream
  *    process ([DemoServer], one per 127.0.0.n), each with its own favicon – ranked by the core's
  *    `history.topSites`;
  *  - a tap on a tile opens the site in the tab; a hold on one opens the tile's menu (Open in New
- *    Tab, Copy Link, Pin Shortcut, Remove);
+ *    Tab, Copy Link Address, Pin Shortcut, Remove);
  *  - a tap on the field opens the omnibox attached above the keyboard;
  *  - the gear opens the customise sheet (NTP-21): the Inspirational preset puts the space's
  *    colours behind the page (NTP-22), the Image source the picture stored ahead of the run;
@@ -217,7 +217,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         val menu = waitFor("Pin Shortcut", 8_000) != null
         SystemClock.sleep(1_200)
         shot("04-tile-menu")
-        val items = listOf("Open in New Tab", "Copy Link", "Pin Shortcut", "Remove").filter { findByLabel(it) != null }
+        val items = listOf("Open in New Tab", "Copy Link Address", "Pin Shortcut", "Remove").filter { findByLabel(it) != null }
         finding("  menu ${if (menu) "opened" else "MISSING"}: ${items.joinToString(", ")} ${verdict(menu && items.size == 4)}")
         back()
         SystemClock.sleep(2_000)

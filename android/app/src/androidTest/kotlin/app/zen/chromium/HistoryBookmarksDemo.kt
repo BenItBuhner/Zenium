@@ -314,7 +314,7 @@ class HistoryBookmarksDemo :
             SystemClock.sleep(1_200)
             shot("05-history-selection-menu")
             finding(
-                "selection menu: Open All (2) ${verdict(present("Open All (2)"))}, Copy Links ${verdict(present("Copy Links"))}, " +
+                "selection menu: Open All (2) ${verdict(present("Open All (2)"))}, Copy Link Addresses ${verdict(present("Copy Link Addresses"))}, " +
                     "Remove from History ${verdict(present("Remove from History"))}"
             )
             back()
@@ -379,7 +379,7 @@ class HistoryBookmarksDemo :
             shot("10-bookmarks-row-menu")
             finding(
                 "row menu: Edit… ${verdict(present("Edit…"))}, Open in New Tab ${verdict(present("Open in New Tab"))}, " +
-                    "Copy Link ${verdict(present("Copy Link"))}, Share… ${seen("Share…")}, Delete ${verdict(present("Delete"))}"
+                    "Copy Link Address ${verdict(present("Copy Link Address"))}, Share… ${seen("Share…")}, Delete ${verdict(present("Delete"))}"
             )
             // The row menu's injected touch: Edit… under a finger opens the editor (its Save).
             touch("Edit…", "the editor is up with its Save", timeoutMs = 10_000) { present("Save") }

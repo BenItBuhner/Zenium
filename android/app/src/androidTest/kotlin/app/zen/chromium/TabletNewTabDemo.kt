@@ -77,13 +77,13 @@ import kotlin.math.roundToLong
  *     same row opens the bar bound to no tab and makes no tab at all (`urlbar.toggle`);
  *  2. a REAL HOLD on a tile (the finger down past the long press, on the tile's own box read off
  *     the page's DOM): the tablet's anchored menu with the touch template's FIVE rows – Open in
- *     New Tab · Open in Private Tab · Copy Link · a separator · Remove (the desktop's template is
+ *     New Tab · Open in Private Tab · Copy Link Address · a separator · Remove (the desktop's template is
  *     not this one; a most-visited tile has no Edit Shortcut) – HUNG FROM THE TILE's BOX: the
  *     `tile-menu` action carries the tile's rect up the bridge (`MenuAnchor.rect`), the menu's
  *     start edge level with the tile's and its top flush at the box's bottom (above the box when
  *     the room below runs out), not at the finger's point – and Open in Private Tab under a
  *     finger opening the site in a private tab in front, the private session closed after;
- *  3. the hold again and Copy Link under a finger: the tile's URL on the system clipboard;
+ *  3. the hold again and Copy Link Address under a finger: the tile's URL on the system clipboard;
  *  4. the dark scheme through the core's setting (the chrome and the served page re-ink in
  *     place: `Host.applyTheme` flips the app's night mode without a relaunch): the page and the
  *     hold menu in dark, and Remove under a finger taking the tile off the page through the
@@ -918,10 +918,10 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         SystemClock.sleep(800)
     }
 
-    // --- 3. Copy Link --------------------------------------------------------------------------------
+    // --- 3. Copy Link Address ------------------------------------------------------------------------
 
     private fun copyLink() {
-        section("3. The hold again, Copy Link under a finger: the tile's URL on the clipboard")
+        section("3. The hold again, Copy Link Address under a finger: the tile's URL on the clipboard")
         val id = pageTab ?: return
         val tile = tileAt(id, TILE) ?: run {
             check("the tile to hold is on the page", false, "tiles ${tileCaptions(id)}")
@@ -934,8 +934,8 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         settle("the clipboard sentinel's overlay")
         val rows = holdTile(id, TILE, tile.title)
         check("the menu is up again with the same rows", rows == TOUCH_ROWS, "rows $rows")
-        val copied = touchUntil("Copy Link", { menuRow("Copy Link") }, { clipText() == tile.url }, waitMs = 6_000)
-        check("a touch on Copy Link puts the tile's URL on the system clipboard", copied, "clip '${clipText()}', tile ${tile.url}")
+        val copied = touchUntil("Copy Link Address", { menuRow("Copy Link Address") }, { clipText() == tile.url }, waitMs = 6_000)
+        check("a touch on Copy Link Address puts the tile's URL on the system clipboard", copied, "clip '${clipText()}', tile ${tile.url}")
         check("the menu closed on the pick, the page still in front", awaitJs(MENU_OPEN, false, 4_000) && activeTabId() == id, "menu ${jsText(MENU_OPEN)}")
         SystemClock.sleep(1_500)
         still("copied")
@@ -1466,8 +1466,8 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         private const val LANDING_BLEND = 0.98
         /** The opacity is read off pixels the page changes at least this much (a channel sum). */
         private const val LANDING_BLEND_SPAN = 40
-        /** The touch template's rows (`Menus.showNewTabTileMenu`: Open in Private Tab on `privateTabs && !windows`, Copy Link on `!windows`), the separator between them not a row. */
-        private val TOUCH_ROWS = listOf("Open in New Tab", "Open in Private Tab", "Copy Link", "Remove")
+        /** The touch template's rows (`Menus.showNewTabTileMenu`: Open in Private Tab on `privateTabs && !windows`, Copy Link Address on `!windows`), the separator between them not a row. */
+        private val TOUCH_ROWS = listOf("Open in New Tab", "Open in Private Tab", "Copy Link Address", "Remove")
         /** How far (screen px) a menu's edge may sit from the tile box's it is read against: a rounding each side. */
         private const val SLACK = 3f
 
