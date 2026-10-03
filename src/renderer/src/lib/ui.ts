@@ -1007,6 +1007,8 @@ export function dismissToast(id: number): void {
 /** The toast's card is off screen: drop it. */
 export function forgetToast(id: number): void {
   disarmClock(id)
+  fingerHeld.delete(id)
+  heldRemaining.delete(id)
   if (!uiStore.get().toasts.some((t) => t.id === id)) return
   uiStore.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
 }
@@ -1063,6 +1065,8 @@ export function dismissScreenshotCard(id: number): void {
 
 export function forgetScreenshotCard(id: number): void {
   disarmClock(id)
+  fingerHeld.delete(id)
+  heldRemaining.delete(id)
   if (!uiStore.get().screenshotCards.some((c) => c.id === id)) return
   uiStore.set((s) => ({ screenshotCards: s.screenshotCards.filter((c) => c.id !== id) }))
 }
