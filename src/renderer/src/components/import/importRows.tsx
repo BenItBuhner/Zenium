@@ -22,7 +22,7 @@ import {
 import { openImportDialog, openOverlay } from '@renderer/lib/ui'
 import type { RowGroup, SettingsRow } from '../pages/settings/model'
 import type { SectionContext } from '../pages/settings/sections'
-import { V2Button } from '../v2/controls'
+import { V2_TRAILING_GLYPH, V2Button } from '../v2/controls'
 import { ResultGlyph } from './ResultGlyph'
 
 /**
@@ -189,7 +189,7 @@ function lastImportGroup(last: ImportProgress, tabId: string): RowGroup {
       layouts: MOUSE,
       trailing: (
         <>
-          <ResultGlyph state={outcome} />
+          <ResultGlyph state={outcome} className={V2_TRAILING_GLYPH} />
           <V2Button onClick={dismiss} data-testid="import-dismiss-last">
             Dismiss
           </V2Button>
