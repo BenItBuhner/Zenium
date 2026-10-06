@@ -256,12 +256,19 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-v2-shortcut:focus-visible .zen-ntp-tile { outline: 2px solid var(--v2-ring); outline-offset: 2px; }
   /* The tile: a 64 square holding the 32 favicon; its fill, radius, hover and press are the shared rules'. */
   .zen-ntp-tile { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 64px; height: 64px; }
-  .zen-ntp-icon { width: 32px; height: 32px; }
+  .zen-ntp-icon { width: 32px; height: 32px; border-radius: 8px; }
   /* The fallbacks – the site's letter, or the globe when there is none – at 32, in the shared rules' ink. */
   .zen-ntp-tile svg { width: 32px; height: 32px; }
   .zen-tile-add .zen-ntp-tile svg { width: 24px; height: 24px; }
-  /* The caption: the shared rules' 13 in the deemphasised window ink, one line with an ellipsis. */
-  .zen-ntp-caption { display: block; max-width: 100%; }
+  /*
+   * The caption: the shared rules' 13 in the deemphasised window ink. Two centred lines at most,
+   * wrapping at a letter so a long host (dash.cloudflare.com) does not overflow the 104 column
+   * or sit as one truncated mid-word smear.
+   */
+  .zen-ntp-caption {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    max-width: 100%; overflow-wrap: anywhere; white-space: normal; text-overflow: unset;
+  }
   /* Dragging (v2 §9.4): the tile lifts to v1 level 2 at 90%; the page script adds scale(1.02). */
   .zen-tile[data-dragging] { z-index: 2; }
   .zen-tile[data-dragging] .zen-v2-shortcut { opacity: 0.9; }

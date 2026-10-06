@@ -13,7 +13,7 @@ import {
   privateCookiesDescription,
   type NewTabIcon
 } from './newTabPage'
-import { MAX_NEW_TAB_SHORTCUTS } from './newTab'
+import { MAX_NEW_TAB_SHORTCUTS, tileLabel } from './newTab'
 import { SPRING_SNAPPY, stepSpring, type SpringState } from './spring'
 import { getHost } from './url'
 
@@ -458,30 +458,49 @@ class NewTabPage {
     // the chrome's own omnibox over the page, so no keyboard rises for this field first – the
     // page comes up with the field at rest and the chrome's field takes the keyboard on the tap.
     // A hardware keyboard's first character still hands off through `keydown` below.
-    if (coarsePointer()) this.input.inputMode = 'none'
+    const coarse = coarsePointer()
+    if (coarse) this.input.inputMode = 'none'
     this.search.addEventListener('submit', (e) => {
       e.preventDefault()
-      this.handOff(this.input.value)
+      this.submitSearch(this.input.value)
     })
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault()
-        this.handOff(this.input.value)
+        this.submitSearch(this.input.value)
         return
       }
-      if (isTypedCharacter(e)) {
+      // Desktop: the field is a live box — type a query or address, then Enter. The first
+      // character used to steal into the omnibox, which left the bar looking like a search
+      // that did not search. Touch still hands the first character off (no on-page keyboard).
+      if (coarse && isTypedCharacter(e)) {
         e.preventDefault()
         this.handOff(e.key)
       }
     })
     this.input.addEventListener('paste', (e) => {
+      if (!coarse) return
       const text = e.clipboardData?.getData('text/plain') ?? ''
       if (!text) return
       e.preventDefault()
       this.handOff(text)
     })
-    // A click (not a focus: focus comes back to the field when the omnibox closes).
-    this.search.addEventListener('click', () => this.handOff(''))
+    // A tap on the tablet field opens the chrome's omnibox. A click on the desktop field
+    // focuses the live input so the user can type and submit here.
+    this.search.addEventListener('click', () => {
+      if (coarse) this.handOff('')
+    })
+  }
+
+  /** Enter in the field: navigate or search this tab. Empty Enter opens the omnibox. */
+  private submitSearch(text: string): void {
+    const query = text.trim().slice(0, 199)
+    this.input.value = ''
+    if (!query) {
+      this.handOff('')
+      return
+    }
+    this.transport.send({ type: 'search', text: query, submit: true })
   }
 
   private handOff(text: string): void {
@@ -588,8 +607,9 @@ class NewTabPage {
     wrap.dataset.id = tile.id
     wrap.setAttribute('role', 'listitem')
     const link = el('a', 'zen-v2-shortcut')
+    const label = tileLabel(tile.title, tile.url)
     link.href = tile.url
-    link.title = tile.url
+    link.title = tile.title && tile.title !== label ? `${label}\n${tile.url}` : tile.url
     link.draggable = false
     const square = el('span', 'zen-ntp-tile')
     if (tile.favicon) {
@@ -606,7 +626,7 @@ class NewTabPage {
       square.appendChild(img)
     } else square.appendChild(fallbackFor(tile))
     link.appendChild(square)
-    link.appendChild(el('span', 'zen-ntp-caption', tile.title))
+    link.appendChild(el('span', 'zen-ntp-caption', label))
     wrap.appendChild(link)
     return wrap
   }

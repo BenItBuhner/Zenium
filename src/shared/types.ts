@@ -3286,8 +3286,12 @@ export interface NewTabPageState {
  */
 export type NewTabPageAction =
   | { type: 'ready' }
-  /** Text typed into the page's search box: open the omnibox over this tab with it. */
-  | { type: 'search'; text: string }
+  /**
+   * Text from the page's search box. Without `submit`, open the omnibox over this tab with it
+   * (a tap, or a key typed on the page). With `submit`, navigate or search this tab immediately
+   * — Enter in the field, so a query does not sit in the omnibox waiting for a second Enter.
+   */
+  | { type: 'search'; text: string; submit?: boolean }
   | { type: 'add-shortcut'; title: string; url: string }
   | { type: 'update-shortcut'; id: string; title: string; url: string }
   | { type: 'remove-shortcut'; id: string }

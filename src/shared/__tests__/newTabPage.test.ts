@@ -179,7 +179,9 @@ describe('zen://newtab tokens', () => {
     // tiles, captions and Customise in the window family, the field a page surface.
     expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-tile \{[^}]*width: 64px; height: 64px;/)
     expect(shared).toMatch(/\.zen-ntp-tile \{[^}]*background: var\(--v2-control-fill\);/)
-    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-icon \{ width: 32px; height: 32px; \}/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-icon \{ width: 32px; height: 32px; border-radius: 8px; \}/
+    )
     expect(shared).toMatch(
       /\.zen-v2-shortcut:hover \.zen-ntp-tile \{\n\s+background: var\(--v2-control-fill-hover\);/
     )
