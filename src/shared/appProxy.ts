@@ -261,10 +261,7 @@ export function isKnownProxyTarget(settings: AppProxySettings, target: string): 
 }
 
 /** A tab override: a builtin, a profile id, or empty (follow default + routes). */
-export function sanitizeTabProxyId(
-  raw: unknown,
-  settings: AppProxySettings
-): string | undefined {
+export function sanitizeTabProxyId(raw: unknown, settings: AppProxySettings): string | undefined {
   if (typeof raw !== 'string') return undefined
   const id = raw.trim()
   if (id === '' || !isKnownProxyTarget(settings, id)) return undefined
@@ -389,7 +386,10 @@ export function routeMatches(route: ProxyRoute, url: string): boolean {
       return host === suffix || host.endsWith(`.${suffix}`)
     }
     case 'wildcard':
-      return wildcardMatch(host, pattern.replace(/^\*\./, '*') === pattern ? pattern : `*${pattern}`)
+      return wildcardMatch(
+        host,
+        pattern.replace(/^\*\./, '*') === pattern ? pattern : `*${pattern}`
+      )
     case 'scheme':
       return parsed.protocol.replace(/:$/, '') === pattern.replace(/:.*$/, '')
     case 'url-prefix':
@@ -398,7 +398,10 @@ export function routeMatches(route: ProxyRoute, url: string): boolean {
 }
 
 function wildcardMatch(value: string, pattern: string): boolean {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.')
   return new RegExp(`^${escaped}$`, 'i').test(value)
 }
 
@@ -442,10 +445,7 @@ export function proxyAuthority(profile: ProxyProfile): string {
 
 /** PAC for the routing table. Unmatched traffic uses the default; `system` there becomes DIRECT. */
 export function compilePacScript(settings: AppProxySettings): string {
-  const lines = [
-    'function FindProxyForURL(url, host) {',
-    '  host = host.toLowerCase();'
-  ]
+  const lines = ['function FindProxyForURL(url, host) {', '  host = host.toLowerCase();']
   for (const route of settings.routes) {
     if (!route.enabled) continue
     const ret = pacReturn(settings, route.target)
@@ -505,8 +505,7 @@ export const APP_PROXY_COPY = {
   proxiesEmpty: 'No proxies added yet',
   addProxy: 'Add proxy',
   routes: 'Routing rules',
-  routesDescription:
-    'The first matching rule wins. A tab override still beats every rule.',
+  routesDescription: 'The first matching rule wins. A tab override still beats every rule.',
   routesEmpty: 'No routing rules yet',
   addRoute: 'Add routing rule',
   agents: 'Agent access',

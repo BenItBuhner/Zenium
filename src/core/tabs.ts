@@ -3686,11 +3686,7 @@ export class TabManager {
    * discarded and loaded again so it takes the overlay session (Electron's `setProxy` is per
    * session, not per tab).
    */
-  setProxy(
-    tabId: string,
-    proxyId: string | null,
-    win: ZenWindow = this.windowFor(tabId)
-  ): void {
+  setProxy(tabId: string, proxyId: string | null, win: ZenWindow = this.windowFor(tabId)): void {
     const tab = this.tab(tabId)
     if (!tab) return
     const next = sanitizeTabProxyId(proxyId, this.browser.state.settings.proxy) ?? null

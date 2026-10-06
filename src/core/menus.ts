@@ -2674,10 +2674,7 @@ export class Menus {
           tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
         )
       },
-      ...when(
-        this.browser.state.platform !== 'android',
-        this.tabProxySubmenu(tab, win)
-      ),
+      ...when(this.browser.state.platform !== 'android', this.tabProxySubmenu(tab, win)),
       {
         label: 'Share',
         submenu: [

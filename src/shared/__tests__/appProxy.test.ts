@@ -167,15 +167,21 @@ describe('labels, problems and PAC', () => {
   it('names a profile from its title, else the host, else PAC', () => {
     expect(profileLabel(profile())).toBe('Office')
     expect(profileLabel(profile({ name: '' }))).toBe('proxy.office.test:8080')
-    expect(profileLabel(profile({ name: '', kind: 'pac', host: '', pacUrl: 'http://p/x.pac' }))).toBe(
-      'http://p/x.pac'
-    )
+    expect(
+      profileLabel(profile({ name: '', kind: 'pac', host: '', pacUrl: 'http://p/x.pac' }))
+    ).toBe('http://p/x.pac')
     expect(targetLabel(settings(), 'system')).toBe('System proxy')
     expect(targetLabel(settings(), 'direct')).toBe('Direct connection')
     expect(targetLabel(settings(), 'office')).toBe('Office')
-    expect(routeLabel({ id: 'r', enabled: true, match: 'host-suffix', pattern: 'corp.test', target: 'office' })).toBe(
-      '*.corp.test'
-    )
+    expect(
+      routeLabel({
+        id: 'r',
+        enabled: true,
+        match: 'host-suffix',
+        pattern: 'corp.test',
+        target: 'office'
+      })
+    ).toBe('*.corp.test')
   })
 
   it('refuses an empty host, a PAC with nothing in it, and a scheme that is not http(s)/ws(s)', () => {

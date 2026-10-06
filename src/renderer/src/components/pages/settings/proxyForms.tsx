@@ -63,7 +63,8 @@ export function ProxyProfileForm({
     onSubmit(draft)
     close()
   }
-  const set = (patch: Partial<ProxyProfile>): void => setDraft((current) => ({ ...current, ...patch }))
+  const set = (patch: Partial<ProxyProfile>): void =>
+    setDraft((current) => ({ ...current, ...patch }))
   const pac = draft.kind === 'pac'
   return (
     <div className="zen-settings-form" data-testid="proxy-profile-form">
@@ -92,7 +93,11 @@ export function ProxyProfileForm({
       </Field>
       {pac ? (
         <>
-          <Field id={`${id}-pac-url`} label="PAC URL" description="Leave empty to paste a script instead.">
+          <Field
+            id={`${id}-pac-url`}
+            label="PAC URL"
+            description="Leave empty to paste a script instead."
+          >
             <input
               id={`${id}-pac-url`}
               className="zen-settings-input zen-v2-field"
@@ -177,7 +182,12 @@ export function ProxyProfileForm({
         </>
       )}
       {problem && <ValidationMessage message={problem} />}
-      <SheetActions action={initial ? 'Save' : 'Add'} disabled={false} onCancel={close} onAction={save} />
+      <SheetActions
+        action={initial ? 'Save' : 'Add'}
+        disabled={false}
+        onCancel={close}
+        onAction={save}
+      />
     </div>
   )
 }
@@ -205,7 +215,8 @@ export function ProxyRouteForm({
     onSubmit(draft)
     close()
   }
-  const set = (patch: Partial<ProxyRoute>): void => setDraft((current) => ({ ...current, ...patch }))
+  const set = (patch: Partial<ProxyRoute>): void =>
+    setDraft((current) => ({ ...current, ...patch }))
   return (
     <div className="zen-settings-form" data-testid="proxy-route-form">
       <Field id={`${id}-match`} label="Match">

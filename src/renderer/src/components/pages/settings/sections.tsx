@@ -5849,7 +5849,8 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
     ...proxy.profiles.map((profile) => ({
       value: profile.id,
       label: profileLabel(profile),
-      description: profile.kind === 'pac' ? profile.pacUrl || 'PAC script' : `${profile.host}:${profile.port}`
+      description:
+        profile.kind === 'pac' ? profile.pacUrl || 'PAC script' : `${profile.host}:${profile.port}`
     }))
   ]
   return [
@@ -5861,7 +5862,9 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
         choice({
           id: 'proxy-default',
           label: APP_PROXY_COPY.default,
-          description: control ? proxyHeldDescription(control) : targetLabel(proxy, proxy.defaultTarget),
+          description: control
+            ? proxyHeldDescription(control)
+            : targetLabel(proxy, proxy.defaultTarget),
           keywords: ['proxy', 'network', 'pac', 'default', 'socks'],
           value: proxy.defaultTarget,
           options: defaultOptions,
@@ -5874,9 +5877,7 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
       id: 'proxies',
       heading: APP_PROXY_COPY.proxies,
       rows: [
-        ...proxy.profiles.map((profile) =>
-          proxyProfileItem(profile, proxy, put)
-        ),
+        ...proxy.profiles.map((profile) => proxyProfileItem(profile, proxy, put)),
         {
           kind: 'action',
           id: 'add-proxy',
@@ -5906,7 +5907,7 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'add-proxy-route',
           label: APP_PROXY_COPY.addRoute,
-          keywords: ['route', 'domain', 'host', 'bypass'],
+          keywords: ['proxy', 'route', 'domain', 'host', 'bypass'],
           button: 'Add…',
           form: {
             title: APP_PROXY_COPY.addRoute,
@@ -5930,7 +5931,7 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
         choice({
           id: 'proxy-agent-default',
           label: APP_PROXY_COPY.agentDefault,
-          keywords: ['agent', 'mcp', 'permission'],
+          keywords: ['proxy', 'agent', 'mcp', 'permission'],
           value: grantStar(proxy)?.mode ?? 'follow',
           options: [
             {
@@ -5958,7 +5959,7 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'add-proxy-grant',
           label: APP_PROXY_COPY.addGrant,
-          keywords: ['agent', 'mcp', 'allow'],
+          keywords: ['proxy', 'agent', 'mcp', 'allow'],
           button: 'Add…',
           form: {
             title: APP_PROXY_COPY.addGrant,
@@ -5970,7 +5971,8 @@ function systemSection({ state, set }: SectionContext): RowGroup[] {
                     ...proxy,
                     agentGrants: [
                       ...proxy.agentGrants.filter(
-                        (existing) => existing.agentName.toLowerCase() !== grant.agentName.toLowerCase()
+                        (existing) =>
+                          existing.agentName.toLowerCase() !== grant.agentName.toLowerCase()
                       ),
                       grant
                     ]
@@ -6005,13 +6007,13 @@ function grantStar(proxy: AppProxySettings): AgentProxyGrant | undefined {
   return proxy.agentGrants.find((grant) => grant.agentName === '*')
 }
 
-function upsertStarGrant(
-  proxy: AppProxySettings,
-  mode: AgentProxyGrant['mode']
-): AppProxySettings {
+function upsertStarGrant(proxy: AppProxySettings, mode: AgentProxyGrant['mode']): AppProxySettings {
   const rest = proxy.agentGrants.filter((grant) => grant.agentName !== '*')
   if (mode === 'follow') return { ...proxy, agentGrants: rest }
-  return { ...proxy, agentGrants: [{ agentName: '*', mode, proxyIds: grantStar(proxy)?.proxyIds ?? [] }, ...rest] }
+  return {
+    ...proxy,
+    agentGrants: [{ agentName: '*', mode, proxyIds: grantStar(proxy)?.proxyIds ?? [] }, ...rest]
+  }
 }
 
 function proxyProfileItem(
@@ -6068,7 +6070,10 @@ function proxyProfileItem(
           })
       }
     ],
-    { keywords: ['proxy', profile.host, profile.kind], menu: `Options for ${profileLabel(profile)}` }
+    {
+      keywords: ['proxy', profile.host, profile.kind],
+      menu: `Options for ${profileLabel(profile)}`
+    }
   )
 }
 

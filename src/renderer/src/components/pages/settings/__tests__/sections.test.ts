@@ -83,7 +83,6 @@ const {
   buildSections,
   autoCloseDescription,
   MOD_PICTURE_HINT,
-  PROXY_SETTINGS_COPY,
   proxyHeldDescription
 } = await import('../sections')
 const {
