@@ -45,6 +45,13 @@ on:
       - 'package.json'
       - '.github/smoke/**'
       - '.github/workflows/desktop-smoke.yml'
+      # The served start page (zen://newtab) ships in the packaged build. A change
+      # there is a first-launch / boot-smoke change even when main and electron-builder
+      # stay still. Without these, an NTP-only PR skips macos-arm64 and macos-x64.
+      - 'src/shared/newTab.ts'
+      - 'src/shared/newTabPage.ts'
+      - 'src/shared/newTabPageScript.ts'
+      - 'src/core/newtab.ts'
 
 permissions:
   contents: read
