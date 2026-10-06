@@ -16,6 +16,7 @@ import type {
   WindowKind
 } from '../shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
+import { sanitizeTabProxyId } from '../shared/appProxy'
 import {
   addTabToSplit,
   allSpaces,
@@ -2337,6 +2338,8 @@ export class TabManager {
       spaceId?: string
       active?: boolean
       containerId?: string
+      /** Per-tab proxy override (`shared/appProxy.ts`). */
+      proxyId?: string | null
       pinned?: boolean
       essential?: boolean
       afterTabId?: string
@@ -2395,6 +2398,7 @@ export class TabManager {
       folderId: opts.folderId ?? null,
       openerTabId: opts.openerTabId && m.tabs[opts.openerTabId] ? opts.openerTabId : null,
       fromIntent: Boolean(opts.fromIntent),
+      proxyId: sanitizeTabProxyId(opts.proxyId, this.settings.proxy),
       muted: this.siteMuted(opts.url ?? BLANK_URL),
       title: this.titleFor(opts.url ?? BLANK_URL)
     })
@@ -3669,11 +3673,31 @@ export class TabManager {
         url: this.covered.get(tabId)?.url ?? tab.url,
         spaceId: win.activeSpace().id,
         containerId: tab.containerId,
+        proxyId: tab.proxyId,
         active: true,
         afterTabId: tab.essential ? undefined : tab.id
       },
       win
     )
+  }
+
+  /**
+   * Per-tab proxy override: `null` follows the default and the routing rules. A live page is
+   * discarded and loaded again so it takes the overlay session (Electron's `setProxy` is per
+   * session, not per tab).
+   */
+  setProxy(tabId: string, proxyId: string | null, win: ZenWindow = this.windowFor(tabId)): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    const next = sanitizeTabProxyId(proxyId, this.browser.state.settings.proxy) ?? null
+    const prev = tab.proxyId ?? null
+    if (prev === next) return
+    tab.proxyId = next
+    if (!tab.discarded && this.pageView(tabId)) {
+      this.discard(tabId)
+      this.load(tabId, win)
+    }
+    this.browser.state.commit()
   }
 
   moveTab(

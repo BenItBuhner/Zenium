@@ -19,6 +19,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { emptyAgentServerStatus, emptyAgentSkillStatus } from '../../shared/defaults'
+import { agentTabProxyId, DEFAULT_APP_PROXY_SETTINGS } from '../../shared/appProxy'
 import { isBlankTabUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import {
@@ -2374,7 +2375,12 @@ export class AgentService implements SessionStore, McpHandlers {
         folderId: group.id,
         afterTabId: last?.id,
         active: opts.active,
-        load: false
+        load: false,
+        proxyId: agentTabProxyId(
+          this.browser.state.settings.proxy ?? DEFAULT_APP_PROXY_SETTINGS,
+          s.name,
+          opts.url
+        )
       },
       win
     )

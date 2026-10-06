@@ -95,6 +95,19 @@ import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/hom
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { isProxyMode, type ProxyMode } from '@core/extensions/api/proxy'
+import {
+  APP_PROXY_COPY,
+  DEFAULT_APP_PROXY_SETTINGS,
+  profileLabel,
+  routeLabel,
+  sanitizeAppProxySettings,
+  targetLabel,
+  type AgentProxyGrant,
+  type AppProxySettings,
+  type ProxyProfile,
+  type ProxyRoute
+} from '@shared/appProxy'
+import { AgentProxyGrantForm, ProxyProfileForm, ProxyRouteForm } from './proxyForms'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import {
@@ -5820,42 +5833,354 @@ export function proxyHeldDescription(control: { value?: unknown }): string {
 }
 
 /**
- * System (Chrome's System, the category before Reset settings in its list): one row, "Open your
- * computer's proxy settings", leaving for the OS panel – Windows Settings › Network & internet ›
- * Proxy, macOS System Settings › Network › Proxies, the Linux desktop's network settings by
- * Chrome's own table of desktops (`main/platform/systemSettings.ts`, after Chromium's
- * `settings_utils_linux.cc`). The host answers whether the panel opened; when it did not (a
- * desktop the table does not know, its tool not on the PATH) the page says so in one sentence
- * through the frame's toast, the surface Zenium already uses where an OS screen cannot be opened
- * (`Browser.openAppLinkSettings`). While an extension holds the proxy (`chrome.proxy`,
- * `UIState.extensionControls.proxy` with the configuration's mode as the value) the row is held
- * (`RowBase.controlled`, §10.5): disabled at .4 as Chrome's row is not actionable then, its
- * description the configuration's mode alone, with the indicator row after it naming the
- * extension – Disable takes the Extensions page's path, and the host's proxy service puts every
- * session back on the system proxy as the extension unloads. Chrome's other System rows
- * (background apps, graphics acceleration) are not here. The desktop OSes' category alone
+ * System (Chrome's System, the category before Reset settings): in-app proxies, per-domain
+ * routing, agent grants, and the OS panel as a secondary door. While an extension holds
+ * `chrome.proxy` the default-connection row is held (`RowBase.controlled`, §10.5). Chrome's
+ * other System rows (background apps, graphics acceleration) are not here. Desktop OSes only
  * (`internalPages.ts`): Android's proxy is the network's.
  */
-function systemSection({ state }: SectionContext): RowGroup[] {
+function systemSection({ state, set }: SectionContext): RowGroup[] {
   const control = extensionControlled(state, 'proxy')
+  const proxy = sanitizeAppProxySettings(state.settings.proxy ?? DEFAULT_APP_PROXY_SETTINGS)
+  const put = (next: AppProxySettings): void => set({ proxy: next })
+  const defaultOptions = [
+    { value: 'system', label: 'System proxy', description: PROXY_SETTINGS_COPY.resting },
+    { value: 'direct', label: 'Direct connection', description: 'Do not use a proxy.' },
+    ...proxy.profiles.map((profile) => ({
+      value: profile.id,
+      label: profileLabel(profile),
+      description:
+        profile.kind === 'pac' ? profile.pacUrl || 'PAC script' : `${profile.host}:${profile.port}`
+    }))
+  ]
   return [
     {
+      id: 'connection',
+      heading: 'Connection',
+      description: APP_PROXY_COPY.defaultDescription,
+      rows: [
+        choice({
+          id: 'proxy-default',
+          label: APP_PROXY_COPY.default,
+          description: control
+            ? proxyHeldDescription(control)
+            : targetLabel(proxy, proxy.defaultTarget),
+          keywords: ['proxy', 'network', 'pac', 'default', 'socks'],
+          value: proxy.defaultTarget,
+          options: defaultOptions,
+          controlled: control,
+          onChange: (value) => put({ ...proxy, defaultTarget: value })
+        })
+      ]
+    },
+    {
+      id: 'proxies',
+      heading: APP_PROXY_COPY.proxies,
+      rows: [
+        ...proxy.profiles.map((profile) => proxyProfileItem(profile, proxy, put)),
+        {
+          kind: 'action',
+          id: 'add-proxy',
+          label: APP_PROXY_COPY.addProxy,
+          keywords: ['proxy', 'socks', 'http', 'pac', 'add'],
+          button: 'Add…',
+          form: {
+            title: APP_PROXY_COPY.addProxy,
+            render: (close) => (
+              <ProxyProfileForm
+                onSubmit={(profile) => put({ ...proxy, profiles: [...proxy.profiles, profile] })}
+                close={close}
+              />
+            )
+          }
+        }
+      ],
+      empty: proxy.profiles.length === 0 ? APP_PROXY_COPY.proxiesEmpty : undefined
+    },
+    {
+      id: 'proxy-routes',
+      heading: APP_PROXY_COPY.routes,
+      description: APP_PROXY_COPY.routesDescription,
+      rows: [
+        ...proxy.routes.map((route) => proxyRouteItem(route, proxy, put)),
+        {
+          kind: 'action',
+          id: 'add-proxy-route',
+          label: APP_PROXY_COPY.addRoute,
+          keywords: ['proxy', 'route', 'domain', 'host', 'bypass'],
+          button: 'Add…',
+          form: {
+            title: APP_PROXY_COPY.addRoute,
+            render: (close) => (
+              <ProxyRouteForm
+                settings={proxy}
+                onSubmit={(route) => put({ ...proxy, routes: [...proxy.routes, route] })}
+                close={close}
+              />
+            )
+          }
+        }
+      ],
+      empty: proxy.routes.length === 0 ? APP_PROXY_COPY.routesEmpty : undefined
+    },
+    {
+      id: 'proxy-agents',
+      heading: APP_PROXY_COPY.agents,
+      description: APP_PROXY_COPY.agentsDescription,
+      rows: [
+        choice({
+          id: 'proxy-agent-default',
+          label: APP_PROXY_COPY.agentDefault,
+          keywords: ['proxy', 'agent', 'mcp', 'permission'],
+          value: grantStar(proxy)?.mode ?? 'follow',
+          options: [
+            {
+              value: 'follow',
+              label: APP_PROXY_COPY.followTab,
+              description: APP_PROXY_COPY.followTabDescription
+            },
+            {
+              value: 'allow',
+              label: APP_PROXY_COPY.allowListed,
+              description: APP_PROXY_COPY.allowListedDescription
+            },
+            {
+              value: 'direct',
+              label: APP_PROXY_COPY.alwaysDirect,
+              description: APP_PROXY_COPY.alwaysDirectDescription
+            }
+          ],
+          onChange: (mode) => put(upsertStarGrant(proxy, mode))
+        }),
+        ...proxy.agentGrants
+          .filter((grant) => grant.agentName !== '*')
+          .map((grant) => agentGrantItem(grant, proxy, put)),
+        {
+          kind: 'action',
+          id: 'add-proxy-grant',
+          label: APP_PROXY_COPY.addGrant,
+          keywords: ['proxy', 'agent', 'mcp', 'allow'],
+          button: 'Add…',
+          form: {
+            title: APP_PROXY_COPY.addGrant,
+            render: (close) => (
+              <AgentProxyGrantForm
+                settings={proxy}
+                onSubmit={(grant) =>
+                  put({
+                    ...proxy,
+                    agentGrants: [
+                      ...proxy.agentGrants.filter(
+                        (existing) =>
+                          existing.agentName.toLowerCase() !== grant.agentName.toLowerCase()
+                      ),
+                      grant
+                    ]
+                  })
+                }
+                close={close}
+              />
+            )
+          }
+        }
+      ]
+    },
+    {
       id: 'system',
-      heading: null,
+      heading: APP_PROXY_COPY.computer,
       rows: [
         {
           kind: 'action',
           id: 'proxy-settings',
-          label: PROXY_SETTINGS_COPY.row,
-          description: control ? proxyHeldDescription(control) : PROXY_SETTINGS_COPY.resting,
-          keywords: ['proxy', 'network', 'pac', 'system', 'computer'],
+          label: APP_PROXY_COPY.openSystem,
+          description: APP_PROXY_COPY.openSystemDescription,
+          keywords: ['proxy', 'network', 'pac', 'system', 'computer', "computer's proxy settings"],
           leaves: 'external',
-          controlled: control,
           onPress: () => void openProxySettings()
         }
       ]
     }
   ]
+}
+
+function grantStar(proxy: AppProxySettings): AgentProxyGrant | undefined {
+  return proxy.agentGrants.find((grant) => grant.agentName === '*')
+}
+
+function upsertStarGrant(proxy: AppProxySettings, mode: AgentProxyGrant['mode']): AppProxySettings {
+  const rest = proxy.agentGrants.filter((grant) => grant.agentName !== '*')
+  if (mode === 'follow') return { ...proxy, agentGrants: rest }
+  return {
+    ...proxy,
+    agentGrants: [{ agentName: '*', mode, proxyIds: grantStar(proxy)?.proxyIds ?? [] }, ...rest]
+  }
+}
+
+function proxyProfileItem(
+  profile: ProxyProfile,
+  proxy: AppProxySettings,
+  put: (next: AppProxySettings) => void
+): SettingsRow {
+  return item(
+    `proxy:${profile.id}`,
+    profileLabel(profile),
+    profile.kind === 'pac'
+      ? profile.pacUrl || 'PAC script'
+      : `${profile.kind} · ${profile.host}:${profile.port}`,
+    [
+      {
+        kind: 'action',
+        id: `proxy:${profile.id}:edit`,
+        label: 'Edit',
+        button: 'Edit…',
+        form: {
+          title: 'Edit proxy',
+          render: (close) => (
+            <ProxyProfileForm
+              initial={profile}
+              onSubmit={(next) =>
+                put({
+                  ...proxy,
+                  profiles: proxy.profiles.map((each) => (each.id === profile.id ? next : each))
+                })
+              }
+              close={close}
+            />
+          )
+        }
+      },
+      {
+        kind: 'action',
+        id: `proxy:${profile.id}:remove`,
+        label: 'Remove',
+        destructive: true,
+        confirm: { title: 'Remove this proxy?', action: 'Remove' },
+        onPress: () =>
+          put({
+            ...proxy,
+            profiles: proxy.profiles.filter((each) => each.id !== profile.id),
+            defaultTarget: proxy.defaultTarget === profile.id ? 'system' : proxy.defaultTarget,
+            routes: proxy.routes.map((route) =>
+              route.target === profile.id ? { ...route, target: 'direct' } : route
+            ),
+            agentGrants: proxy.agentGrants.map((grant) => ({
+              ...grant,
+              proxyIds: grant.proxyIds.filter((id) => id !== profile.id)
+            }))
+          })
+      }
+    ],
+    {
+      keywords: ['proxy', profile.host, profile.kind],
+      menu: `Options for ${profileLabel(profile)}`
+    }
+  )
+}
+
+function proxyRouteItem(
+  route: ProxyRoute,
+  proxy: AppProxySettings,
+  put: (next: AppProxySettings) => void
+): SettingsRow {
+  return item(
+    `proxy-route:${route.id}`,
+    routeLabel(route),
+    `${route.enabled ? '' : 'Off · '}${targetLabel(proxy, route.target)}`,
+    [
+      {
+        kind: 'switch',
+        id: `proxy-route:${route.id}:enabled`,
+        label: 'On',
+        checked: route.enabled,
+        onChange: (enabled) =>
+          put({
+            ...proxy,
+            routes: proxy.routes.map((each) => (each.id === route.id ? { ...each, enabled } : each))
+          })
+      },
+      {
+        kind: 'action',
+        id: `proxy-route:${route.id}:edit`,
+        label: 'Edit',
+        button: 'Edit…',
+        form: {
+          title: 'Edit routing rule',
+          render: (close) => (
+            <ProxyRouteForm
+              settings={proxy}
+              initial={route}
+              onSubmit={(next) =>
+                put({
+                  ...proxy,
+                  routes: proxy.routes.map((each) => (each.id === route.id ? next : each))
+                })
+              }
+              close={close}
+            />
+          )
+        }
+      },
+      {
+        kind: 'action',
+        id: `proxy-route:${route.id}:remove`,
+        label: 'Remove',
+        destructive: true,
+        onPress: () =>
+          put({ ...proxy, routes: proxy.routes.filter((each) => each.id !== route.id) })
+      }
+    ],
+    { keywords: ['route', route.pattern] }
+  )
+}
+
+function agentGrantItem(
+  grant: AgentProxyGrant,
+  proxy: AppProxySettings,
+  put: (next: AppProxySettings) => void
+): SettingsRow {
+  const modeLabel =
+    grant.mode === 'direct'
+      ? APP_PROXY_COPY.alwaysDirect
+      : grant.mode === 'allow'
+        ? APP_PROXY_COPY.allowListed
+        : APP_PROXY_COPY.followTab
+  return item(`proxy-grant:${grant.agentName}`, grant.agentName, modeLabel, [
+    {
+      kind: 'action',
+      id: `proxy-grant:${grant.agentName}:edit`,
+      label: 'Edit',
+      button: 'Edit…',
+      form: {
+        title: 'Edit agent rule',
+        render: (close) => (
+          <AgentProxyGrantForm
+            settings={proxy}
+            initial={grant}
+            onSubmit={(next) =>
+              put({
+                ...proxy,
+                agentGrants: proxy.agentGrants.map((each) =>
+                  each.agentName === grant.agentName ? next : each
+                )
+              })
+            }
+            close={close}
+          />
+        )
+      }
+    },
+    {
+      kind: 'action',
+      id: `proxy-grant:${grant.agentName}:remove`,
+      label: 'Remove',
+      destructive: true,
+      onPress: () =>
+        put({
+          ...proxy,
+          agentGrants: proxy.agentGrants.filter((each) => each.agentName !== grant.agentName)
+        })
+    }
+  ])
 }
 
 /** The door: the host opens the OS panel, and says when it could not. */

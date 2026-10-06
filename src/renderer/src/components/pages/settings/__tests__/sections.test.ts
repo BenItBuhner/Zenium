@@ -83,7 +83,6 @@ const {
   buildSections,
   autoCloseDescription,
   MOD_PICTURE_HINT,
-  PROXY_SETTINGS_COPY,
   proxyHeldDescription
 } = await import('../sections')
 const {
@@ -10392,9 +10391,9 @@ describe('Reset settings (W7-6, settings-70)', () => {
  * controlled-setting primitive on it: the host publishes `extensionControls.proxy` with the
  * configuration's mode as the value (`ProxyApi.publishControls`, `PROXY_CONTROL_KEY`).
  */
-describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s System page)', () => {
-  const desktop = (patch: Partial<UIState> = {}): UIState =>
-    state({ platform: 'linux', capabilities: { ...ANDROID, windows: true }, ...patch })
+describe('Settings › System: in-app proxy configuration', () => {
+  const desktop = (patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): UIState =>
+    state({ platform: 'linux', capabilities: { ...ANDROID, windows: true }, ...patch }, settings)
   const extension = { extensionId: 'c'.repeat(32), name: 'FoxyProxy' }
   const holding = (value?: string): UIState =>
     desktop({
@@ -10417,30 +10416,36 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     expect(def.platforms).toEqual(['win32', 'darwin', 'linux'])
   })
 
-  it('is one action row under the title with no sub-heading, Chrome’s label word for word, leaving for the OS panel, whose press asks the host for the panel and says so in one sentence when nothing opened', async () => {
+  it('lists the default connection, proxies, routing rules, agent access, and the OS panel door', async () => {
     const model = section('system', desktop())
-    expect(model.groups.map((g) => [g.id, g.heading])).toEqual([['system', null]])
-    const proxy = row(model, 'proxy-settings')
-    if (proxy.kind !== 'action') throw new Error('not an action row')
-    expect(proxy).toMatchObject({
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'connection',
+      'proxies',
+      'proxy-routes',
+      'proxy-agents',
+      'system'
+    ])
+    expect(row(model, 'proxy-default')).toMatchObject({
+      kind: 'value',
+      label: 'Default connection',
+      value: 'system'
+    })
+    expect(row(model, 'add-proxy').label).toBe('Add proxy')
+    expect(row(model, 'add-proxy-route').label).toBe('Add routing rule')
+    expect(row(model, 'add-proxy-grant').label).toBe('Add agent rule')
+    const door = row(model, 'proxy-settings')
+    if (door.kind !== 'action') throw new Error('not an action row')
+    expect(door).toMatchObject({
       label: "Open your computer's proxy settings",
-      description: "Zenium uses your computer's proxy settings.",
       leaves: 'external'
     })
-    expect(proxy.button).toBeUndefined()
-    expect(proxy.controlled).toBeUndefined()
-    // The door opened: the host says so and the page says nothing.
     invoke.mockResolvedValueOnce('opened' as unknown as null)
-    proxy.onPress?.()
+    door.onPress?.()
     await vi.waitFor(() =>
       expect(invoke).toHaveBeenCalledWith('system.openProxySettings', undefined)
     )
-    await Promise.resolve()
-    expect(uiStore.get().toasts.map((t) => t.message)).toEqual([])
-    // No door (a Linux desktop Chrome's table does not know, its tool not on the PATH): one
-    // sentence in Zenium's words, on the frame's toast.
     invoke.mockResolvedValueOnce('unsupported' as unknown as null)
-    proxy.onPress?.()
+    door.onPress?.()
     await vi.waitFor(() =>
       expect(uiStore.get().toasts.map((t) => [t.message, t.kind])).toEqual([
         ["Zenium could not open your computer's proxy settings.", 'info']
@@ -10449,16 +10454,54 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     uiStore.set({ toasts: [] })
   })
 
-  it('is held while an extension holds chrome.proxy: the row carries the control (one indicator row after it, "Controlled by FoxyProxy"), its description the configuration’s mode alone in Chrome’s words – the indicator names the holder – Disable takes the Extensions page’s path', () => {
+  it('lists configured proxies and routing rules as item rows', () => {
+    const model = section(
+      'system',
+      desktop(
+        {},
+        {
+          proxy: {
+            profiles: [
+              {
+                id: 'office',
+                name: 'Office',
+                kind: 'http',
+                host: 'proxy.office.test',
+                port: 8080,
+                username: '',
+                password: '',
+                pacUrl: '',
+                pacData: '',
+                bypassList: []
+              }
+            ],
+            defaultTarget: 'office',
+            routes: [
+              {
+                id: 'r1',
+                enabled: true,
+                match: 'host-suffix',
+                pattern: 'corp.test',
+                target: 'office'
+              }
+            ],
+            agentGrants: [{ agentName: 'Claude', mode: 'allow', proxyIds: ['office'] }]
+          }
+        }
+      )
+    )
+    expect(row(model, 'proxy-default')).toMatchObject({ value: 'office' })
+    expect(row(model, 'proxy:office').label).toBe('Office')
+    expect(row(model, 'proxy-route:r1').label).toBe('*.corp.test')
+    expect(row(model, 'proxy-grant:Claude').label).toBe('Claude')
+  })
+
+  it('holds the default connection while an extension holds chrome.proxy', () => {
     const held = section('system', holding('fixed_servers'))
-    const proxy = row(held, 'proxy-settings')
-    expect(proxy.controlled).toMatchObject({ ...extension, value: 'fixed_servers' })
-    expect(proxy.description).toBe('Using fixed servers.')
-    expect(proxy.description).not.toContain('FoxyProxy')
-    // The primitive draws the indicator after the run: one row, one indicator.
+    const def = row(held, 'proxy-default')
+    expect(def.controlled).toMatchObject({ ...extension, value: 'fixed_servers' })
+    expect(def.description).toBe('Using fixed servers.')
     expect(controlledRuns(held.groups[0]!.rows)).toEqual([1])
-    // The five modes of a `chrome.proxy` configuration (the API's `Mode`, the host's value), each
-    // one sentence in Chrome's words and nothing else; the map is total over the five.
     const modes: Array<[ProxyMode, string]> = [
       ['fixed_servers', 'Using fixed servers.'],
       ['pac_script', 'Using a PAC script.'],
@@ -10467,35 +10510,28 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
       ['system', "Using the system's proxy settings."]
     ]
     expect(modes.map(([mode]) => mode).sort()).toEqual([...PROXY_MODES].sort())
-    expect(Object.keys(PROXY_SETTINGS_COPY.modes).sort()).toEqual([...PROXY_MODES].sort())
     for (const [mode, sentence] of modes) {
-      expect(row(section('system', holding(mode)), 'proxy-settings').description, mode).toBe(
-        sentence
-      )
+      expect(row(section('system', holding(mode)), 'proxy-default').description, mode).toBe(sentence)
     }
-    // Disable takes the Extensions page's path; the host's proxy service puts the sessions back
-    // on the system proxy as the extension unloads.
-    proxy.controlled!.onDisable()
+    def.controlled!.onDisable()
     expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
       id: extension.extensionId,
       enabled: false
     })
-    // Another key held is not this row's.
     const other = section(
       'system',
       desktop({ extensionControls: { homepage: { ...extension, value: 'https://x.example/' } } })
     )
-    expect(row(other, 'proxy-settings').controlled).toBeUndefined()
-    expect(controlledRuns(other.groups[0]!.rows)).toEqual([0])
+    expect(row(other, 'proxy-default').controlled).toBeUndefined()
   })
 
   it('keeps the resting sentence for a held value that is not one of the five modes – unreachable through proxy.ts, which always publishes the mode – so the row never loses its description', () => {
     // The host's `ProxyApi.publishControls` sets `value` to the configuration's `mode`, always
     // one of `PROXY_MODES`; the fallback covers a value from anywhere else, and none at all.
     for (const value of ['socks', 'FIXED_SERVERS', '', undefined]) {
-      const proxy = row(section('system', holding(value)), 'proxy-settings')
-      expect(proxy.controlled).toMatchObject(extension)
-      expect(proxy.description, String(value)).toBe("Zenium uses your computer's proxy settings.")
+      const def = row(section('system', holding(value)), 'proxy-default')
+      expect(def.controlled).toMatchObject(extension)
+      expect(def.description, String(value)).toBe("Zenium uses your computer's proxy settings.")
     }
     expect(proxyHeldDescription({ value: 42 })).toBe("Zenium uses your computer's proxy settings.")
     expect(proxyHeldDescription({ value: ['direct'] })).toBe(
@@ -10510,10 +10546,17 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
       context(desktop()).ctx
     )
     const ids = (q: string): string[] => searchRows(models, q).map((h) => h.row.id)
-    expect(ids('proxy')).toEqual(['proxy-settings'])
+    expect(ids('proxy')).toEqual([
+      'proxy-default',
+      'add-proxy',
+      'add-proxy-route',
+      'proxy-agent-default',
+      'add-proxy-grant',
+      'proxy-settings'
+    ])
     expect(ids("computer's proxy settings")).toEqual(['proxy-settings'])
-    expect(ids('pac')).toContain('proxy-settings')
-    expect(searchRows(models, 'proxy')[0]!.caption).toBe('System')
+    expect(ids('pac')).toContain('proxy-default')
+    expect(searchRows(models, 'proxy')[0]!.caption).toBe('System › Connection')
   })
 })
 

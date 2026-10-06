@@ -175,6 +175,7 @@ import type { ImagePost } from '../shared/imageUpload'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { sanitizeGameBestScore } from '../shared/game/bridge'
+import { sanitizeAppProxySettings } from '../shared/appProxy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
 import { newFolderName } from '../shared/formFactor'
 import {
@@ -1676,6 +1677,7 @@ export class Browser {
     // restored tabs' first requests and layouts carry the settings (CT-41, CT-25).
     this.languages.start()
     this.pageFonts.start()
+    this.platform.sessions.applyUserProxy?.(this.state.settings.proxy)
     // Unless the startup continues where the last session left off, its tabs are forgotten at
     // once, whether or not a window opens now (the New Tab page, or the startup pages, come up
     // in the one window kept – Settings › On startup).
@@ -3733,6 +3735,7 @@ export class Browser {
       'tab.selectionContextMenu': ({ tabIds, ...anchor }, win) =>
         this.menus.showSelectionContextMenu(tabIds, win, anchor),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),
+      'tab.setProxy': ({ tabId, proxyId }, win) => tabs.setProxy(tabId, proxyId, win),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
       'tab.freeze': ({ tabId }) => this.governor.freezeTab(tabId),
       'tab.wake': ({ tabId }) => this.governor.wakeTab(tabId),
@@ -4684,7 +4687,8 @@ export class Browser {
       fonts: JSON.stringify(s.fonts),
       languages: s.languages.join(','),
       caretBrowsing: s.caretBrowsing === true,
-      selectionMenu: s.showSelectionMenu !== false
+      selectionMenu: s.showSelectionMenu !== false,
+      proxy: JSON.stringify(s.proxy)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -4816,6 +4820,11 @@ export class Browser {
       } else if (key === 'gameBestScore') {
         // Roll's best (ERR-03): a whole number in the meter's range, else nothing (`GameService`).
         s.gameBestScore = sanitizeGameBestScore(value)
+      } else if (key === 'proxy' && value && typeof value === 'object') {
+        s.proxy = sanitizeAppProxySettings({
+          ...s.proxy,
+          ...(value as Partial<Settings['proxy']>)
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -4887,6 +4896,7 @@ export class Browser {
     if (before.caretBrowsing !== (s.caretBrowsing === true)) this.caretBrowsing.onSettingsChanged()
     if (before.selectionMenu !== (s.showSelectionMenu !== false))
       this.selectionMenu.onSettingsChanged()
+    if (before.proxy !== JSON.stringify(s.proxy)) this.platform.sessions.applyUserProxy?.(s.proxy)
     this.state.commit()
   }
 

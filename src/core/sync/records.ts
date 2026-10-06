@@ -671,6 +671,9 @@ export function extensionRecordReadable(record: SyncRecord): boolean {
  *   own, then: the desktop's dialog remembers what was deleted on that desktop; the phone's
  *   Quick Delete form opens on its own 15 minutes and never reads the key. No migration, as
  *   above: the key never joins a record.
+ * - `proxy`: Settings › System's named servers, routing rules and agent grants. Proxies are
+ *   this machine's (a LAN host, a PAC on the office network), and the record would otherwise
+ *   carry their passwords. No migration: the key never joins a record.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -685,7 +688,9 @@ export const DEVICE_LOCAL_SETTINGS = [
   'bookmarkRowSortOrder',
   'bookmarkRowDisplay',
   'iph',
-  'clearBrowsingDataRange'
+  'clearBrowsingDataRange',
+  // Named servers and their passwords are this machine's (Settings › System).
+  'proxy'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

@@ -71,6 +71,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { AppProxySettings } from '../shared/appProxy'
 import type { BlockedRequestSource } from './blocking/report'
 import type { PageViewport } from '../shared/capture'
 import type { ContentRules } from '../shared/contentRules'
@@ -2149,6 +2150,11 @@ export interface SessionHost {
   clearBrowsingData?(containerIds: string[], kinds: EngineDataKind[]): Promise<void>
   /** Readings for the clear-browsing-data preview across the listed containers. */
   browsingDataCounts?(containerIds: string[]): Promise<EngineDataCounts>
+  /**
+   * Apply the user's in-app proxy settings to the browsing sessions (desktop). A host without
+   * per-session proxy (Android) ignores this; the Settings page still stores the configuration.
+   */
+  applyUserProxy?(settings: AppProxySettings): void
 }
 
 /** Stored data of a site as the host's storage layer reports it. */

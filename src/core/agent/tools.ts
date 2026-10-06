@@ -8,6 +8,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
+import { agentTabProxyId, DEFAULT_APP_PROXY_SETTINGS } from '../../shared/appProxy'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import { folderTabs } from '../model'
@@ -1442,7 +1443,20 @@ const browserTabs: AgentTool = {
               UNAUTHORIZED,
               `Opening a tab in the user's space ${JSON.stringify(space.name)} is a foreign act – pass allowForeign: true if the user asked for it; otherwise omit spaceId (your tabs live in your groups in the "Agents" space) or make a space of your own with zen_groups {"action":"create","space":"own"}.`
             )
-          tab = tabs.createTab({ url, spaceId: space.id, active, load: false }, win)
+          tab = tabs.createTab(
+            {
+              url,
+              spaceId: space.id,
+              active,
+              load: false,
+              proxyId: agentTabProxyId(
+                ctx.browser.state.settings.proxy ?? DEFAULT_APP_PROXY_SETTINGS,
+                s.name,
+                url
+              )
+            },
+            win
+          )
           where = `in the user's space ${JSON.stringify(space.name)} – it is not in one of your groups, so every later call on it needs allowForeign: true`
         }
       } else {

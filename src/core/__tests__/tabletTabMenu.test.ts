@@ -263,6 +263,8 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(menu).toEqual(
       expect.arrayContaining(['Share', 'Share > Share…', 'Duplicate Tab', 'Pin Tab', 'Mute Site'])
     )
+    // In-app proxy is the desktop host's; Android's proxy is the network's.
+    expect(menu).not.toContain('Proxy')
   })
 
   it("opens the same menu through the row's command (`useTabTouch.ts` → `tab.contextMenu` → `showTabContextMenu`)", () => {
