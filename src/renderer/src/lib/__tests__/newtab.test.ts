@@ -175,5 +175,17 @@ describe('tileLabel', () => {
     expect(tileLabel('Long title - A site whose name is far too long', 'https://x.example/a')).toBe(
       'x.example'
     )
+    expect(
+      tileLabel(
+        '1.1.1.1 — The free app that makes your Internet faster.',
+        'https://one.one.one.one/'
+      )
+    ).toBe('1.1.1.1')
+    expect(tileLabel('Overview · Cloudflare Dashboard', 'https://dash.cloudflare.com/')).toBe(
+      'Overview'
+    )
+    expect(
+      tileLabel('DNS · example.com - Cloudflare', 'https://dash.cloudflare.com/abc/dns')
+    ).toBe('Cloudflare')
   })
 })

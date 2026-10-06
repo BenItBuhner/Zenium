@@ -477,13 +477,51 @@ describe('zen://newtab: the field under a finger is a hand-off control (NTP-35)'
     })
   })
 
-  it('a fine pointer (the desktop): the field is as it was – a live input whose first character hands off', () => {
+  it('a fine pointer (the desktop): the field is a live input; Enter submits a search', () => {
     withPointer(false, () => {
       const h = mount(state())
       expect(input().inputMode).toBe('')
       input().dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true }))
-      expect(h.sent.at(-1)).toEqual({ type: 'search', text: 'z' })
+      expect(h.sent.filter((a) => a.type === 'search')).toEqual([])
+      form().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(h.sent.filter((a) => a.type === 'search')).toEqual([])
+      input().value = 'weather austin'
+      form().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      expect(h.sent.at(-1)).toEqual({ type: 'search', text: 'weather austin', submit: true })
+      expect(input().value).toBe('')
     })
+  })
+
+  it('Enter with nothing typed still opens the omnibox', () => {
+    withPointer(false, () => {
+      const h = mount(state())
+      form().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      expect(h.sent.at(-1)).toEqual({ type: 'search', text: '' })
+    })
+  })
+
+  it('a most-visited tile caption is the site name, not the raw page title', () => {
+    mount(
+      state({
+        shortcutsMode: 'most-visited',
+        topSites: [
+          {
+            url: 'https://one.one.one.one/',
+            title: '1.1.1.1 — The free app that makes your Internet faster.',
+            favicon: null,
+            score: 4
+          },
+          {
+            url: 'https://dash.cloudflare.com/',
+            title: 'Overview · Cloudflare Dashboard',
+            favicon: null,
+            score: 3
+          }
+        ]
+      })
+    )
+    const captions = [...document.querySelectorAll('.zen-ntp-caption')].map((n) => n.textContent)
+    expect(captions).toEqual(['1.1.1.1', 'Overview'])
   })
 
   it("a tile's context menu carries the tile's box beside the point (`rect`: the square and its caption, for the touch layouts to hang the menu from)", () => {

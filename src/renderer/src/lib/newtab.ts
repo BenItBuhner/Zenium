@@ -1,6 +1,6 @@
 import type { Rect } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { BLANK_URL, getHost } from '@shared/url'
+import { BLANK_URL } from '@shared/url'
 import { cmd } from './api'
 import { closeOverview, overviewIsOpen, setStageLayerShown } from './gestures/stage'
 import { reducedMotion } from './motion/spring'
@@ -369,47 +369,4 @@ export async function readWallpaperFile(file: File): Promise<string> {
  * The page's grid is composed in the shared module (`composeTiles`), so the core lays the same
  * list into the omnibox's tile row on the phone (OMN-04).
  */
-export { composeTiles, type TopSiteTile } from '@shared/newTab'
-
-/** Host without `www.`, lower-cased: the identity a tile stands for. */
-function tileHost(url: string): string {
-  return getHost(url)
-    .toLowerCase()
-    .replace(/^www\./, '')
-}
-
-/** Longest caption a tile carries before the host stands in for the title. */
-const TILE_LABEL_MAX = 18
-
-/** Separators titles put between a page's name and the site's ("Coffee - Wikipedia"). */
-const SITE_SEPARATOR = /\s+[-|·—–]\s+/
-
-/** Whether the URL is a site's front page rather than a page inside it. */
-function isFrontPage(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    return (parsed.pathname === '/' || parsed.pathname === '') && !parsed.search
-  } catch {
-    return false
-  }
-}
-
-/**
- * The caption under a tile: the site's name. A front page's title starts with it ("YouTube",
- * "Hacker News - Top", "GitHub: Let's build from here"); a page inside a site ends with it
- * ("Coffee - Wikipedia", "corner-shape - CSS | MDN"), and when such a title has no site suffix
- * the host stands for the site. The host also stands in when the name would not fit on one line
- * under a 56 tile.
- */
-export function tileLabel(title: string, url: string): string {
-  const host = tileHost(url)
-  let name = ''
-  if (isFrontPage(url) || !host) {
-    name = title.split(/\s+[-|·—–]\s+|:\s+/)[0]?.trim() ?? ''
-  } else {
-    const parts = title.split(SITE_SEPARATOR)
-    name = parts.length > 1 ? (parts[parts.length - 1]?.trim() ?? '') : ''
-  }
-  if (name && name.length <= TILE_LABEL_MAX) return name
-  return host || title.trim() || url
-}
+export { composeTiles, tileLabel, type TopSiteTile } from '@shared/newTab'

@@ -771,6 +771,34 @@ describe('NewTabService: state for the page', () => {
     f.browser.newTab.handleAction(tab.id, { type: 'search', text: 'z' })
     expect(eventsNamed(f, 'newtab.opened').at(-1)).toEqual({ tabId: tab.id, text: 'z' })
   })
+
+  it('Enter in the page field navigates or searches this tab immediately', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    await settle()
+    const view = f.views.find((v) => v.tabId === tab.id)
+    f.browser.newTab.handleAction(tab.id, {
+      type: 'search',
+      text: 'https://example.com',
+      submit: true
+    })
+    expect(view?.loads.at(-1)).toBe('https://example.com')
+    expect(eventsNamed(f, 'newtab.opened').filter((e) => 'text' in (e as object))).toEqual([])
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const searchTab = activeTab(f)!
+    await settle()
+    f.browser.newTab.handleAction(searchTab.id, {
+      type: 'search',
+      text: 'weather austin',
+      submit: true
+    })
+    const engine = f.browser.defaultSearchEngine()
+    expect(f.views.find((v) => v.tabId === searchTab.id)?.loads.at(-1)).toBe(
+      engine.searchUrl.split('%s').join(encodeURIComponent('weather austin'))
+    )
+  })
 })
 
 describe('NewTabService: my shortcuts and most visited', () => {

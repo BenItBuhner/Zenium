@@ -645,8 +645,18 @@ export class NewTabService {
       }
       case 'search':
         // Empty text: the search box was clicked – the omnibox opens with nothing typed yet.
-        if (typeof action.text === 'string' && action.text.length < 200)
-          this.browser.emit('newtab.opened', { tabId, text: action.text }, win)
+        // `submit`: Enter in the page's field – load the address or search now, in this tab.
+        if (typeof action.text !== 'string' || action.text.length >= 200) return
+        if (action.submit && action.text.trim()) {
+          this.browser.handleCommand(win, 'urlbar.submit', {
+            input: action.text,
+            newTab: false,
+            tabId,
+            background: false
+          })
+          return
+        }
+        this.browser.emit('newtab.opened', { tabId, text: action.text }, win)
         return
       case 'add-shortcut':
         if (this.addShortcut(action.title, action.url) === null)

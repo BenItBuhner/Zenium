@@ -8561,6 +8561,7 @@
   }
   .zen-ntp-icon {
     object-fit: contain;
+    border-radius: 8px;
   }
   /* The fallbacks – the site's letter, or the globe when there is none – in the deemphasised ink. */
   .zen-ntp-tile svg {
@@ -8572,7 +8573,8 @@
     font-weight: var(--v2-weight-heading);
     color: var(--v2-control-text-deemphasized);
   }
-  /* The caption: 13 in the deemphasised window ink, one line with an ellipsis. */
+  /* The caption: 13 in the deemphasised window ink. Desktop clamps to two wrapping lines
+     (`NEW_TAB_PAGE_STYLE`); the phone's `truncate` class keeps one line. */
   .zen-ntp-caption {
     overflow: hidden;
     font-size: var(--v2-font-small);
