@@ -46,10 +46,11 @@ export const ACCENT_ROW_LABEL = 'Use system accent colour'
 
 /** The Settings section the proxy row is on (`zen://settings/system`). */
 export const SYSTEM_SECTION = 'system'
-/** The proxy row's id, label and resting description (`PROXY_SETTINGS_COPY` in `sections.tsx`). */
+/** The OS-door row's id, label and description (`APP_PROXY_COPY` in `appProxy.ts`). */
 export const PROXY_ROW = 'proxy-settings'
 export const PROXY_ROW_LABEL = "Open your computer's proxy settings"
-export const PROXY_ROW_DESCRIPTION = "Zenium uses your computer's proxy settings."
+export const PROXY_ROW_DESCRIPTION =
+  'The operating system panel. Zenium can also use it as the default.'
 
 /** Windows Settings › Network & internet › Proxy (`systemSettings.ts` `WINDOWS_PROXY_PAGE`). */
 export const WINDOWS_PROXY_PAGE = 'ms-settings:network-proxy'

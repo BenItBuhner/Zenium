@@ -522,6 +522,7 @@ async function guestWebContents(): Promise<Electron.WebContents> {
 const sessionHooks: Array<(ses: object, containerId: string) => void> = []
 const sessions = {
   get: () => ({}),
+  forTab: () => ({}),
   containerOf: () => 'default',
   configure: (hook: (ses: object, containerId: string) => void) => {
     sessionHooks.push(hook)
