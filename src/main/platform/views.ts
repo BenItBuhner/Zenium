@@ -3755,7 +3755,7 @@ export class ElectronTabViewHost implements TabViewHost {
   private make(tab: Tab, events: TabViewEvents, host: WindowHost, cover: boolean): TabView {
     const view = new ElectronTabView(
       new WebContentsView({
-        webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
+        webPreferences: pageWebPreferences(this.sessions.forTab(tab))
       }),
       this,
       cover

@@ -3,6 +3,7 @@
  * Everything here must be JSON-serialisable (it crosses the IPC boundary).
  */
 import type { AppIconId } from './appIcon'
+import type { AppProxySettings } from './appProxy'
 import type { SiteInfo, SiteInfoSnapshot } from './siteInfo'
 import type {
   TranslateModelInfo,
@@ -931,6 +932,11 @@ export interface Tab {
   fromIntent: boolean
   /** The web app manifest of the current page, once its page script has posted it; not persisted. */
   webApp: WebAppInfo | null
+  /**
+   * Per-tab proxy override (`shared/appProxy.ts`): a profile id, `direct`, or `system`.
+   * Absent or empty follows the default connection and the routing rules. Persisted.
+   */
+  proxyId?: string | null
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
@@ -3704,6 +3710,12 @@ export interface Settings {
    * The core's `GameService` answers the pages and only ever raises it.
    */
   gameBestScore: number
+  /**
+   * In-app proxies (Settings › System): named servers, domain routing, and which proxies
+   * agents may use (`shared/appProxy.ts`). Absent in profiles from before it existed (the
+   * computer's proxy, no rules). Device-local: servers and passwords stay on this machine.
+   */
+  proxy: AppProxySettings
 }
 
 // ---------------------------------------------------------------------------
@@ -5862,6 +5874,11 @@ export interface Commands {
   'tab.waitUnresponsive': { args: { tabIds: string[] }; result: void }
   'tab.rename': { args: { tabId: string; title: string | null }; result: void }
   'tab.duplicate': { args: { tabId: string }; result: void }
+  /**
+   * Per-tab proxy (Settings › System): `null` follows the default and the routing rules;
+   * `direct`, `system`, or a configured profile id overrides them for this tab.
+   */
+  'tab.setProxy': { args: { tabId: string; proxyId: string | null }; result: void }
   'tab.unload': { args: { tabId: string }; result: void }
   'tab.freeze': { args: { tabId: string }; result: void }
   'tab.wake': { args: { tabId: string }; result: void }

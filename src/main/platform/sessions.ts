@@ -1,7 +1,14 @@
 import type { EngineDataCounts, EngineDataKind, SessionHost } from '../../core/platform'
 import { app, session, type Session } from 'electron'
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type Tab } from '../../shared/types'
 import { acceptLanguages, chromeUserAgent } from '../../shared/browserIdentity'
+import {
+  DEFAULT_APP_PROXY_SETTINGS,
+  isKnownProxyTarget,
+  type AppProxySettings
+} from '../../shared/appProxy'
+import { targetToProxyConfig } from '../../core/appProxy'
+import { sessionProxyConfig } from '../../core/extensions/api/proxy'
 
 /** Every storage kind of `clearStorageData` but cookies. */
 const SITE_STORAGES: Array<
@@ -23,6 +30,10 @@ export function cookieSite(domain: string | undefined): string {
 export class SessionManager implements SessionHost {
   private readonly sessions = new Map<string, Session>()
   private readonly onCreate: Array<(ses: Session, containerId: string) => void> = []
+  /** Overlay sessions for a tab that overrides the container's proxy (`containerId::proxyId`). */
+  private readonly proxySessions = new Map<string, Session>()
+  private userProxy: AppProxySettings = structuredClone(DEFAULT_APP_PROXY_SETTINGS)
+  private proxyRefresh: (() => void) | null = null
 
   constructor(
     private readonly userAgent: string,
@@ -74,6 +85,15 @@ export class SessionManager implements SessionHost {
     return undefined
   }
 
+  /**
+   * A per-tab proxy overlay. `chrome.proxy` must not own these: the tab's chosen target
+   * is applied here, and a refresh of the default PAC would otherwise wipe it.
+   */
+  isProxyOverlay(ses: Session): boolean {
+    for (const each of this.proxySessions.values()) if (each === ses) return true
+    return false
+  }
+
   get(containerId: string): Session {
     const existing = this.sessions.get(containerId)
     if (existing) return existing
@@ -83,6 +103,47 @@ export class SessionManager implements SessionHost {
     ses.setUserAgent(this.userAgent, this.languages)
     this.sessions.set(containerId, ses)
     for (const hook of this.onCreate) hook(ses, containerId)
+    return ses
+  }
+
+  /** The extension host's `chrome.proxy` resolver: user settings changing re-resolves it. */
+  bindProxyRefresh(hook: () => void): void {
+    this.proxyRefresh = hook
+  }
+
+  applyUserProxy(settings: AppProxySettings): void {
+    this.userProxy = settings
+    this.proxyRefresh?.()
+    for (const [key, ses] of this.proxySessions) {
+      const proxyId = key.split('::')[1]
+      if (!proxyId) continue
+      void ses.setProxy(sessionProxyConfig(targetToProxyConfig(settings, proxyId)))
+    }
+  }
+
+  /**
+   * The session a tab's page uses: the container's, or a dedicated overlay when the tab
+   * overrides the proxy. Overlay sessions share no cookies with the container (Electron's
+   * `setProxy` is per session).
+   */
+  forTab(tab: Pick<Tab, 'containerId' | 'proxyId'>): Session {
+    const override =
+      typeof tab.proxyId === 'string' && isKnownProxyTarget(this.userProxy, tab.proxyId)
+        ? tab.proxyId
+        : undefined
+    if (!override) return this.get(tab.containerId)
+    const key = `${tab.containerId}::${override}`
+    const existing = this.proxySessions.get(key)
+    if (existing) return existing
+    const persist = this.isPersistent(tab.containerId)
+    const partition = persist
+      ? `persist:zen-proxy-${tab.containerId}-${override}`
+      : `zen-proxy-${tab.containerId}-${override}`
+    const ses = session.fromPartition(partition)
+    ses.setUserAgent(this.userAgent, this.languages)
+    this.proxySessions.set(key, ses)
+    for (const hook of this.onCreate) hook(ses, tab.containerId)
+    void ses.setProxy(sessionProxyConfig(targetToProxyConfig(this.userProxy, override)))
     return ses
   }
 

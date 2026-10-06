@@ -725,8 +725,15 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Release channel',
     'Verification'
   ],
-  // Chrome's System page: the one row that opens the OS's proxy panel.
-  system: ["Open your computer's proxy settings"],
+  // Settings › System: in-app proxies, then the OS panel as a secondary door.
+  system: [
+    'Default connection',
+    'Add proxy',
+    'Add routing rule',
+    'Default for agents',
+    'Add agent rule',
+    "Open your computer's proxy settings"
+  ],
   about: ['Zenium', 'Check for updates', 'Engine', 'Upstream project']
 }
 
@@ -786,7 +793,8 @@ const HEADINGS: Record<string, readonly string[]> = {
   sync: ['Status', 'Folder and device', 'Other devices', 'What you sync'],
   import: ['Import from another browser', 'Import from a file'],
   security: ['Site permissions', 'This session'],
-  passwords: ['Password manager', 'Saving', 'Security']
+  passwords: ['Password manager', 'Saving', 'Security'],
+  system: ['Connection', 'Proxies', 'Routing rules', 'Agent access', 'Computer']
 }
 
 const PAGE = INTERNAL_PAGES.settings

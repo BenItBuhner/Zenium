@@ -134,7 +134,8 @@ export function createTabRecord(
     blockedCount: 0,
     openerTabId: init.openerTabId ?? null,
     fromIntent: init.fromIntent ?? false,
-    webApp: null
+    webApp: null,
+    proxyId: init.proxyId ?? undefined
   }
 }
 

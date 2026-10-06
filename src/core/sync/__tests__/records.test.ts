@@ -286,7 +286,8 @@ describe('collectLocal', () => {
       'bookmarkRowSortOrder',
       'bookmarkRowDisplay',
       'iph',
-      'clearBrowsingDataRange'
+      'clearBrowsingDataRange',
+      'proxy'
     ])
     expect(data).not.toHaveProperty('clearBrowsingDataRange')
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
@@ -300,6 +301,8 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('hoverCardMemoryUsage')
     // The hint bubbles' records stay on the phone that showed them (TB-19).
     expect(data).not.toHaveProperty('iph')
+    // Named proxies and their passwords stay on this machine.
+    expect(data).not.toHaveProperty('proxy')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
     // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.

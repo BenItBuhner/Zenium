@@ -34,6 +34,7 @@ import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
 import { DEFAULT_FONT_SETTINGS } from './fonts'
 import { FALLBACK_LANGUAGES } from './languages'
 import { DEFAULT_IPH_STATE } from './iph'
+import { DEFAULT_APP_PROXY_SETTINGS } from './appProxy'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -343,7 +344,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // A profile takes the OS's languages as it loads (`defaultLanguages`); this stands in until then.
   languages: [...FALLBACK_LANGUAGES],
   // Roll's best (ERR-03): no run yet.
-  gameBestScore: 0
+  gameBestScore: 0,
+  proxy: structuredClone(DEFAULT_APP_PROXY_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

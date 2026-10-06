@@ -93,6 +93,7 @@ import { HomepageApi } from './homepage'
 import { PrivacyApi } from './privacy'
 import { ExtensionControls } from './controls'
 import { ProxyApi } from './proxy'
+import { compiledBrowserProxy } from '../../../core/appProxy'
 import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
 import { SearchProviderApi } from './searchProvider'
@@ -325,12 +326,20 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webRequest = new WebRequestApi(this)
     this.fontSettings = new FontSettingsApi(this)
     this.privacy = new PrivacyApi(this)
-    this.proxy = new ProxyApi(this, {
-      configure: (hook) =>
-        this.sessions.configure((ses, containerId) =>
-          hook(ses, containerId === PRIVATE_CONTAINER_ID)
-        )
-    })
+    this.proxy = new ProxyApi(
+      this,
+      {
+        configure: (hook) =>
+          this.sessions.configure((ses, containerId) => {
+            // Tab overlays keep the chosen proxy; the default PAC / chrome.proxy stay on
+            // the container sessions.
+            if (this.sessions.isProxyOverlay(ses)) return
+            hook(ses, containerId === PRIVATE_CONTAINER_ID)
+          })
+      },
+      () => compiledBrowserProxy(this.browser.state.settings.proxy)
+    )
+    this.sessions.bindProxyRefresh(() => this.proxy.refreshDefault())
     this.contentSettings = new ContentSettingsApi(this)
     this.bookmarks = new BookmarksApi(this)
     this.history = new HistoryApi(this)

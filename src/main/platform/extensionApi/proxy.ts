@@ -62,9 +62,8 @@ const SYSTEM_VALUE = proxyConfigValue(SYSTEM_PROXY_CONFIG)
  * The key the Settings page reads for the proxy (`UIState.extensionControls`, the §10.5
  * controlled-setting primitive). Chrome's System page marks its "Open your computer's proxy
  * settings" row with the extension-controlled indicator while an extension holds the proxy;
- * Zenium has no proxy row yet, so the key is published for the row to take when it exists. The
- * value is the configuration's mode (`direct`, `auto_detect`, `pac_script`, `fixed_servers`,
- * `system`), the one word a row can show.
+ * Settings › System's default-connection row reads the same key. The value is the
+ * configuration's mode (`direct`, `auto_detect`, `pac_script`, `fixed_servers`, `system`).
  */
 export const PROXY_CONTROL_KEY = 'proxy'
 
@@ -76,7 +75,8 @@ export const PROXY_CONTROL_KEY = 'proxy'
  * window follows the regular value unless a private-window value exists and the user allowed
  * the extension there) to one configuration for the normal windows' sessions and one for the
  * private window's, each applied through Electron's `setProxy` as the configuration changes and
- * to every session that comes up later. The browser's own value is the system's settings.
+ * to every container session that comes up later. The browser's own value is the compiled
+ * in-app proxy (`compiledBrowserProxy`), falling back to the computer's settings.
  * While an extension holds the normal windows' configuration, the Settings page hears of it
  * through `ApiHost.controls` (`PROXY_CONTROL_KEY`).
  *
@@ -93,13 +93,31 @@ export class ProxyApi {
 
   constructor(
     private readonly host: ApiHost,
-    sessions: ProxySessionHost
+    sessions: ProxySessionHost,
+    /**
+     * The browser's own configuration while no extension holds `chrome.proxy`: Settings ›
+     * System's compiled in-app proxy, or the computer's settings when nothing is configured.
+     */
+    private readonly userConfig: () => ProxyConfig = () => SYSTEM_PROXY_CONFIG
   ) {
     sessions.configure((session, incognito) => {
       this.sessions.set(session, incognito)
       const current = this.effective.get(incognito)
-      if (current && current.value !== SYSTEM_VALUE) this.applyTo(session, current)
+      if (current && current.value !== this.defaultValue()) this.applyTo(session, current)
     })
+  }
+
+  /** The user's in-app proxy changed: resolve again so sessions pick it up. */
+  refreshDefault(): void {
+    this.recompute()
+  }
+
+  private defaultValue(): string {
+    try {
+      return proxyConfigValue(this.userConfig())
+    } catch {
+      return SYSTEM_VALUE
+    }
   }
 
   readonly handlers: NamespaceHandlers = {
@@ -146,7 +164,7 @@ export class ProxyApi {
 
   /** The configuration the browser applies for normal or private windows (diagnostics, tests). */
   effectiveConfig(incognito: boolean): ProxyConfig {
-    return proxyConfigOf(this.effective.get(incognito)?.value ?? SYSTEM_VALUE)
+    return proxyConfigOf(this.effective.get(incognito)?.value ?? this.defaultValue())
   }
 
   /** The extension whose configuration applies for normal or private windows, if any. */
@@ -164,7 +182,7 @@ export class ProxyApi {
     if (incognito && !this.allowedInPrivate(ctx.extensionId)) throw new ApiError(INCOGNITO_ERROR)
     const result = settingResult(
       this.values,
-      SYSTEM_VALUE,
+      this.defaultValue(),
       ctx.extensionId,
       incognito,
       this.ranker()
@@ -242,12 +260,13 @@ export class ProxyApi {
   private recompute(): void {
     const rank = this.ranker()
     for (const incognito of [false, true]) {
-      const next = effectiveSetting(this.values, SYSTEM_VALUE, incognito, rank)
+      const fallback = this.defaultValue()
+      const next = effectiveSetting(this.values, fallback, incognito, rank)
       const prev = this.effective.get(incognito)
       if (prev && sameEffective(prev, next)) continue
       this.effective.set(incognito, next)
       // The first resolution of a session kind that stays at the system's settings changes nothing.
-      if (!prev && next.value === SYSTEM_VALUE) continue
+      if (!prev && next.value === SYSTEM_VALUE && fallback === SYSTEM_VALUE) continue
       for (const [session, isIncognito] of this.sessions) {
         if (isIncognito === incognito) this.applyTo(session, next)
       }

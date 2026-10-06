@@ -168,6 +168,7 @@ import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeReadAloudSettings, type ReadAloudState } from '../shared/readAloud'
 import { sanitizeFontSettings } from '../shared/fonts'
 import { sanitizeGameBestScore } from '../shared/game/bridge'
+import { sanitizeAppProxySettings, sanitizeTabProxyId } from '../shared/appProxy'
 import { defaultLanguages, sanitizeLanguages } from '../shared/languages'
 import {
   emptyNewTabDevice,
@@ -946,6 +947,7 @@ export class BrowserState {
     this.settings.fonts = sanitizeFontSettings(data.settings?.fonts)
     // Roll's best (ERR-03): a whole number in the meter's range, 0 for a profile from before it.
     this.settings.gameBestScore = sanitizeGameBestScore(data.settings?.gameBestScore)
+    this.settings.proxy = sanitizeAppProxySettings(data.settings?.proxy)
     // A profile from before the list existed starts from the OS's languages, as a fresh Chrome
     // profile's `intl.accept_languages` does; one that has a list keeps it (never empty).
     const storedLanguages = sanitizeLanguages(data.settings?.languages)
@@ -1024,6 +1026,7 @@ export class BrowserState {
       tab.errorCode = null
       // A chrome page tab restored inside a section has the landing beneath it (PageService).
       if (isChromePageUrl(tab.url)) tab.canGoBack = parseInternalPageUrl(tab.url)?.section != null
+      tab.proxyId = sanitizeTabProxyId(raw.proxyId, this.settings.proxy)
       tabs[tab.id] = tab
     }
     this.model = {

@@ -6602,6 +6602,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
+      'Proxy',
       'Share',
       '-',
       'Close Multiple Tabs',
@@ -6610,13 +6611,13 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reopen Closed Tab'
     ]
 
-    it('a regular row: twenty-one rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+    it('a regular row: twenty-two rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      // Firefox's twenty and Chrome's Add tab to reading list (W6-1) under the bookmark rows.
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(21)
+      // Firefox's twenty, Chrome's Add tab to reading list, and the in-app Proxy submenu.
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(22)
       expect(separators(shown)).toBe(4)
       // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
       // unload and the freeze are the tab's state, as its mute is, not its place.
@@ -6654,6 +6655,49 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Copy Link as Markdown',
         'Email Link…'
       ])
+      expect(topLabels(item(h, 'Proxy').submenu!)).toEqual([
+        'Use default connection',
+        'Direct connection',
+        'System proxy'
+      ])
+    })
+
+    it('lists configured proxies in the Proxy submenu and writes the tab override', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        proxy: {
+          profiles: [
+            {
+              id: 'office',
+              name: 'Office',
+              kind: 'http',
+              host: 'proxy.office.test',
+              port: 8080,
+              username: '',
+              password: '',
+              pacUrl: '',
+              pacData: '',
+              bypassList: []
+            }
+          ],
+          defaultTarget: 'system',
+          routes: [],
+          agentGrants: []
+        }
+      })
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      expect(topLabels(item(h, 'Proxy').submenu!)).toEqual([
+        'Use default connection',
+        'Direct connection',
+        'System proxy',
+        '-',
+        'Office'
+      ])
+      item(h, 'Office').click!()
+      expect(h.browser.tabs.tab(h.tabId)?.proxyId).toBe('office')
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      item(h, 'Use default connection').click!()
+      expect(h.browser.tabs.tab(h.tabId)?.proxyId ?? null).toBeNull()
     })
 
     it('nothing the flat menu did is gone: every one of its rows is in the regrouped menu, at the top or in a submenu', () => {
@@ -6680,6 +6724,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Move Tab to New Window',
         'Move Tab to Another Window',
         'Open in New Container Tab',
+        'Proxy',
         'Bookmark Tab',
         'Bookmark All Tabs…',
         'Share',

@@ -85,6 +85,7 @@ import { MANAGED_MENU_LABEL } from '../shared/managed'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
+import { profileLabel } from '../shared/appProxy'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
@@ -417,6 +418,45 @@ export class Menus {
     return this.browser.state.model.containers
       .filter((c) => c.id !== DEFAULT_CONTAINER_ID)
       .map((c) => ({ label: c.name, click: () => onPick(c.id) }))
+  }
+
+  /** Per-tab proxy override: follow the default, go direct, or pick a configured server. */
+  private tabProxySubmenu(tab: Tab, win: ZenWindow): MenuItemTemplate {
+    const proxy = this.browser.state.settings.proxy
+    const current = tab.proxyId ?? ''
+    const pick = (proxyId: string | null): void => {
+      this.browser.tabs.setProxy(tab.id, proxyId, win)
+    }
+    return {
+      label: 'Proxy',
+      submenu: [
+        {
+          label: 'Use default connection',
+          type: 'checkbox',
+          checked: current === '',
+          click: () => pick(null)
+        },
+        {
+          label: 'Direct connection',
+          type: 'checkbox',
+          checked: current === 'direct',
+          click: () => pick('direct')
+        },
+        {
+          label: 'System proxy',
+          type: 'checkbox',
+          checked: current === 'system',
+          click: () => pick('system')
+        },
+        ...(proxy.profiles.length > 0 ? [{ type: 'separator' as const }] : []),
+        ...proxy.profiles.map((profile) => ({
+          label: profileLabel(profile),
+          type: 'checkbox' as const,
+          checked: current === profile.id,
+          click: () => pick(profile.id)
+        }))
+      ]
+    }
   }
 
   private spaceSubmenu(exceptSpaceId: string | null, onPick: (spaceId: string) => void): Template {
@@ -2634,6 +2674,10 @@ export class Menus {
           tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
         )
       },
+      ...when(
+        this.browser.state.platform !== 'android',
+        this.tabProxySubmenu(tab, win)
+      ),
       {
         label: 'Share',
         submenu: [
