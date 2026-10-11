@@ -1916,6 +1916,13 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.ctrlTabCyclesWithinSection,
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
+        {
+          kind: 'switch',
+          id: 'ctrl-tab-recent-order',
+          label: 'Ctrl+Tab cycles through recently used tabs',
+          checked: s.ctrlTabUsesRecentOrder,
+          onChange: (v) => set({ ctrlTabUsesRecentOrder: v })
+        },
         ...startupRows,
         ...sessionRows
       ]
