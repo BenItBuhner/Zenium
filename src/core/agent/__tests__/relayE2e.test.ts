@@ -16,13 +16,15 @@ import { fakeBrowser, type FakeBrowser } from './fakeBrowser'
 const RELAY = process.env.RELAY_E2E_URL
 const AGENT_TOKEN = process.env.RELAY_E2E_AGENT_TOKEN ?? 'local-e2e-token-0123456789'
 const ISSUER = 'http://127.0.0.1:9911'
+/** A key id of this run's own: the relay caches key sets by issuer, across runs. */
+const KID = `e2e-${Date.now()}`
 
 const enc = (v: unknown): string =>
   Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)).toString('base64url')
 
 async function deviceToken(key: CryptoKey, sid: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
-  const head = enc({ alg: 'ES256', kid: 'e2e', typ: 'JWT' })
+  const head = enc({ alg: 'ES256', kid: KID, typ: 'JWT' })
   const body = enc({
     iss: ISSUER,
     sub: 'user_e2e',
@@ -101,7 +103,7 @@ describe.skipIf(!RELAY)('hosted relay end to end', () => {
     const pub = await crypto.subtle.exportKey('jwk', key.publicKey)
     jwks = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ keys: [{ ...pub, kid: 'e2e', alg: 'ES256' }] }))
+      res.end(JSON.stringify({ keys: [{ ...pub, kid: KID, alg: 'ES256' }] }))
     })
     await new Promise<void>((r) => jwks.listen(9911, '127.0.0.1', r))
   })
