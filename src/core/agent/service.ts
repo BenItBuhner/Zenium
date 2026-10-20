@@ -57,6 +57,9 @@ import {
   type SessionStore
 } from './http'
 import { ClaimStore, type AgentClaim } from './claims'
+import { RelayConnector } from './relay'
+import type { RelayRpc } from '../../shared/agentRelay'
+import { accountEndpoints } from '../sync/accountEndpoints'
 import { Diagnostics, type DiagnosticsSnapshot } from './diagnostics'
 import { checkAgentName, NAME_YOURSELF } from './naming'
 import { TabFrames } from './frames'
@@ -205,7 +208,9 @@ export interface AgentSession extends McpSession {
    * foreground action runs in front only on a tab the user is already looking at.
    */
   takeScreen: boolean
-  transport: 'http' | 'stdio'
+  transport: 'http' | 'stdio' | 'relay'
+  /** A relay session's OAuth client id, as the relay verified it; null for local agents. */
+  remoteClientId: string | null
   connectedAt: number
   lastActiveAt: number
   calls: number
@@ -362,6 +367,12 @@ export class AgentService implements SessionStore, McpHandlers {
   private readonly transport: AgentTransport | null
   private readonly sessions = new Map<string, AgentSession>()
   private readonly sessionlessIds = new Map<string, string>()
+  /** Relay session ids (the relay's id for an agent's MCP session) → transport session ids. */
+  private readonly relaySessions = new Map<string, string>()
+  /** Relay sessions the user denied: their calls are refused without asking again. */
+  private readonly relayDenied = new Set<string>()
+  /** The connection to the hosted agent relay (Settings → AI Agents → Zenium account). */
+  readonly relay: RelayConnector
   private readonly pendingApprovals = new Map<string, Promise<boolean>>()
   private readonly memos = new Map<string, Memo>()
   private readonly callStates = new Map<string, CallState>()
@@ -452,6 +463,21 @@ export class AgentService implements SessionStore, McpHandlers {
       version: browser.platform.info.version
     })
     this.http = new StreamableHttp(this)
+    this.relay = new RelayConnector({
+      relayUrl: () => this.relayUrl(),
+      accessToken: () => this.browser.sync?.accountAccessToken?.() ?? Promise.resolve(null),
+      device: () => ({
+        ...(this.browser.sync?.accountDevice?.() ?? { name: 'Zenium', kind: 'desktop' as const }),
+        version: this.browser.platform.info.version
+      }),
+      onRpc: (frame) => this.handleRelay(frame),
+      onEnd: (session) => this.endRelay(session),
+      onStatus: (remote) => {
+        this.status = { ...this.status, remote }
+        this.browser.state.commitVolatile()
+      },
+      log: (line) => this.log(line)
+    })
     this.claims = new ClaimStore(browser.platform.io)
     this.token = this.loadToken()
     this.status.token = this.token
@@ -515,6 +541,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.sweeper = null
     if (this.skillRefresh) clearTimeout(this.skillRefresh)
     this.skillRefresh = null
+    this.relay.stop()
     for (const id of [...this.sessions.keys()]) this.close(id)
     for (const tabId of [...this.agentDialogs.keys()]) this.dismissAgentDialog(tabId)
     this.prompts.dismissAll()
@@ -525,6 +552,7 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   private async apply(): Promise<void> {
+    this.applyRemote()
     const s = this.settings
     const want = s.enabled && this.transport !== null
     const running = this.status.running
@@ -558,7 +586,8 @@ export class AgentService implements SessionStore, McpHandlers {
         url: endpointUrl('127.0.0.1', bound.port),
         lanUrls: s.lan ? bound.lanAddresses.map((a) => endpointUrl(a, bound.port)) : [],
         token: this.token,
-        error: null
+        error: null,
+        remote: this.relay.state
       }
       this.failure = null
       this.storeEndpoint(bound.port)
@@ -567,7 +596,12 @@ export class AgentService implements SessionStore, McpHandlers {
       console.error(
         `[zen mcp] the server could not bind ${hostPort(failure.address, failure.port)}${failure.code ? ` (${failure.code})` : ''}: ${failure.message}`
       )
-      this.status = { ...emptyAgentServerStatus(), token: this.token, error: failure.message }
+      this.status = {
+        ...emptyAgentServerStatus(),
+        token: this.token,
+        error: failure.message,
+        remote: this.relay.state
+      }
       this.failure = failure
       this.storeEndpoint(null)
     }
@@ -581,13 +615,125 @@ export class AgentService implements SessionStore, McpHandlers {
     } catch {
       /* already down */
     }
-    this.status = { ...emptyAgentServerStatus(), token: this.token }
+    this.status = { ...emptyAgentServerStatus(), token: this.token, remote: this.relay.state }
     this.storeEndpoint(null)
     this.browser.state.commitVolatile()
   }
 
   handleHttp(req: AgentHttpRequest): Promise<AgentHttpResponse> {
     return this.http.handle(req)
+  }
+
+  // ---------------------------------------------------------------------------
+  // The hosted relay (agents of the Zenium account, from anywhere)
+  // ---------------------------------------------------------------------------
+
+  /** The relay this browser connects to: the one Settings names, else the build's. */
+  relayUrl(): string | null {
+    return this.settings.relayUrl || accountEndpoints().relayUrl
+  }
+
+  private relayTarget: string | null = null
+
+  /** Bring the relay connection in line with Settings → AI Agents → Zenium account. */
+  private applyRemote(): void {
+    const want = this.settings.remote
+    const target = want ? this.relayUrl() : null
+    if (!want) {
+      if (this.relay.active) this.relay.stop()
+      this.relayTarget = null
+      return
+    }
+    if (this.relay.active && target === this.relayTarget) return
+    this.relayTarget = target
+    if (this.relay.active) this.relay.restart()
+    else this.relay.start()
+  }
+
+  /** The browser signed in to its Zenium account, or out: the relay connects with the new sign-in. */
+  onAccountChanged(): void {
+    if (this.started && this.settings.remote) this.relay.restart()
+  }
+
+  /**
+   * One message of an agent of the Zenium account, through the relay. The relay's session id
+   * names the transport session (`relay-<id>`), so after a browser restart the same agent comes
+   * back to the same id – and to its durable session, groups and tabs, as a token-carrying
+   * local client does (`resurrect`). The first message of a session the browser has not seen
+   * initialises it from what the agent told the relay, which brings the approval prompt.
+   */
+  async handleRelay(frame: RelayRpc): Promise<unknown> {
+    const id = isRequestLike(frame.message) ? frame.message.id : null
+    if (this.relayDenied.has(frame.session))
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: UNAUTHORIZED,
+          message: `The user did not allow "${frame.client.name}" to control this browser`
+        }
+      }
+    let s = this.sessions.get(this.relaySessions.get(frame.session) ?? '')
+    if (!s) {
+      const sessionId = `relay-${frame.session.replace(/[^\w-]/g, '').slice(0, 64)}`
+      s =
+        this.sessions.get(sessionId) ??
+        this.create(
+          {
+            transport: 'relay',
+            token: null,
+            remoteAddress: '',
+            userAgent: frame.client.name,
+            remoteClientId: frame.client.id
+          },
+          sessionId
+        )
+      this.relaySessions.set(frame.session, s.id)
+    }
+    if (!s.protocolVersion) {
+      const init = await this.protocol.handle(s, {
+        jsonrpc: '2.0',
+        id: 'relay-initialize',
+        method: 'initialize',
+        params: {
+          protocolVersion: frame.init.protocolVersion,
+          capabilities: frame.init.capabilities,
+          clientInfo: frame.init.clientInfo
+        }
+      })
+      if (!s.protocolVersion) {
+        this.close(s.id)
+        this.relayDenied.add(frame.session)
+        const error =
+          init && !Array.isArray(init) && init.error
+            ? init.error
+            : { code: UNAUTHORIZED, message: 'Connection refused' }
+        return { jsonrpc: '2.0', id, error }
+      }
+      s.initialized = true
+      this.rebindRelayClaim(s)
+    }
+    this.touch(s)
+    return this.protocol.handle(s, frame.message)
+  }
+
+  /** A relay session made again (the browser restarted): its durable session comes back to it. */
+  private rebindRelayClaim(s: AgentSession): void {
+    if (s.claimId) return
+    const claim = this.claims.bySession(s.id)
+    if (!claim || this.boundSession(claim)) return
+    this.bindClaim(s, claim)
+    s.notices.push(
+      `Notice: this browser restarted or lost its connection; your session ${JSON.stringify(claim.name)} is back with its groups and tabs. Refs from before are stale: browser_snapshot before acting.`
+    )
+    this.log(`relay session ${s.id} took back claim ${claim.id} (${claim.name})`)
+  }
+
+  /** The agent ended its session at the relay (its client sent DELETE). */
+  endRelay(relaySession: string): void {
+    const id = this.relaySessions.get(relaySession)
+    this.relayDenied.delete(relaySession)
+    if (id) this.close(id)
   }
 
   // ---------------------------------------------------------------------------
@@ -908,7 +1054,8 @@ export class AgentService implements SessionStore, McpHandlers {
       parked: false,
       releasedGroupIds: new Set(),
       claimId: null,
-      resumeFrom: init.resumeFrom ?? null
+      resumeFrom: init.resumeFrom ?? null,
+      remoteClientId: init.remoteClientId ?? null
     }
     this.sessions.set(id, session)
     this.diagnostics.sessions.created++
@@ -995,6 +1142,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.memos.delete(id)
     this.callStates.delete(id)
     for (const [key, sid] of this.sessionlessIds) if (sid === id) this.sessionlessIds.delete(key)
+    for (const [key, sid] of this.relaySessions) if (sid === id) this.relaySessions.delete(key)
     this.diagnostics.sessions.closed++
     this.log(`session ${id} closed (${s.name}, ${s.transport})`)
     this.browser.state.commitVolatile()
@@ -1336,6 +1484,10 @@ export class AgentService implements SessionStore, McpHandlers {
     this.log(`session ${s.id} initialize (${client.name} ${client.version}, ${s.transport})`)
     if (s.approved) return
     const settings = this.settings
+    if (s.transport === 'relay') {
+      await this.approveRelay(s)
+      return
+    }
     if (
       this.isValidToken(s.token) ||
       !settings.approveNewAgents ||
@@ -1396,13 +1548,49 @@ export class AgentService implements SessionStore, McpHandlers {
     }
   }
 
+  /**
+   * An agent of the Zenium account reaches this browser from anywhere, so it is always asked
+   * about – whatever "Ask before a new agent connects" says, and whatever name it gives – and
+   * the answer is kept by the OAuth client the relay verified, not by the name, which the
+   * agent chooses itself.
+   */
+  private async approveRelay(s: AgentSession): Promise<void> {
+    const settings = this.settings
+    const clientId = s.remoteClientId ?? ''
+    if (clientId && settings.remoteApprovedClients.includes(clientId)) {
+      s.approved = true
+      this.browser.state.commitVolatile()
+      this.announce(s)
+      return
+    }
+    s.pending = true
+    this.browser.state.commitVolatile()
+    const allowed = await this.askApproval(s)
+    s.pending = false
+    if (!allowed) {
+      this.browser.state.commitVolatile()
+      throw new RpcError(UNAUTHORIZED, `The user did not allow "${s.name}" to control this browser`)
+    }
+    s.approved = true
+    if (clientId && !settings.remoteApprovedClients.includes(clientId)) {
+      settings.remoteApprovedClients.push(clientId)
+      this.browser.state.commit()
+    }
+    this.browser.state.commitVolatile()
+    this.announce(s)
+  }
+
   /** One prompt per agent name, however many times the client retries while it is showing. */
   private askApproval(s: AgentSession): Promise<boolean> {
     const pending = this.pendingApprovals.get(s.name)
     if (pending) return pending
     const win = this.agentWindow()
     const where =
-      s.transport === 'stdio' ? 'on this computer' : `from ${describeRemote(s.remoteAddress)}`
+      s.transport === 'relay'
+        ? 'through your Zenium account (it may be running anywhere)'
+        : s.transport === 'stdio'
+          ? 'on this computer'
+          : `from ${describeRemote(s.remoteAddress)}`
     const p = this.browser.platform.dialogs
       .confirm(
         {
@@ -3627,6 +3815,10 @@ function hasPageToLoad(url: string | undefined): boolean {
 
 function isTruthy(v: string | null): boolean {
   return v !== null && /^(1|true|yes|on)$/i.test(v)
+}
+
+function isRequestLike(m: unknown): m is { id: string | number | null } {
+  return typeof m === 'object' && m !== null && 'id' in m
 }
 
 function describeRemote(address: string): string {

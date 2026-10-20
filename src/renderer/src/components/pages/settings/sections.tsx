@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { Check, CircleAlert, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  AgentRemoteStatus,
+  AgentSettings,
   AgentSkillStatus,
   AppLinkState,
   BookmarksBarMode,
@@ -4891,6 +4893,106 @@ function syncSection(ctx: SectionContext): RowGroup[] {
 // AI Agents
 // ---------------------------------------------------------------------------
 
+/** What the Zenium-account row says under its switch, for each state of the relay connection. */
+function remoteDescription(on: boolean, remote: AgentRemoteStatus, email: string | null): string {
+  if (!on)
+    return 'Off by default. Lets agents you sign in with your Zenium account drive this browser from anywhere, through Zenium’s relay. Each agent asks you once on this browser.'
+  switch (remote.state) {
+    case 'signed-out':
+      return 'Sign in to your Zenium account in Settings → Account to connect.'
+    case 'no-relay':
+      return 'No relay is available for this build yet: enter one under Relay address.'
+    case 'connecting':
+      return remote.error ? `Reconnecting… ${remote.error}` : 'Connecting…'
+    case 'connected':
+      return email ? `Connected as ${email}.` : 'Connected.'
+    case 'error':
+      return remote.error ?? 'Not connected.'
+    case 'off':
+      return 'Connecting…'
+  }
+}
+
+function remoteAgentsGroup(
+  a: AgentSettings,
+  remote: AgentRemoteStatus,
+  email: string | null,
+  setAgents: (patch: Partial<AgentSettings>) => void
+): RowGroup {
+  const rows: SettingsRow[] = [
+    {
+      kind: 'switch',
+      id: 'mcp-remote',
+      label: 'Agents from your Zenium account',
+      description: remoteDescription(a.remote, remote, email),
+      keywords: ['relay', 'remote', 'oauth', 'account', 'hosted'],
+      checked: a.remote,
+      onChange: (v) => setAgents({ remote: v })
+    }
+  ]
+  if (a.remote && remote.mcpUrl) {
+    const mcpUrl = remote.mcpUrl
+    rows.push({
+      kind: 'custom',
+      id: 'mcp-remote-url',
+      label: 'Endpoint for your agents',
+      description: 'Add it to any MCP client, then sign in with your Zenium account.',
+      keywords: [mcpUrl],
+      render: () => <CopyRow label="Endpoint for your agents" value={mcpUrl} />
+    })
+  }
+  if (a.remote)
+    rows.push(
+      {
+        kind: 'field',
+        id: 'mcp-relay-url',
+        label: 'Relay address',
+        description: 'Leave empty for Zenium’s own relay.',
+        value: a.relayUrl,
+        input: 'url',
+        form: 'stacked',
+        placeholder: 'https://',
+        onCommit: (value) => {
+          const url = value.trim()
+          if (url && !isRelayAddress(url))
+            return 'Enter an https:// address (http:// only for localhost)'
+          setAgents({ relayUrl: url })
+          return undefined
+        }
+      },
+      {
+        kind: 'action',
+        id: 'mcp-remote-forget',
+        label: 'Allowed agents',
+        description: a.remoteApprovedClients.length
+          ? `${a.remoteApprovedClients.length} agent${a.remoteApprovedClients.length === 1 ? '' : 's'} may connect without asking.`
+          : 'Every agent asks before it connects.',
+        button: 'Forget all',
+        disabled: a.remoteApprovedClients.length === 0,
+        onPress: () => setAgents({ remoteApprovedClients: [] })
+      }
+    )
+  return {
+    id: 'remote',
+    heading: 'Zenium account',
+    description:
+      'Agents in the cloud or on another computer can reach this browser through your Zenium account; your Essentials, pinned tabs and private windows stay off limits.',
+    rows
+  }
+}
+
+function isRelayAddress(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return (
+      u.protocol === 'https:' ||
+      (u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname))
+    )
+  } catch {
+    return false
+  }
+}
+
 function agentsSection({ state, set }: SectionContext): RowGroup[] {
   const a = state.settings.agents
   const server = state.agentServer
@@ -5007,6 +5109,19 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
   }
   if (state.capabilities.agentSkills) groups.push(agentSkillGroup(state.agentSkills))
   groups.push(
+    remoteAgentsGroup(
+      a,
+      // Older snapshots (and the tests' partial states) carry neither.
+      (server.remote as AgentRemoteStatus | undefined) ?? {
+        state: 'off',
+        mcpUrl: null,
+        error: null
+      },
+      (state.sync as typeof state.sync | undefined)?.account?.email ?? null,
+      setAgents
+    )
+  )
+  groups.push(
     {
       id: 'behaviour',
       heading: 'Behaviour',
@@ -5058,7 +5173,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
         item(
           `agent:${agent.id}`,
           agent.name,
-          `${agent.pending ? 'Awaiting approval · ' : ''}${agent.transport === 'stdio' ? 'stdio' : 'HTTP'} · ${agent.groupIds.length} group${agent.groupIds.length === 1 ? '' : 's'} · ${agent.tabIds.length} tab${agent.tabIds.length === 1 ? '' : 's'} · ${agent.calls} action${agent.calls === 1 ? '' : 's'} · active ${relativeTime(agent.lastActiveAt)}`,
+          `${agent.pending ? 'Awaiting approval · ' : ''}${agent.transport === 'stdio' ? 'stdio' : agent.transport === 'relay' ? 'Zenium account' : 'HTTP'} · ${agent.groupIds.length} group${agent.groupIds.length === 1 ? '' : 's'} · ${agent.tabIds.length} tab${agent.tabIds.length === 1 ? '' : 's'} · ${agent.calls} action${agent.calls === 1 ? '' : 's'} · active ${relativeTime(agent.lastActiveAt)}`,
           [
             choice({
               id: `agent:${agent.id}:mode`,
