@@ -263,6 +263,78 @@ describe('a named agent owns its groups until it ends its session', () => {
     expect(textOf(await fake.call(renewed, 'zen_status'))).toContain('your connection was renewed')
   })
 
+  it('a reconnect that lost its key gets its session back by starting under the same name – no new group', async () => {
+    const fake = browser()
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    const home = a.homeGroupId!
+    fake.service.close(a.id)
+    const groupsBefore = Object.keys(fake.model.folders).length
+
+    const a2 = await reconnect(fake)
+    const res = await fake.call(a2, 'zen_session', {
+      action: 'start',
+      name: 'invoice Reconciliation'
+    })
+    expect(res.isError, textOf(res)).toBeFalsy()
+    expect(textOf(res)).toContain('Welcome back')
+    expect(a2.name).toBe('Invoice reconciliation')
+    expect(a2.homeGroupId).toBe(home)
+    expect(fake.service.ownedTabs(a2).map((t) => t.id)).toEqual([tab])
+    // A new tab lands in the same group, not a fresh one.
+    const next = await openTab(fake, a2, 'https://billing.test/2')
+    expect(fake.model.tabs[next].folderId).toBe(home)
+    expect(Object.keys(fake.model.folders)).toHaveLength(groupsBefore)
+  })
+
+  it('the same name takes the session from a connection gone quiet, never from one in use', async () => {
+    const fake = browser()
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    const b = await reconnect(fake)
+    const busy = await fake.call(b, 'zen_session', {
+      action: 'start',
+      name: 'Invoice reconciliation'
+    })
+    expect(busy.isError).toBe(true)
+    expect(textOf(busy)).toContain('another agent already goes by')
+    expect(fake.service.ownedTabs(a).map((t) => t.id)).toEqual([tab])
+
+    // The old connection dropped without a DELETE: quiet past the limit, it is the stale end.
+    a.lastActiveAt = Date.now() - 2 * 60 * 1000
+    const back = await fake.call(b, 'zen_session', {
+      action: 'start',
+      name: 'Invoice reconciliation'
+    })
+    expect(textOf(back)).toContain('Welcome back')
+    expect(fake.service.ownedTabs(b).map((t) => t.id)).toEqual([tab])
+    expect(fake.service.ownedTabs(a)).toEqual([])
+    expect(textOf(await fake.call(a, 'zen_status'))).toContain(
+      'started again on another connection'
+    )
+  })
+
+  it('a client without the token cannot take an away session by its name', async () => {
+    const fake = browser({}, { approveNewAgents: false })
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    await openTab(fake, a, 'https://billing.test')
+    const home = a.homeGroupId!
+    fake.service.close(a.id)
+    const stranger = fake.service.create({
+      transport: 'http',
+      token: null,
+      remoteAddress: '192.168.1.20',
+      userAgent: 'test'
+    })
+    await fake.service.onInitialize(stranger, { name: CLIENT, version: '1' })
+    const res = await fake.call(stranger, 'zen_session', {
+      action: 'start',
+      name: 'Invoice reconciliation'
+    })
+    expect(res.isError).toBe(true)
+    expect(fake.service.heldBy(home)?.name).toBe('Invoice reconciliation')
+  })
+
   it('resuming on a second connection takes the session from the stale one, which is told', async () => {
     const fake = browser()
     const { s: a, key } = await named(fake, 'Invoice reconciliation')

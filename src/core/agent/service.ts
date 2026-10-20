@@ -163,6 +163,13 @@ export const AGENT_DIALOG_TTL_MS = 2 * 60 * 1000
  * Downloads puts it.
  */
 export const AGENT_PROMPT_TTL_MS = 2 * 60 * 1000
+/**
+ * A connection that carries a durable session but has made no call for this long is taken to be
+ * the stale end of a dropped one: an agent that starts again under the same name takes the
+ * session over (`reclaimable`). Longer than any one call runs (`CALL_DEADLINE_MS`) and than the
+ * stdio relay's ping, so a live agent is never mistaken for a gone one.
+ */
+const STALE_HOLDER_MS = 60_000
 /** A claim with no groups left and no client for this long is forgotten. */
 const EMPTY_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** What an agent may call before it has named itself (`zen_session start`). */
@@ -1104,7 +1111,7 @@ export class AgentService implements SessionStore, McpHandlers {
       )
     } else
       s.notices.push(
-        'Notice: your connection was resumed without an initialize – the browser restarted or your session had expired. If you started a session before, resume it: zen_session {"action":"resume","key":"…"} with the key zen_session start gave you – your groups and tabs were kept for you. Do not open their pages again.'
+        'Notice: your connection was resumed without an initialize – the browser restarted or your session had expired. If you started a session before, resume it: zen_session {"action":"resume","key":"…"} with the key zen_session start gave you, or without it zen_session {"action":"start"} under exactly the same name – your groups and tabs were kept for you. Do not open their pages again.'
       )
     this.diagnostics.sessions.resurrected++
     this.log(`session ${s.id} resumed without initialize (${s.name}, ${s.transport})`)
@@ -1320,16 +1327,25 @@ export class AgentService implements SessionStore, McpHandlers {
 
   /**
    * `zen_session start`: the agent names itself and gets a durable session – its groups held
-   * for it across reconnects until it ends the session. Throws with the reason when the name
+   * for it across reconnects until it ends the session. Starting again under the name of a
+   * session nobody is using (`reclaimable`) carries that session instead (`resumed`). Throws with the reason when the name
    * says nothing (`checkAgentName`) or the session already has one.
    */
-  startClaim(s: AgentSession, rawName: unknown): AgentClaim {
+  startClaim(s: AgentSession, rawName: unknown): { claim: AgentClaim; resumed: boolean } {
     const current = this.claims.get(s.claimId)
     if (current)
       throw new RpcError(
         -32602,
         `You already started your session as ${JSON.stringify(current.name)}. zen_session {"action":"rename","name":"…"} changes the name; zen_session {"action":"end"} ends it.`
       )
+    const back = this.reclaimable(s, rawName)
+    if (back) {
+      const holder = this.boundSession(back)
+      if (holder) this.unbindClaim(holder, 'started again on another connection under its name')
+      this.bindClaim(s, back)
+      this.log(`session ${s.id} took back durable session ${back.id} (${back.name}) by its name`)
+      return { claim: back, resumed: true }
+    }
     const verdict = checkAgentName(rawName, {
       clientName: s.client?.name ?? s.name,
       taken: this.takenNames(s)
@@ -1345,6 +1361,26 @@ export class AgentService implements SessionStore, McpHandlers {
     this.bindClaim(s, claim)
     this.diagnostics.sessions.claimed++
     this.log(`session ${s.id} started durable session ${claim.id} (${claim.name})`)
+    return { claim, resumed: false }
+  }
+
+  /**
+   * The durable session an agent gets back by starting again under its name: a reconnect that
+   * lost the key (a restarted client, a compacted context) used to find the name taken by its own
+   * away session and had to start a new one, with a new group beside the old. Only for a client
+   * that proves itself with the token, only by the exact name (case aside), and only while no
+   * live connection is using the session (none, parked, or quiet for `STALE_HOLDER_MS`).
+   */
+  private reclaimable(s: AgentSession, rawName: unknown): AgentClaim | undefined {
+    if (!this.isValidToken(s.token)) return undefined
+    const verdict = checkAgentName(rawName, { clientName: s.client?.name ?? s.name })
+    if (!verdict.ok) return undefined
+    const wanted = verdict.name.toLowerCase()
+    const claim = this.claims.all().find((c) => c.name.trim().toLowerCase() === wanted)
+    if (!claim) return undefined
+    const holder = this.boundSession(claim)
+    if (holder && !holder.parked && Date.now() - holder.lastActiveAt < STALE_HOLDER_MS)
+      return undefined
     return claim
   }
 
