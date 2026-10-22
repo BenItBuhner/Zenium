@@ -206,9 +206,12 @@ describe('the phone sheet', () => {
     expect(notes.textContent).toBe('NNotes')
     expect(notes.querySelector('.flex-1')?.textContent).toBe('Notes')
 
-    // The page's picture was asked for under the sheet, for the window's active tab.
-    expect(invoked.map((i) => i.channel)).toContain('overlay.snapshot')
-    expect(invoked.find((i) => i.channel === 'overlay.snapshot')?.args).toEqual({ tabId: 't1' })
+    // The page's picture was asked for under the sheet, for the window's active tab, once. (On
+    // the device the sheet's chassis asks too, as it presents – `coverPageUnderSheet` – and the
+    // two requests share one capture: `captureActiveTab` dedupes per tab.)
+    const captures = invoked.filter((i) => i.channel === 'overlay.snapshot')
+    expect(captures).toHaveLength(1)
+    expect(captures[0].args).toEqual({ tabId: 't1' })
   })
 
   it('opens shared text on the read-only header with Search as the house row', async () => {
