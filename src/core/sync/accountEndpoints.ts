@@ -17,6 +17,11 @@ export interface AccountEndpoints {
   siteUrl: string
   /** The accounts website: what a person signs in on (the new tab's origin). */
   websiteUrl: string
+  /**
+   * The hosted agent relay (`relay/`): where browsers connect and agents add `/mcp`. Null until
+   * it is deployed for this environment; Settings → AI Agents can name one meanwhile.
+   */
+  relayUrl: string | null
 }
 
 /** The two deployments. */
@@ -25,13 +30,15 @@ export const ACCOUNT_ENDPOINTS: Readonly<Record<AccountsEnv, AccountEndpoints>> 
     env: 'dev',
     cloudUrl: 'https://lovable-butterfly-908.convex.cloud',
     siteUrl: 'https://lovable-butterfly-908.convex.site',
-    websiteUrl: 'https://dev.zenium-accounts.pages.dev'
+    websiteUrl: 'https://dev.zenium-accounts.pages.dev',
+    relayUrl: null
   },
   prod: {
     env: 'prod',
     cloudUrl: 'https://small-camel-544.convex.cloud',
     siteUrl: 'https://small-camel-544.convex.site',
-    websiteUrl: 'https://zenium.techlitnow.com'
+    websiteUrl: 'https://zenium.techlitnow.com',
+    relayUrl: null
   }
 }
 
