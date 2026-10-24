@@ -208,6 +208,8 @@ export const COVER_REPORT_CEILING_MS = 500
 export class TabManager {
   private readonly views = new Map<string, TabView>()
   private readonly owners = new Map<string, ZenWindow>()
+  /** Most recently activated tabs, kept separately for each window and Space. */
+  private readonly recentTabsByWindowSpace = new Map<string, string[]>()
   /**
    * Reader covers (`cover`): a second live page over a tab's own, the `zen://reader` document,
    * while the page stays alive and unmoved beneath it (Chrome's immersive reading mode is the
@@ -2797,6 +2799,7 @@ export class TabManager {
     }
     const previousActive = this.tab(win.selectedTabIn(space))
     win.select(space, tab.id)
+    if (previousActive?.id !== tab.id) this.recordRecentlyUsedTab(tab.id, win, space.id)
     tab.lastActiveAt = Date.now()
     // In front now: whatever its page changed in the background has been seen (tabs-11).
     if (tab.attention) delete tab.attention
@@ -2864,6 +2867,7 @@ export class TabManager {
     } else {
       active.lastActiveAt = Date.now()
     }
+    if (active) this.recordRecentlyUsedTab(active.id, win, space.id)
     for (const id of this.visibleTabIds(win)) {
       this.ensureLoaded(id, win)
       this.claim(id, win)
@@ -4505,6 +4509,16 @@ export class TabManager {
   // Cycling
   // ---------------------------------------------------------------------------
 
+  private recentTabKey(windowId: string, spaceId: string): string {
+    return `${windowId}\u0000${spaceId}`
+  }
+
+  private recordRecentlyUsedTab(tabId: string, win: ZenWindow, spaceId: string): void {
+    const key = this.recentTabKey(win.id, spaceId)
+    const previous = this.recentTabsByWindowSpace.get(key) ?? []
+    this.recentTabsByWindowSpace.set(key, [tabId, ...previous.filter((id) => id !== tabId)])
+  }
+
   cycleTab(delta: number, win: ZenWindow): void {
     const space = win.activeSpace()
     let ordered = orderedTabsForSpace(
@@ -4518,6 +4532,27 @@ export class TabManager {
       ordered = ordered.filter(
         (t) => (t.essential || t.pinned) === (active.essential || active.pinned)
       )
+    }
+    if (this.settings.ctrlTabUsesRecentOrder && ordered.length > 1) {
+      const available = new Set(ordered.map((tab) => tab.id))
+      const key = this.recentTabKey(win.id, space.id)
+      let recent = this.recentTabsByWindowSpace.get(key) ?? []
+      if (recent.length === 0 && active) {
+        recent = [active.id, ...ordered.filter((tab) => tab.id !== active.id).map((tab) => tab.id)]
+        this.recentTabsByWindowSpace.set(key, recent)
+      }
+      let recentPair = recent.filter((id) => available.has(id)).slice(0, 2)
+      if (active && recentPair[0] !== active.id) {
+        this.recordRecentlyUsedTab(active.id, win, space.id)
+        recent = this.recentTabsByWindowSpace.get(key) ?? []
+        recentPair = recent.filter((id) => available.has(id)).slice(0, 2)
+      }
+      const index = active ? recentPair.indexOf(active.id) : -1
+      if (index !== -1 && recentPair.length === 2) {
+        const next = this.tab(recentPair[(index + delta + 2) % 2])
+        if (next) this.activateTab(next.id, win, { userSwitch: true })
+        return
+      }
     }
     if (ordered.length === 0) return
     const idx = active ? ordered.findIndex((t) => t.id === active.id) : -1
