@@ -3,6 +3,7 @@ import type {
   SyncAccountLink,
   SyncAccountLinkFailure,
   SyncDevice,
+  SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
   SyncSetupRefusal,
@@ -495,6 +496,29 @@ export class SyncEngine implements SyncHost {
     return this.webdavAvailable()
   }
 
+  /**
+   * The Zenium account's device access token, for the hosted agent relay
+   * (`AgentService` → `RelayConnector`); null while the browser is not signed in.
+   */
+  async accountAccessToken(): Promise<string | null> {
+    if (!this.data.account || !this.accountAvailable()) return null
+    const session = this.session()
+    if (session.signedOut) return null
+    try {
+      return await session.accessToken()
+    } catch {
+      return null
+    }
+  }
+
+  /** How this browser introduces itself to the agent relay: its sync device name and kind. */
+  accountDevice(): { name: string; kind: SyncDeviceKind } {
+    return {
+      name: this.data.deviceName || this.host.deviceNameDefault(),
+      kind: this.host.deviceKind?.() ?? 'desktop'
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Setup
   // ---------------------------------------------------------------------------
@@ -831,6 +855,7 @@ export class SyncEngine implements SyncHost {
     if (!(this.data.enabled && this.data.transport === 'account' && this.key)) {
       this.data.account = { email: grant.email }
       this.persist()
+      this.browser.agents.onAccountChanged()
       return
     }
     if (this.data.account?.email !== grant.email) {
@@ -862,6 +887,7 @@ export class SyncEngine implements SyncHost {
     this.lastError = null
     this.lastErrorKind = null
     this.persist()
+    this.browser.agents.onAccountChanged()
     await this.connect()
     await this.syncNow()
   }
@@ -900,6 +926,7 @@ export class SyncEngine implements SyncHost {
     const session = this.accountSession ?? (this.accountAvailable() ? this.newSession() : null)
     this.accountSession = null
     this.data.account = null
+    this.browser.agents.onAccountChanged()
     this.accountSignedOut = false
     const secrets = this.browser.platform.secrets
     void (async () => {

@@ -28,7 +28,7 @@ export interface AgentHttpResponse {
 }
 
 export interface SessionInit {
-  transport: 'http' | 'stdio'
+  transport: 'http' | 'stdio' | 'relay'
   /** Bearer token presented by the client (null when none). */
   token: string | null
   remoteAddress: string
@@ -38,6 +38,8 @@ export interface SessionInit {
    * agent's durable session carries over; trusted only with the token.
    */
   resumeFrom?: string | null
+  /** A relay session: the OAuth client id the relay verified (what an approval is kept by). */
+  remoteClientId?: string | null
 }
 
 export const RESUME_SESSION_HEADER = 'mcp-resume-session'

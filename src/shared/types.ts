@@ -4088,6 +4088,25 @@ export interface AgentSettings {
   allowScripts: boolean
   /** Draw the agent's cursor and name tag in the pages it drives. */
   showCursor: boolean
+  /**
+   * Let agents signed in to this browser's Zenium account drive it through the hosted relay
+   * (`relay/`): the browser keeps a connection open to it while this is on and the account is
+   * signed in. Independent of `enabled`, which is the local server.
+   */
+  remote: boolean
+  /** The relay's address (`https://…`); empty for the one this build is made for. */
+  relayUrl: string
+  /** OAuth client ids of the account's agents the user allowed on this browser. */
+  remoteApprovedClients: string[]
+}
+
+/** The hosted relay connection (Settings → AI Agents → Agents from your Zenium account). */
+export interface AgentRemoteStatus {
+  state: 'off' | 'signed-out' | 'no-relay' | 'connecting' | 'connected' | 'error'
+  /** The relay's MCP URL agents add, once known. */
+  mcpUrl: string | null
+  /** What went wrong, for `error` (and the last failure while `connecting` again). */
+  error: string | null
 }
 
 /** One connected agent (an MCP session). */
@@ -4098,7 +4117,8 @@ export interface AgentInfo {
   /** Accent colour used for its cursor and tab indicators. */
   color: string
   mode: AgentMode
-  transport: 'http' | 'stdio'
+  /** `relay`: an agent of the Zenium account, through the hosted relay. */
+  transport: 'http' | 'stdio' | 'relay'
   connectedAt: number
   lastActiveAt: number
   /** Tabs this agent drives (indicated in the sidebar): the members of its groups. */
@@ -4135,6 +4155,8 @@ export interface AgentServerStatus {
   /** Bearer token that lets an agent skip the approval prompt. */
   token: string
   error: string | null
+  /** The hosted relay connection, independent of the local server. */
+  remote: AgentRemoteStatus
 }
 
 /**
