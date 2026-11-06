@@ -62,6 +62,7 @@ interface Harness {
   active: () => string | null
   /** Activate a tab the way the user does (a click / Ctrl+Tab): a real switch. */
   select: (tabId: string) => void
+  cycle: (delta: number) => void
 }
 
 function harness(): Harness {
@@ -116,7 +117,8 @@ function harness(): Harness {
       ),
     order: () => regular().map((t) => t.id),
     active: () => win.selectedTabIn(win.activeSpace()),
-    select: (tabId) => browser.handleCommand(win, 'tab.activate', { tabId })
+    select: (tabId) => browser.handleCommand(win, 'tab.activate', { tabId }),
+    cycle: (delta) => browser.tabs.cycleTab(delta, win)
   }
 }
 
@@ -193,6 +195,35 @@ describe('opener group ordering (tabs-30)', () => {
       h.win
     )
     expect(label(h, { F: first.id, O: opener.id, P: plain.id })).toEqual(['F', 'O', 'P'])
+  })
+})
+
+describe('recently used Ctrl+Tab order', () => {
+  it('toggles between the two most recently active tabs, including a newly opened tab', () => {
+    const h = harness()
+    const a = h.open('https://a.test/')
+    const b = h.open('https://b.test/')
+
+    h.cycle(1)
+    expect(h.active()).toBe(a.id)
+    h.cycle(1)
+    expect(h.active()).toBe(b.id)
+
+    const c = h.open('https://c.test/')
+    h.cycle(1)
+    expect(h.active()).toBe(b.id)
+    h.cycle(1)
+    expect(h.active()).toBe(c.id)
+  })
+
+  it('uses sidebar order when the recently used option is disabled', () => {
+    const h = harness()
+    h.browser.updateSettings({ ctrlTabUsesRecentOrder: false }, h.win)
+    const a = h.open('https://a.test/')
+    h.open('https://b.test/')
+    h.open('https://c.test/')
+    h.cycle(1)
+    expect(h.active()).toBe(a.id)
   })
 })
 

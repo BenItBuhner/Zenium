@@ -3591,6 +3591,8 @@ export interface Settings {
   onboardingDone: boolean
   showTabSeparator: boolean
   ctrlTabCyclesWithinSection: boolean
+  /** Cycle Ctrl+Tab in most-recently-used order instead of the sidebar order. */
+  ctrlTabUsesRecentOrder: boolean
   spaceRouting: Record<string, string>
   /** Zen's window sync: mirror all tabs across windows, only pinned tabs, or keep windows independent. */
   windowSync: WindowSyncMode

@@ -313,6 +313,7 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingDone: false,
   showTabSeparator: true,
   ctrlTabCyclesWithinSection: false,
+  ctrlTabUsesRecentOrder: true,
   spaceRouting: {},
   windowSync: 'all',
   resources: structuredClone(DEFAULT_RESOURCE_SETTINGS),
