@@ -309,10 +309,15 @@ export class ElectronWindow implements WindowHost {
     // The mouse's back and forward buttons (Windows: WM_APPCOMMAND; Linux: buttons 8 and 9),
     // wherever in the window they are pressed, navigate the active tab like Chrome's do.
     win.on('app-command', (_e, command) => {
-      if (command === 'browser-backward')
-        browser.actions.run('nav.back', { sourceTabId: null, win: zen })
-      else if (command === 'browser-forward')
-        browser.actions.run('nav.forward', { sourceTabId: null, win: zen })
+      // On Linux Chromium already applies the side-button navigation to the hovered WebContents.
+      // Electron also emits app-command there, so forwarding it to the active tab navigates twice.
+      if (process.platform === 'linux') return
+
+      const action =
+        command === 'browser-backward' ? 'nav.back' : command === 'browser-forward' ? 'nav.forward' : null
+      if (!action) return
+
+      browser.actions.run(action, { sourceTabId: null, win: zen })
     })
     win.on('close', (event) => {
       // The caption button, Alt+F4 and the window manager arrive here first: the browser runs
