@@ -50,6 +50,25 @@ jobs:
       - run: npm run check
       - run: npm run web:build
 
+  relay:
+    name: Hosted agent relay
+    # Its own package (relay/package.json): the Cloudflare Worker agents reach through a Zenium
+    # account. Typecheck and unit tests; the end-to-end test needs a running relay.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
   bundle-windows:
     name: Bundle on a case-insensitive filesystem
     # Linux resolves `./Departures` and `./departures` to different files; Windows and macOS do

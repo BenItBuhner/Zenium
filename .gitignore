@@ -28,3 +28,7 @@ android/.kotlin
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+# The hosted agent relay's local state and secrets (`wrangler dev`).
+relay/.wrangler
+relay/.dev.vars

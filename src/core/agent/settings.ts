@@ -26,6 +26,27 @@ export function sanitizeAgentSettings(
       : [],
     defaultMode: mode,
     allowScripts: typeof r.allowScripts === 'boolean' ? r.allowScripts : d.allowScripts,
-    showCursor: typeof r.showCursor === 'boolean' ? r.showCursor : d.showCursor
+    showCursor: typeof r.showCursor === 'boolean' ? r.showCursor : d.showCursor,
+    remote: typeof r.remote === 'boolean' ? r.remote : d.remote,
+    relayUrl:
+      typeof r.relayUrl === 'string' && isRelayUrl(r.relayUrl.trim()) ? r.relayUrl.trim() : '',
+    remoteApprovedClients: Array.isArray(r.remoteApprovedClients)
+      ? [
+          ...new Set(
+            r.remoteApprovedClients.filter((n) => typeof n === 'string' && n.trim().length > 0)
+          )
+        ].slice(0, 200)
+      : []
+  }
+}
+
+/** An `https://` address (or `http://` on the loopback, for a relay run with `wrangler dev`). */
+export function isRelayUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.protocol === 'https:') return true
+    return u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)
+  } catch {
+    return false
   }
 }

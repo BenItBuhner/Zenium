@@ -13,6 +13,8 @@ export default defineConfig(
       '**/out',
       // The accounts backend and website: their own package and ESLint config (backend/eslint.config.mjs).
       'backend/**',
+      // The hosted agent relay (a Cloudflare Worker): its own package, checked by its own tsc.
+      'relay/**',
       'android/**/build',
       'android/.gradle',
       'android/app/src/main/assets',

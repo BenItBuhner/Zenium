@@ -49,11 +49,21 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   approvedNames: [],
   defaultMode: 'background',
   allowScripts: false,
-  showCursor: true
+  showCursor: true,
+  remote: false,
+  relayUrl: '',
+  remoteApprovedClients: []
 }
 
 export function emptyAgentServerStatus(): AgentServerStatus {
-  return { running: false, url: null, lanUrls: [], token: '', error: null }
+  return {
+    running: false,
+    url: null,
+    lanUrls: [],
+    token: '',
+    error: null,
+    remote: { state: 'off', mcpUrl: null, error: null }
+  }
 }
 
 /** No harness looked for yet (and a host without an installer, for good). */

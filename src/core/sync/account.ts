@@ -379,6 +379,14 @@ export class AccountSession {
     return this.call('query', path, args)
   }
 
+  /**
+   * A current access token, refreshed first when it is near its end – what the hosted agent
+   * relay checks a browser by. Rejects once the sign-in has ended.
+   */
+  accessToken(): Promise<string> {
+    return this.token()
+  }
+
   mutation(path: string, args: Record<string, unknown> = {}): Promise<unknown> {
     return this.call('mutation', path, args)
   }
