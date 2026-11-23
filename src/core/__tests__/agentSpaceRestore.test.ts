@@ -144,7 +144,7 @@ function agentWith(
   // Approved, as a working agent is: the idle sweep parks an approved record and closes an
   // unapproved one.
   session.approved = true
-  const space = browser.agents.createOwnSpace(session, { name: 'Agent' })
+  const space = browser.agents.agentsSpace()
   const group = browser.agents.groupIn(session, space.id)
   const tabIds = tabs.map(
     (url) =>
@@ -221,12 +221,9 @@ describe('an empty agents’ space never stays the window’s active space (W7-F
       const user = m.spaces[0]
       seedTab(browser, 'https://example.com/a')
       const agents = agentsSpace(browser)
-      const own = createSpace('Agent', '', user.containerId)
-      own.agent = { kind: 'own', name: 'Agent', createdAt: 1 }
-      m.spaces.push(own)
       browser.state.restoredWindows = [
         window('window_1', agents.id, null, 'space_gone'),
-        window('window_2', agents.id, null, own.id)
+        window('window_2', agents.id, null, agents.id)
       ]
       browser.state.repair()
       for (const w of browser.state.restoredWindows) {
@@ -423,15 +420,15 @@ describe('an empty agents’ space never stays the window’s active space (W7-F
       const user = createSpace('Home', '', 'default')
       const agents = createSpace('Agents', '', 'default')
       agents.agent = { kind: 'shared' }
-      const busy = createSpace('Agent', '', 'default')
-      busy.agent = { kind: 'own', name: 'Agent', createdAt: 1 }
+      const busy = createSpace('Agents', '', 'default')
+      busy.agent = { kind: 'shared' }
       busy.tabIds.push('tab_1')
-      const spaces = [user, agents, busy]
+      const spaces = [user, agents]
       expect(userSpaceInstead(spaces, user.id, null)).toBe(user.id)
-      expect(userSpaceInstead(spaces, busy.id, user.id)).toBe(busy.id)
+      expect(userSpaceInstead([user, busy], busy.id, user.id)).toBe(busy.id)
       expect(userSpaceInstead(spaces, 'space_gone', user.id)).toBe('space_gone')
       expect(userSpaceInstead(spaces, agents.id, null)).toBe(user.id)
-      expect(userSpaceInstead(spaces, agents.id, busy.id)).toBe(user.id)
+      expect(userSpaceInstead(spaces, agents.id, agents.id)).toBe(user.id)
       expect(userSpaceInstead([agents], agents.id, user.id)).toBe(agents.id)
     })
   })

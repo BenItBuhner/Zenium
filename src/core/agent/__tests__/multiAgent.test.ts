@@ -175,7 +175,7 @@ describe('sessions own tab groups', () => {
     expect(ids).toContain(own)
   })
 
-  it("opening in the user's space is a foreign act; own spaces and groups are the agent's", async () => {
+  it("opening in the user's space is a foreign act; groups in the Agents space are the agent's", async () => {
     const fake = fakeBrowser()
     const A = await fake.connect('A')
     const refused = await fake.call(A, 'browser_tabs', {
@@ -199,13 +199,12 @@ describe('sessions own tab groups', () => {
 
     const created = await fake.call(A, 'zen_groups', {
       action: 'create',
-      name: 'Research',
-      space: 'own'
+      name: 'Research'
     })
     const gid = fake.createdGroup(created)
     const group = fake.model.folders[gid]
     const ownSpace = fake.model.spaces.find((sp) => sp.id === group.spaceId)!
-    expect(ownSpace.name).toBe('A')
+    expect(ownSpace.name).toBe('Agents')
     expect(fake.service.isAgentSpace(ownSpace.id)).toBe(true)
     expect(fake.win.activeSpaceId).toBe(fake.userSpace.id) // not switched
     const inGroup = fake.openedTab(

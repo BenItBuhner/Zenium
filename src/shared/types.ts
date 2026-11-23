@@ -956,11 +956,12 @@ export interface FolderAgentMark {
 }
 
 /**
- * The mark a space of the agents' carries (`Space.agent`): the one shared `Agents` space every
- * agent's home group is made in (`shared`), or a space one agent made for itself (`own`, with
- * that session's display name at the time and when).
+ * The mark the agents' space carries (`Space.agent`): the one shared `Agents` space every
+ * agent's folders are made in. Agents have no spaces of their own – each works in its folders
+ * there, isolated from the user's spaces; builds before that also wrote an `own` mark, which
+ * `AgentService.foldOwnSpaces` folds into the shared space once.
  */
-export type SpaceAgentMark = { kind: 'shared' } | { kind: 'own'; name: string; createdAt: number }
+export type SpaceAgentMark = { kind: 'shared' }
 
 export interface Folder {
   id: string
@@ -1007,9 +1008,8 @@ export interface Space {
   windowId?: string
   /**
    * The space is the agents' (S3 of the MCP program): the shared `Agents` space, found by this
-   * mark and never by its name – a space the user calls "Agents" is theirs – or a space one
-   * agent made for itself. Stamped by the agent service when it makes the space; read by it
-   * alone. Additive: a space without it is the user's. Travels with the space's sync record
+   * mark and never by its name – a space the user calls "Agents" is theirs. Stamped by the
+   * agent service when it makes the space; read by it alone. Additive: a space without it is the user's. Travels with the space's sync record
    * when set.
    */
   agent?: SpaceAgentMark | null

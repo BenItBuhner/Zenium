@@ -189,16 +189,8 @@ export function readFolderAgentMark(data: unknown): FolderAgentMark | undefined 
 export function readSpaceAgentMark(data: unknown): SpaceAgentMark | undefined {
   const raw = (data as { agent?: unknown } | null)?.agent
   if (!raw || typeof raw !== 'object') return undefined
-  const mark = raw as { kind?: unknown; name?: unknown; createdAt?: unknown }
-  if (mark.kind === 'shared') return { kind: 'shared' }
-  if (
-    mark.kind === 'own' &&
-    typeof mark.name === 'string' &&
-    typeof mark.createdAt === 'number' &&
-    Number.isFinite(mark.createdAt)
-  )
-    return { kind: 'own', name: mark.name, createdAt: mark.createdAt }
-  return undefined
+  // An older peer's `own` mark (a space one agent made for itself) is no mark any more.
+  return (raw as { kind?: unknown }).kind === 'shared' ? { kind: 'shared' } : undefined
 }
 
 export interface TabData {

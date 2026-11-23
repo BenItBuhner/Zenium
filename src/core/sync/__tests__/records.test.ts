@@ -168,9 +168,7 @@ describe('collectLocal', () => {
     const before = hashData(collectLocal(src, defaultScope()).get(src.ids.space.id)!.data)
     const shared = createSpace('Agents', '', 'work')
     shared.agent = { kind: 'shared' }
-    const own = createSpace('Research bot', '', 'work')
-    own.agent = { kind: 'own', name: 'Research bot', createdAt: 1_000 }
-    src.model.spaces.push(shared, own)
+    src.model.spaces.push(shared)
     const group = createFolder(src.model, shared.id, 'A · 3f9a', '')
     group.agent = { name: 'A', createdAt: 2_000 }
     const plain = createFolder(src.model, src.ids.space.id, 'Docs', '')
@@ -182,9 +180,6 @@ describe('collectLocal', () => {
       name: 'Agents',
       agent: { kind: 'shared' }
     })
-    expect(records.get(own.id)?.data).toMatchObject({
-      agent: { kind: 'own', name: 'Research bot', createdAt: 1_000 }
-    })
     expect(records.get(group.id)?.data).toEqual({
       spaceId: shared.id,
       name: 'A · 3f9a',
@@ -193,7 +188,11 @@ describe('collectLocal', () => {
       agent: { name: 'A', createdAt: 2_000 }
     })
     // The readers take a well-formed mark off a record and nothing else.
-    expect(readSpaceAgentMark(records.get(own.id)?.data)).toEqual(own.agent)
+    expect(readSpaceAgentMark(records.get(shared.id)?.data)).toEqual(shared.agent)
+    // An older peer's `own` mark (a space one agent made for itself) is no mark any more.
+    expect(
+      readSpaceAgentMark({ agent: { kind: 'own', name: 'Research bot', createdAt: 1_000 } })
+    ).toBeUndefined()
     expect(readSpaceAgentMark({ agent: { kind: 'shared', stray: true } })).toEqual({
       kind: 'shared'
     })

@@ -161,9 +161,8 @@ export function allSpaces(model: Model): Space[] {
 }
 
 /**
- * Whether the space is agents' territory by its persisted mark – the shared Agents space or one
- * an agent made for itself (`Space.agent`). The mark is the truth that outlives a run; the
- * agent service's `isAgentSpace` adds the spaces made this run, which carry the mark too.
+ * Whether the space is agents' territory by its persisted mark – the shared Agents space
+ * (`Space.agent`), the one space agents work in.
  */
 export function agentOwnedSpace(space: Pick<Space, 'agent'>): boolean {
   return Boolean(space.agent)

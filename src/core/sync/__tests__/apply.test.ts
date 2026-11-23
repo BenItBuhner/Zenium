@@ -909,11 +909,8 @@ describe("applyRemote: the agents' mark on space and folder records", () => {
     ])
     const m = b.state.model
     expect(m.spaces.find((s) => s.id === 'space_shared')?.agent).toEqual({ kind: 'shared' })
-    expect(m.spaces.find((s) => s.id === 'space_own')?.agent).toEqual({
-      kind: 'own',
-      name: 'Research bot',
-      createdAt: 7
-    })
+    // An older peer's `own` mark is none any more: the space lands as a plain one.
+    expect(m.spaces.find((s) => s.id === 'space_own')?.agent).toBeFalsy()
     expect(m.folders.folder_a.agent).toEqual({ name: 'A', createdAt: 5 })
     // The user's folder in the shared space lands as it came: no mark.
     expect(m.folders.folder_mine).not.toHaveProperty('agent')

@@ -26,6 +26,7 @@ import {
   createFolder,
   createSpace,
   folderTabs,
+  insertTabIntoSpace,
   nextFolderColor,
   regularTabs,
   sectionIndexOf
@@ -378,8 +379,6 @@ export class AgentService implements SessionStore, McpHandlers {
   private readonly knownClients = new Map<string, KnownClient>()
   /** Counters and timings about the server itself (`zenium://diagnostics`). */
   readonly diagnostics = new Diagnostics()
-  /** Spaces agents made for themselves (`zen_groups create {space: "own"}`, `zen_spaces create`). */
-  private readonly agentSpaceIds = new Set<string>()
   /** Durable sessions (`zen_session start`), persisted in the profile. */
   readonly claims: ClaimStore
   /** Page dialogs of agents' tabs waiting for their agent, by tab id. */
@@ -1841,6 +1840,11 @@ export class AgentService implements SessionStore, McpHandlers {
    * shared space is marked there is nothing left to upgrade, so a second run changes nothing.
    */
   private upgradeMarks(): void {
+    this.stampLegacyAgentsSpace()
+    this.foldOwnSpaces()
+  }
+
+  private stampLegacyAgentsSpace(): void {
     const m = this.browser.state.model
     if (this.findAgentsSpace()) return
     const legacy = m.spaces.find(
@@ -1853,6 +1857,38 @@ export class AgentService implements SessionStore, McpHandlers {
     for (const f of Object.values(m.folders))
       if (f.spaceId === legacy.id && !f.agent)
         f.agent = { name: legacyGroupOwner(f.name), createdAt: now }
+    this.browser.state.commit()
+  }
+
+  /**
+   * Builds before agents worked in folders alone let one make a space of its own (marked
+   * `own`). Each such space folds into the shared Agents space once: its folders and tabs move
+   * there in order, keeping their owners' marks, and the emptied space goes. The user's window
+   * on it falls back as on any deleted space. With no shared space yet, the first becomes it.
+   */
+  private foldOwnSpaces(): void {
+    const m = this.browser.state.model
+    const own = m.spaces.filter(
+      (sp) => (sp.agent as { kind?: unknown } | null | undefined)?.kind === 'own'
+    )
+    if (!own.length) return
+    let shared = this.findAgentsSpace()
+    if (!shared) {
+      shared = own.shift()!
+      shared.agent = { kind: 'shared' }
+      shared.name = AGENTS_SPACE_NAME
+      shared.icon = AGENTS_SPACE_ICON
+    }
+    for (const space of own) {
+      for (const f of Object.values(m.folders)) if (f.spaceId === space.id) f.spaceId = shared.id
+      for (const id of [...space.tabIds]) {
+        const tab = m.tabs[id]
+        if (tab) insertTabIntoSpace(m, shared, tab)
+      }
+      space.tabIds = []
+      space.agent = null
+      this.browser.removeSpace(space.id)
+    }
     this.browser.state.commit()
   }
 
@@ -1880,35 +1916,8 @@ export class AgentService implements SessionStore, McpHandlers {
     return folder
   }
 
-  /**
-   * A space of the agent's own (`zen_groups create {space: "own"}`, `zen_spaces create`), named
-   * after the agent unless told otherwise and marked `own` with the agent's name; the user's
-   * window is not switched to it.
-   */
-  createOwnSpace(s: AgentSession, opts: { name?: string; icon?: string } = {}): Space {
-    const m = this.browser.state.model
-    const taken = new Set(m.spaces.map((sp) => sp.name))
-    let name = opts.name?.trim() || s.name
-    if (taken.has(name)) name = `${name} · ${s.id.slice(-4)}`
-    const space = createSpace(
-      name,
-      opts.icon?.trim() || AGENTS_SPACE_ICON,
-      this.agentWindow().activeSpace().containerId
-    )
-    space.agent = { kind: 'own', name: s.name, createdAt: Date.now() }
-    m.spaces.push(space)
-    this.agentSpaceIds.add(space.id)
-    this.browser.state.commit()
-    return space
-  }
-
-  /**
-   * Whether the space is agents' territory: marked – the shared Agents space or one an agent
-   * made, this run or before – or made by an agent this run (the in-memory set, kept as the
-   * belt to the mark's braces).
-   */
+  /** Whether the space is agents' territory: the shared Agents space, by its mark. */
   isAgentSpace(spaceId: string): boolean {
-    if (this.agentSpaceIds.has(spaceId)) return true
     return Boolean(this.browser.state.model.spaces.find((sp) => sp.id === spaceId)?.agent)
   }
 

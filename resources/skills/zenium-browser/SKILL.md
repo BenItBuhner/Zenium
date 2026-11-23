@@ -85,7 +85,7 @@ Your session.
 Your tab groups (Zenium tab folders).
 
 - `{"action":"list"}` - your groups with their tabs; `"scope":"all"` lists every agent group with its tabs and its owner (`[yours]`, `[owned by "<name>"]`, `[owned by "<name>", away - kept for it]` for a named agent that is not connected right now, or `[orphaned, was "<name>"]` for a group whose agent ended its session and left it), then the user's folders as headers only (name, id, tab count - theirs, not yours to use).
-- `{"action":"create","name":"<task>"}` - a new group in the shared Agents space; returns `groupId`. `"space":"own"` creates a private space named after you; `"space":"<spaceId>"` (id or name) uses an existing space: the Agents space or a space an agent made needs nothing, the user's spaces need `allowForeign: true`.
+- `{"action":"create","name":"<task>"}` - a new group in the shared Agents space; returns `groupId`. `"space":"<spaceId>"` (id or name) uses an existing space: the Agents space needs nothing, the user's spaces need `allowForeign: true`. Agents do not get spaces of their own.
 - `{"action":"rename","groupId":"folder_...","name":"..."}`
 - `{"action":"close","groupId":"folder_..."}` - closes every tab in it and removes the folder. Own groups only.
 - `{"action":"adopt","groupId":"folder_..."}` - take over an orphaned group (its agent ended its session and left it), only when you are continuing that work. `{"action":"adopt"}` without `groupId` takes back every orphaned group a session with your name left. A named agent's groups are never adoptable, not while it is away and not with `force`; your own groups after a reconnect come back with `zen_session resume`, not `adopt`.
@@ -96,7 +96,7 @@ Your tab groups (Zenium tab folders).
 
 Zenium spaces (workspaces).
 
-- `{"action":"list"}`, `{"action":"create","name":"...","icon":"..."}`.
+- `{"action":"list"}`. Agents do not create spaces: make a group with `zen_groups create` instead.
 - `{"action":"switch","spaceId":"..."}` changes what the user sees; it needs foreground mode with the screen taken (`zen_mode {"mode":"foreground","takeScreen":true}`) and the screen lease, and is refused in background mode, without the screen, or while another agent holds it (active within 20 s).
 - Example: `zen_spaces {"action":"list"}`
 - Pitfall: you rarely need this. Your groups already keep your tabs apart from the user's. Do not switch the user's space to look at your own tabs; snapshots work on background tabs.
