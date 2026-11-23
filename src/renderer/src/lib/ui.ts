@@ -406,6 +406,8 @@ export interface UiState {
   compactHover: boolean
   /** The hidden top toolbar (compact mode, fullscreen) is out over a picture of the page. */
   toolbarHover: boolean
+  /** A Windows browser window's hidden caption buttons are out over a picture of the page. */
+  captionHover: boolean
   /**
    * The collapsed rail's flyout (tabs-03, `useRailFlyout`) is out over a picture of the page:
    * from the capture that stands in for the page until the fold back to the rail rests.
@@ -769,6 +771,7 @@ export const uiStore = createStore<UiState>(
     drag: null,
     compactHover: false,
     toolbarHover: false,
+    captionHover: false,
     railFlyout: false,
     renamingTabId: null,
     renamingFolderId: null,
@@ -1540,6 +1543,7 @@ export function invalidateSnapshot(): void {
     !ui.drag &&
     !ui.compactHover &&
     !ui.toolbarHover &&
+    !ui.captionHover &&
     !ui.railFlyout &&
     !ui.drawerOpen &&
     !ui.menu &&
@@ -1692,6 +1696,7 @@ export function pageHidden(ui: UiState): boolean {
     overlayCoversContent(ui) ||
     ui.compactHover ||
     ui.toolbarHover ||
+    ui.captionHover ||
     ui.railFlyout ||
     ui.frameDialogCover > 0
   )
@@ -3240,6 +3245,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // reduced check needs no clearing of them either.
       ui.compactHover ||
       ui.toolbarHover ||
+      ui.captionHover ||
       // "Hold ⌘Q to quit" over a hung page's picture (session-08, `lib/quitHoldCover.ts`): the
       // chrome's twin of the notice, a status block with no scrim as the page-drawn one has
       // none – the page under the notice looks as it did.

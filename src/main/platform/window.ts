@@ -77,9 +77,14 @@ const COMPACT_REVEAL_ZONE = 14
 const TOOLBAR_REVEAL_ZONE = 4
 /** How far below the top edge the cursor may roam before a revealed toolbar is asked to go. */
 const TOOLBAR_KEEP_ZONE = 120
+/** How far below the top edge the cursor may roam before the revealed window buttons go. */
+const CAPTION_KEEP_ZONE = 72
 /**
  * Windows 11 draws the caption buttons itself (Window Controls Overlay), which is what gives the
  * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
+ * A browser window (`WindowChrome` `full`) on Windows has no overlay: the OS will not shrink or
+ * hide its buttons, which would hold a dead band across the top, so the chrome draws its own and
+ * slides them out from the top edge (`revealsCaption`). Popups and app windows keep the overlay.
  */
 const CAPTION_OVERLAY = process.platform === 'win32'
 /**
@@ -107,12 +112,18 @@ export class ElectronWindow implements WindowHost {
    * held) are refused here, and the hidden strips never come back on the cursor's edge.
    */
   readonly kiosk: boolean
-  /** The OS draws this window's frame (`WindowChrome` `page`): no caption overlay to recolour. */
-  private readonly framed: boolean
+  /** Windows draws this window's caption buttons (Window Controls Overlay). */
+  private readonly nativeCaption: boolean
+  /**
+   * A Windows browser window: the chrome draws its own caption buttons and hides them until the
+   * cursor touches the top edge (the `caption` reveal), instead of a band kept for the overlay.
+   */
+  private readonly revealsCaption: boolean
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private readonly sidebarEdge = new EdgeTracker()
   private readonly toolbarEdge = new EdgeTracker()
+  private readonly captionEdge = new EdgeTracker()
   private readonly titles: TitleThrottle
   private captionColors: CaptionColors
   private popup: WebContentsView | null = null
@@ -136,7 +147,8 @@ export class ElectronWindow implements WindowHost {
     // A page's utility window (the task manager) keeps the OS frame: its title bar and caption
     // buttons are the system's, and the chrome draws the page alone inside them.
     const framed = init.chrome === 'page'
-    this.framed = framed
+    this.nativeCaption = CAPTION_OVERLAY && !framed && init.chrome !== 'full'
+    this.revealsCaption = CAPTION_OVERLAY && !framed && init.chrome === 'full'
     let initial = init.bounds
     let displayId = init.displayId
     let anchor: Rect | null = null
@@ -199,14 +211,13 @@ export class ElectronWindow implements WindowHost {
       // window's 40px toolbar row (and an app window's title row) is centred at 20. A framed
       // window's lights sit where the system puts them.
       trafficLightPosition: isMac && !framed ? { x: 14, y: compactChrome ? 14 : 16 } : undefined,
-      titleBarOverlay:
-        CAPTION_OVERLAY && !framed
-          ? {
-              color: init.captionColors.color,
-              symbolColor: init.captionColors.symbolColor,
-              height: CAPTION_HEIGHT
-            }
-          : undefined,
+      titleBarOverlay: this.nativeCaption
+        ? {
+            color: init.captionColors.color,
+            symbolColor: init.captionColors.symbolColor,
+            height: CAPTION_HEIGHT
+          }
+        : undefined,
       // A material window paints its web contents on a see-through background (no
       // `transparent`, which would cost the resize border); the chrome leaves the material
       // visible through its gradient.
@@ -631,7 +642,7 @@ export class ElectronWindow implements WindowHost {
   }
 
   setCaptionColors(colors: CaptionColors): void {
-    if (!CAPTION_OVERLAY || this.framed || !this.alive) return
+    if (!this.nativeCaption || !this.alive) return
     const current = this.captionColors
     if (colors.color === current.color && colors.symbolColor === current.symbolColor) return
     this.captionColors = colors
@@ -777,12 +788,23 @@ export class ElectronWindow implements WindowHost {
     const toolbarHidden =
       hasTopToolbar(state.settings.toolbarLayout) &&
       (fullscreen || (zen.compactEnabled && cm.hideToolbar))
-    if (zen.htmlFullscreenTabId || (!sidebarHidden && !toolbarHidden)) {
+    // The layouts with a top row (the toolbar, the horizontal strip) carry the window buttons in
+    // it; the others keep them hidden until the cursor touches the top edge.
+    const captionHidden =
+      this.revealsCaption && !fullscreen && !hasTopToolbar(state.settings.toolbarLayout)
+    if (zen.htmlFullscreenTabId || (!sidebarHidden && !toolbarHidden && !captionHidden)) {
       this.sidebarEdge.reset()
       this.toolbarEdge.reset()
+      this.captionEdge.reset()
       return
     }
-    if (!this.win.isFocused() && !zen.compactSidebarRevealed && !zen.compactToolbarRevealed) return
+    if (
+      !this.win.isFocused() &&
+      !zen.compactSidebarRevealed &&
+      !zen.compactToolbarRevealed &&
+      !zen.captionRevealed
+    )
+      return
     const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
     if (sidebarHidden) {
@@ -813,6 +835,13 @@ export class ElectronWindow implements WindowHost {
       if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'toolbar' })
     } else {
       this.toolbarEdge.reset()
+    }
+    if (captionHidden) {
+      const zone: EdgeZone = { edge: 'top', reveal: TOOLBAR_REVEAL_ZONE, keep: CAPTION_KEEP_ZONE }
+      const send = this.captionEdge.sample(edgeState(cursor, bounds, zone), zen.captionRevealed)
+      if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'caption' })
+    } else {
+      this.captionEdge.reset()
     }
   }
 }

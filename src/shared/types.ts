@@ -6171,7 +6171,10 @@ export interface Commands {
 
   'compact.toggle': { args: void; result: void }
   /** The chrome's word on a hidden piece it shows or put away (the sidebar unless `edge` says). */
-  'compact.setRevealed': { args: { revealed: boolean; edge?: 'sidebar' | 'toolbar' }; result: void }
+  'compact.setRevealed': {
+    args: { revealed: boolean; edge?: 'sidebar' | 'toolbar' | 'caption' }
+    result: void
+  }
   'compact.toggleSidebarPersistent': { args: void; result: void }
   'compact.setOptions': {
     args: Partial<Pick<CompactModeSettings, 'hideSidebar' | 'hideToolbar'>>
@@ -7973,7 +7976,7 @@ export interface Events {
    * The cursor reached (or left) the edge of a hidden piece of chrome: the sidebar's side in
    * compact mode, the top edge for the toolbar; both while the window is fullscreen.
    */
-  'compact.reveal': { revealed: boolean; edge: 'sidebar' | 'toolbar' }
+  'compact.reveal': { revealed: boolean; edge: 'sidebar' | 'toolbar' | 'caption' }
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }

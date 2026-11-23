@@ -3943,6 +3943,10 @@ export class Browser {
           win.compactToolbarRevealed = revealed
           return
         }
+        if (edge === 'caption') {
+          win.captionRevealed = revealed
+          return
+        }
         if (win.compactSidebarRevealed === revealed) return
         win.compactSidebarRevealed = revealed
         state.commitVolatile()

@@ -2,11 +2,13 @@ import type { JSX } from 'react'
 import { Minus, Square, X, Copy } from 'lucide-react'
 import { run } from '@renderer/lib/api'
 import { useBrowser } from '@renderer/lib/ui'
+import { nativeCaption } from '@renderer/lib/caption'
 import { TOOLBAR_STROKE } from './v2/controls'
 
 /**
- * Linux window buttons. macOS uses native traffic lights; Windows draws its own over the chrome
- * (Window Controls Overlay); mobile hosts have none. Three §9.3 toolbar icon buttons in the
+ * Zenium's window buttons: Linux, and a Windows browser window (`ownCaption`). macOS uses native
+ * traffic lights; Windows popups and app windows get the OS's own over the chrome (Window
+ * Controls Overlay, `nativeCaption`); mobile hosts have none. Three §9.3 toolbar icon buttons in the
  * window family (design language v2 §9.29): the 28 box, a 16 glyph at `TOOLBAR_STROKE`, the
  * window's hover fill on each – Close included, as the GTK title bars they stand in for draw it;
  * a danger fill would be a page colour on the window, and status colours are ink alone (§9.29).
@@ -17,7 +19,7 @@ import { TOOLBAR_STROKE } from './v2/controls'
 export function WindowControls({ compact = false }: { compact?: boolean }): JSX.Element | null {
   const state = useBrowser()
   if (state.platform === 'darwin' || state.window.fullscreen) return null
-  if (!state.capabilities.windowControls || state.capabilities.windowControlsOverlay) return null
+  if (!state.capabilities.windowControls || nativeCaption(state)) return null
   if (compact) {
     return (
       <div className="zen-no-drag flex items-center">
