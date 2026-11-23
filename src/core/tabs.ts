@@ -315,7 +315,7 @@ export class TabManager {
   private readonly closingFolders = new Set<string>()
   /**
    * Where the next close's "Recently closed" entry goes instead of the session's list: set for
-   * the span of `archiveTab`, whose close files the entry in the inactive-tabs archive (TAB-20).
+   * the span of `archiveTab`, whose caller takes the entry instead.
    */
   private divertClosed: ((entry: ClosedTabEntry) => void) | null = null
   /**
@@ -2991,9 +2991,9 @@ export class TabManager {
   }
 
   /**
-   * Close `tabId` the way the inactive-tabs pass does (TAB-20): the tab leaves the grid exactly
-   * as a close does – document gone, navigation stack kept – but its entry comes back to the
-   * caller for the archive instead of joining "Recently closed". Null when the close produced no
+   * Close `tabId` without a "Recently closed" entry: the tab leaves exactly as a close does –
+   * document gone, navigation stack kept – but its entry comes back to the caller instead of
+   * joining the list. Null when the close produced no
    * entry (a never-visited blank tab, a private tab, a pinned tab held by `pinnedCloseBehavior`),
    * in which case the tab is simply closed or left as it was.
    */

@@ -36,7 +36,6 @@ import { FaviconService } from './favicons'
 import { HistoryService } from './history'
 import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
-import { InactiveTabsService, sanitizeArchiveDays } from './inactiveTabs'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
@@ -315,8 +314,6 @@ export class Browser {
   readonly pages: PageService
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
-  /** Inactive tabs (TAB-20): the archive tabs idle past the threshold move into, and its passes. */
-  readonly inactiveTabs: InactiveTabsService
   readonly actions: Actions
   readonly keys: KeyboardHandler
   readonly menus: Menus
@@ -602,7 +599,6 @@ export class Browser {
     this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
-    this.inactiveTabs = new InactiveTabsService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
       // The mac History menu lists the pages last visited: a visit, a deletion or a clear
@@ -1684,8 +1680,6 @@ export class Browser {
     // a launcher alias flipped back by an update); the persisted choice wins.
     this.platform.app.setAppIcon?.(this.state.settings.appIcon)
     this.governor.start()
-    // The archive's first pass is armed for later, off the boot path (TAB-20).
-    this.inactiveTabs.start()
     // The unused-sites permissions sweep's first run likewise (PS-41); then daily.
     this.unusedPermissions.start()
     this.liveFolders.start()
@@ -2926,7 +2920,6 @@ export class Browser {
     this.protection.stop()
     this.contentRules.stop()
     this.blocking.stop()
-    this.inactiveTabs.stop()
     this.unusedPermissions.stop()
     this.background.stop()
     this.translate.stop()
@@ -3975,13 +3968,6 @@ export class Browser {
         void this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
-      'inactiveTabs.list': () => this.inactiveTabs.list(),
-      'inactiveTabs.restore': ({ id }, win) => void this.inactiveTabs.restore(id, win),
-      'inactiveTabs.restoreAll': (_args, win) => this.inactiveTabs.restoreAll(win),
-      'inactiveTabs.close': ({ id }) => this.inactiveTabs.close(id),
-      'inactiveTabs.closeAll': () => this.inactiveTabs.closeAll(),
-      'inactiveTabs.runPasses': ({ now }) => this.inactiveTabs.runPasses(now),
-
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
         if (sensitive)
           this.passwords.clipboard.copy(text, state.settings.passwords.clipboardClearSeconds)
@@ -4558,7 +4544,6 @@ export class Browser {
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
-      inactiveTabs: `${s.inactiveTabsArchiveDays}:${s.inactiveTabsAutoClose}`,
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
@@ -4722,8 +4707,6 @@ export class Browser {
     // `MigrateHoverCardMemoryPref`; anything but `true` reads off, as `BrowserState.load` reads it.
     s.hoverCardMemoryUsage = s.hoverCardMemoryUsage === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
-    s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
-    s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     // A default the profile no longer has an engine for (removed, or named by a peer's build that
     // knows more engines), or an extension's engine (the default only through the extension's
@@ -4761,8 +4744,6 @@ export class Browser {
     ) {
       this.governor.onSettingsChanged()
     }
-    if (before.inactiveTabs !== `${s.inactiveTabsArchiveDays}:${s.inactiveTabsAutoClose}`)
-      this.inactiveTabs.onSettingsChanged()
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)

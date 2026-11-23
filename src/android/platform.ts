@@ -222,7 +222,6 @@ export function androidCapabilities({
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
     // Chrome for Android's Inactive tabs: the archive pass and the overview's entry (TAB-20).
-    inactiveTabs: true,
     secureDns: false,
     quitsThroughCore: false,
     lookalikeHolds: false,

@@ -356,32 +356,33 @@ export function migrateLegacyBookmarks(
   return normalizeBookmarkNodes(nodes, now, targetRootId)
 }
 
+/** A page a retired feature kept, as {@link foldPagesIntoBookmarks} files it. */
+export interface FoldedPage {
+  url: string
+  title: string
+  addedAt: number
+}
+
 /**
- * The reading list a profile kept before Zenium took Zen's shape (Zen has no reading list): its
- * pages become a "Reading List" bookmarks folder at the end of `parentId`, oldest first, so
- * nothing the user saved is lost. Returns the tree unchanged when the raw list holds no page.
- * Pure: the caller persists the result and drops the old field.
+ * Pages a retired feature kept (Zen has neither a reading list nor an inactive-tabs archive)
+ * become one bookmarks folder named `title` at the end of `parentId`, oldest first, so nothing
+ * the user kept is lost. Pages without an address are dropped; an empty list leaves the tree
+ * as it was. Pure: the caller persists the result and drops the old field.
  */
-export function foldReadingListIntoBookmarks(
+export function foldPagesIntoBookmarks(
   nodes: readonly BookmarkNode[],
-  raw: unknown,
+  pages: readonly FoldedPage[],
+  title: string,
   parentId: string,
   now: number
 ): BookmarkNode[] {
-  if (!Array.isArray(raw)) return [...nodes]
-  const pages = raw
-    .filter(
-      (e): e is { id?: unknown; url: string; title?: unknown; addedAt?: unknown } =>
-        Boolean(e) && typeof e === 'object' && typeof (e as { url?: unknown }).url === 'string'
-    )
-    .filter((e) => e.url)
-    .sort((a, b) => finiteOr(a.addedAt, now) - finiteOr(b.addedAt, now))
-  if (pages.length === 0) return [...nodes]
+  const kept = pages.filter((p) => p.url).sort((a, b) => a.addedAt - b.addedAt)
+  if (kept.length === 0) return [...nodes]
   const taken = new Set(nodes.map((n) => n.id))
   let seq = 0
   const freshId = (): string => {
     let id: string
-    do id = `bm_rl_${now.toString(36)}_${seq++}`
+    do id = `bm_fold_${now.toString(36)}_${seq++}`
     while (taken.has(id))
     taken.add(id)
     return id
@@ -393,20 +394,71 @@ export function foldReadingListIntoBookmarks(
     parentId,
     index: siblings,
     type: 'folder',
-    title: 'Reading List',
+    title,
     dateAdded: now,
     dateGroupModified: now
   }
-  const children = pages.map((e, index): BookmarkNode => ({
+  const children = kept.map((p, index): BookmarkNode => ({
     id: freshId(),
     parentId: folderId,
     index,
     type: 'url',
-    title: typeof e.title === 'string' && e.title ? e.title : e.url,
-    url: e.url,
-    dateAdded: finiteOr(e.addedAt, now)
+    title: p.title || p.url,
+    url: p.url,
+    dateAdded: p.addedAt
   }))
   return normalizeBookmarkNodes([...nodes, folder, ...children], now, parentId)
+}
+
+/**
+ * The reading list a profile kept before Zenium took Zen's shape: its pages as a "Reading
+ * List" folder ({@link foldPagesIntoBookmarks}).
+ */
+export function foldReadingListIntoBookmarks(
+  nodes: readonly BookmarkNode[],
+  raw: unknown,
+  parentId: string,
+  now: number
+): BookmarkNode[] {
+  if (!Array.isArray(raw)) return [...nodes]
+  const pages = raw
+    .filter(
+      (e): e is { url: string; title?: unknown; addedAt?: unknown } =>
+        Boolean(e) && typeof e === 'object' && typeof (e as { url?: unknown }).url === 'string'
+    )
+    .map((e) => ({
+      url: e.url,
+      title: typeof e.title === 'string' ? e.title : '',
+      addedAt: finiteOr(e.addedAt, now)
+    }))
+  return foldPagesIntoBookmarks(nodes, pages, 'Reading List', parentId, now)
+}
+
+/**
+ * The Inactive tabs archive a phone profile kept (closed-tab entries with their tab record):
+ * its tabs as an "Inactive Tabs" folder, each dated by when it was last in view.
+ */
+export function foldArchivedTabsIntoBookmarks(
+  nodes: readonly BookmarkNode[],
+  raw: unknown,
+  parentId: string,
+  now: number
+): BookmarkNode[] {
+  if (!Array.isArray(raw)) return [...nodes]
+  const pages: FoldedPage[] = []
+  for (const entry of raw) {
+    const tab = (entry as { tab?: unknown } | null)?.tab as
+      { url?: unknown; title?: unknown; customTitle?: unknown; lastActiveAt?: unknown } | undefined
+    if (!tab || typeof tab !== 'object' || typeof tab.url !== 'string') continue
+    const title =
+      typeof tab.customTitle === 'string' && tab.customTitle
+        ? tab.customTitle
+        : typeof tab.title === 'string'
+          ? tab.title
+          : ''
+    pages.push({ url: tab.url, title, addedAt: finiteOr(tab.lastActiveAt, now) })
+  }
+  return foldPagesIntoBookmarks(nodes, pages, 'Inactive Tabs', parentId, now)
 }
 
 // ---------------------------------------------------------------------------

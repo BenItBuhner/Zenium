@@ -41,7 +41,6 @@ import {
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
-  INACTIVE_TAB_AUTO_CLOSE_DAYS,
   emptyAgentServerStatus,
   emptyAgentSkillStatus,
   emptyAutofillUIState,
@@ -78,13 +77,8 @@ import { emptyUpdateStatus } from '@shared/updates'
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
-const {
-  buildSection,
-  buildSections,
-  autoCloseDescription,
-  MOD_PICTURE_HINT,
-  proxyHeldDescription
-} = await import('../sections')
+const { buildSection, buildSections, MOD_PICTURE_HINT, proxyHeldDescription } =
+  await import('../sections')
 const {
   allRows,
   controlledRuns,
@@ -147,7 +141,6 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   darkenSites: true,
   privateTabs: true,
-  inactiveTabs: true,
   secureDns: false,
   quitsThroughCore: false,
   lookalikeHolds: false,
@@ -7618,75 +7611,10 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
   })
 })
 
-describe('TAB-20 / SET-34: inactive tabs in Tab Management on a phone, beside sleeping tabs, in Chrome’s words', () => {
-  it('is a group of its own after the sleeping-tabs groups: the threshold as a value row on Chrome’s ladder and the auto-close switch, off at .4 while the threshold is Never', () => {
-    const c = context()
-    const tabs = buildSection(
-      PAGE.sections.find((x) => x.id === 'tabs')!,
-      {
-        ...c.ctx,
-        formFactor: 'phone'
-      }
-    )
-    const ids = tabs.groups.map((g) => g.id)
-    expect(ids.indexOf('inactive-tabs')).toBe(ids.indexOf('never-sleep-add') + 1)
-    const group = tabs.groups.find((g) => g.id === 'inactive-tabs')
-    expect(group?.heading).toBe('Inactive tabs')
-    // The description tells the two apart: a sleeping tab keeps its place in the grid.
-    expect(group?.description).toContain('Sleeping tabs stay in the grid')
-    expect(group?.rows.map((r) => r.id)).toEqual([
-      'inactive-tabs-after',
-      'inactive-tabs-auto-close'
-    ])
-
-    const after = row(tabs, 'inactive-tabs-after')
-    if (after.kind !== 'value') throw new Error('not a choice')
-    expect(after.label).toBe('Move to inactive')
-    expect(after.options.map((o) => o.label)).toEqual([
-      'Never',
-      'After 7 days inactive',
-      'After 14 days inactive',
-      'After 21 days inactive'
-    ])
-    // Chrome 152's default.
-    expect(after.value).toBe('21')
-    after.onChange('7')
-    expect(c.patches.at(-1)).toEqual({ inactiveTabsArchiveDays: 7 })
-    after.onChange('0')
-    expect(c.patches.at(-1)).toEqual({ inactiveTabsArchiveDays: 0 })
-
-    const autoClose = row(tabs, 'inactive-tabs-auto-close')
-    if (autoClose.kind !== 'switch') throw new Error('not a switch')
-    expect(autoClose.label).toBe('Automatically close inactive tabs')
-    expect(autoClose.description).toBe('Inactive tabs are closed after 3 months')
-    // The period is the core's constant (Chrome 152's 90 days) read in months as Chrome counts
-    // them, not a second copy of the number.
-    expect(autoClose.description).toBe(autoCloseDescription(INACTIVE_TAB_AUTO_CLOSE_DAYS))
-    expect(autoCloseDescription(60)).toBe('Inactive tabs are closed after 2 months')
-    expect(autoCloseDescription(30)).toBe('Inactive tabs are closed after 1 month')
-    expect(autoClose.checked).toBe(true)
-    expect(autoClose.disabled).toBe(false)
-    autoClose.onChange(false)
-    expect(c.patches.at(-1)).toEqual({ inactiveTabsAutoClose: false })
-
-    // Never: nothing is archived, so the sweep's switch is a dependent row (§10.4), as Chrome
-    // greys it; the value row itself stays live, it is the way back.
-    const never = buildSection(
-      PAGE.sections.find((x) => x.id === 'tabs')!,
-      {
-        ...context(state({}, { inactiveTabsArchiveDays: 0 })).ctx,
-        formFactor: 'phone'
-      }
-    )
-    expect(row(never, 'inactive-tabs-after').disabled).toBeUndefined()
-    expect(row(never, 'inactive-tabs-auto-close').disabled).toBe(true)
-  })
-
-  it('exists only where the archive does (the capability), and only on the phone shell', () => {
+describe('Tab Management has no Inactive tabs archive (Zen has none)', () => {
+  it('draws no inactive-tabs group on any layout', () => {
     const def = PAGE.sections.find((x) => x.id === 'tabs')!
-    const without = state({ capabilities: { ...ANDROID, inactiveTabs: false } })
-    expect(section('tabs', without).groups.map((g) => g.id)).not.toContain('inactive-tabs')
-    for (const layout of ['desktop', 'tablet'] as const) {
+    for (const layout of ['phone', 'desktop', 'tablet'] as const) {
       const shell = buildSection(def, { ...context().ctx, formFactor: layout })
       expect(shell.groups.map((g) => g.id)).not.toContain('inactive-tabs')
     }
@@ -10500,7 +10428,9 @@ describe('Settings › System: in-app proxy configuration', () => {
     ]
     expect(modes.map(([mode]) => mode).sort()).toEqual([...PROXY_MODES].sort())
     for (const [mode, sentence] of modes) {
-      expect(row(section('system', holding(mode)), 'proxy-default').description, mode).toBe(sentence)
+      expect(row(section('system', holding(mode)), 'proxy-default').description, mode).toBe(
+        sentence
+      )
     }
     def.controlled!.onDisable()
     expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {

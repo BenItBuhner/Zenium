@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { BookmarkNode } from '../types'
-import { OTHER_BOOKMARKS_ID, createBookmarkRoots, foldReadingListIntoBookmarks } from '../bookmarks'
+import {
+  MOBILE_BOOKMARKS_ID,
+  OTHER_BOOKMARKS_ID,
+  createBookmarkRoots,
+  foldArchivedTabsIntoBookmarks,
+  foldReadingListIntoBookmarks
+} from '../bookmarks'
 
 const NOW = 1_700_000_000_000
 
@@ -56,5 +62,50 @@ describe('foldReadingListIntoBookmarks', () => {
       const out = foldReadingListIntoBookmarks(roots(), raw, OTHER_BOOKMARKS_ID, NOW)
       expect(out).toEqual(roots())
     }
+  })
+})
+
+/**
+ * Zen has no inactive-tabs archive either: a phone profile's archived tabs (closed-tab entries
+ * with their tab record) come back once as an "Inactive Tabs" folder, by when each was last seen.
+ */
+describe('foldArchivedTabsIntoBookmarks', () => {
+  it('files each archived tab under its custom title, else its title, oldest use first', () => {
+    const out = foldArchivedTabsIntoBookmarks(
+      createBookmarkRoots(NOW),
+      [
+        {
+          kind: 'tab',
+          id: 'c1',
+          tab: { url: 'https://new.example/', title: 'New', lastActiveAt: 50 }
+        },
+        {
+          kind: 'tab',
+          id: 'c2',
+          tab: { url: 'https://old.example/', title: 'Old', customTitle: 'Mine', lastActiveAt: 10 }
+        },
+        { kind: 'tab', id: 'c3', tab: { title: 'No address' } },
+        { kind: 'tab', id: 'c4' }
+      ],
+      MOBILE_BOOKMARKS_ID,
+      NOW
+    )
+    const folder = out.find((n) => n.type === 'folder' && n.title === 'Inactive Tabs')!
+    expect(folder.parentId).toBe(MOBILE_BOOKMARKS_ID)
+    expect(
+      out
+        .filter((n) => n.parentId === folder.id)
+        .sort((a, b) => a.index - b.index)
+        .map((n) => [n.title, n.url, n.dateAdded])
+    ).toEqual([
+      ['Mine', 'https://old.example/', 10],
+      ['New', 'https://new.example/', 50]
+    ])
+  })
+
+  it('adds nothing for a profile without an archive', () => {
+    expect(
+      foldArchivedTabsIntoBookmarks(createBookmarkRoots(NOW), undefined, OTHER_BOOKMARKS_ID, NOW)
+    ).toEqual(createBookmarkRoots(NOW))
   })
 })

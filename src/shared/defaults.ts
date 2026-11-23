@@ -7,7 +7,6 @@ import type {
   CheckupState,
   Container,
   FolderColor,
-  InactiveTabsArchiveDays,
   PasswordSettings,
   PasswordsStatus,
   ResourceSettings,
@@ -193,19 +192,6 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
   }
 }
 
-/**
- * The Inactive tabs threshold's ladder (TAB-20, SET-34), in days: Never, then Chrome's three
- * (`ARCHIVE_TIME_DELTA_DAYS_OPTS`); the default is Chrome 152's 21.
- */
-export const INACTIVE_TABS_ARCHIVE_DAYS: readonly InactiveTabsArchiveDays[] = [0, 7, 14, 21]
-
-/**
- * How long an archived tab waits before the auto-close sweep takes it, in days: Chrome 152's
- * `DEFAULT_AUTODELETE_TIME_HOURS` (90 days). Settings words it in months the way Chrome's
- * `getAutoDeleteTimeDeltaMonths` does (days / 30, so "3 months").
- */
-export const INACTIVE_TAB_AUTO_CLOSE_DAYS = 90
-
 export function emptyResourceSnapshot(): ResourceSnapshot {
   const gauge = { used: 0, budget: 0, configured: 0 }
   return {
@@ -289,8 +275,6 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadExcludedDomains: [],
   energySaver: 'on-battery',
   hoverCardMemoryUsage: false,
-  inactiveTabsArchiveDays: 21,
-  inactiveTabsAutoClose: true,
   mutedHosts: [],
   searchEngineId: 'google',
   searchEngines: [],

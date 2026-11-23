@@ -124,18 +124,6 @@ describe('Recently closed never lists private tabs (INC-10)', () => {
     expect(h.browser.state.snapshot(h.win).recentlyClosedCount).toBe(0)
   })
 
-  it('the inactive-tabs archive gets nothing from a private tab: the close produces no entry to divert', () => {
-    const h = phone()
-    h.browser.tabs.createTab({ url: REGULAR_URL, active: true }, h.win)
-    const priv = openPrivate(h)
-
-    expect(h.browser.tabs.archiveTab(priv, h.win)).toBeNull()
-    expect(h.browser.tabs.tab(priv)).toBeUndefined()
-    expect(h.browser.inactiveTabs.list()).toEqual([])
-    expect(h.browser.state.archivedTabs).toEqual([])
-    expect(commandUrls(h)).toEqual([])
-  })
-
   it('a closed-tab entry of the private container handed to the session directly is refused too', () => {
     const h = phone()
     const entry: ClosedTabEntry = {

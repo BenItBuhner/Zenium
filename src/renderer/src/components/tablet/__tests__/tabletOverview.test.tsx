@@ -687,19 +687,6 @@ describe("the phone switcher's gates hold on the tablet mount", () => {
     }
   })
 
-  it('the Inactive tabs entry is the ⋯ menu`s row on the tablet too (TAB-20; cleanup spec §4, root §9): no button of the overview`s, no segment row', () => {
-    const state = stateOf(pages())
-    ;(state as unknown as { archivedTabCount: number }).archivedTabCount = 0
-    render(state, true)
-    expect(byTestId('overview-inactive-tabs')).toBeNull()
-    const withArchive = { ...state, archivedTabCount: 2 } as UIState
-    render(withArchive, true)
-    expect(byTestId('overview-inactive-tabs')).toBeNull()
-    expect(document.querySelectorAll('[aria-label^="Inactive tabs"]')).toHaveLength(0)
-    expect(document.querySelectorAll('[data-testid^="overview-pane-"]')).toHaveLength(0)
-    expect(headerButtons()).toEqual(AT_REST(6))
-  })
-
   it('a group is a card spanning the grid`s columns, its members in it (TAB-16)', () => {
     const research = {
       id: 'research',

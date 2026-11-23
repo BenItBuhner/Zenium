@@ -190,7 +190,6 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   darkenSites: true,
   // Private browsing is a window of its own on desktop (`windows`).
   privateTabs: false,
-  inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
   lookalikeHolds: true,

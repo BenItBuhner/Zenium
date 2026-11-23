@@ -1,15 +1,7 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Group, Share2, Star, VenetianMask, X } from 'lucide-react'
-import type {
-  ArchivedTabSummary,
-  Folder,
-  PhoneBarPosition,
-  Rect,
-  SyncRemoteTab,
-  Tab,
-  UIState
-} from '@shared/types'
+import type { Folder, PhoneBarPosition, Rect, SyncRemoteTab, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { NEW_FOLDER_NAME } from '@shared/groupNames'
 import {
@@ -38,7 +30,6 @@ import { hintBubbleStore, hintBubbleTabId } from '@renderer/lib/iph'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
-import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
@@ -147,7 +138,6 @@ import { setQuickDeleteWipe, type QuickDeleteWipe } from './quickDelete'
 import { groupActions } from './groupActions'
 import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet } from './GroupSheets'
-import { InactiveTabsSheet } from './InactiveTabsSheet'
 import { CARD_ASPECT, CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OverviewTitle } from './OverviewHeader'
@@ -1494,8 +1484,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     setSheet({ kind: 'recently-closed', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
-   * A tab brought back – a recently closed one into its place, an inactive one to the start of
-   * its space – is a new record, and the overview leaves on it once the browser shows it.
+   * A tab brought back – a recently closed one into its place – is a new record, and the overview leaves on it once the browser shows it.
    */
   const leaveOnRestored = (restore: () => void): void => {
     const known = new Set(Object.keys(state.tabs))
@@ -1508,19 +1497,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   /** A recently closed tab picked from the sheet comes back into its place. */
   const restoreClosed = (entry: ClosedEntrySummary): void =>
     leaveOnRestored(() => void historyAdapter.restoreClosed(entry.id))
-  /**
-   * The menu's Inactive Tabs (N) row (TAB-20; §4, §9: a ⋯ row, never a control of the header):
-   * it reads the archive first, so the sheet opens full; the private view has no such row, a
-   * private tab being never archived.
-   */
-  const openInactiveTabs = async (): Promise<void> => {
-    noteSheetOpener()
-    const entries = await inactiveTabsAdapter.list().catch(() => [])
-    setSheet({ kind: 'inactive-tabs', entries })
-  }
-  /** An inactive tab picked from the sheet comes back at the start of its space, in front. */
-  const restoreArchived = (entry: ArchivedTabSummary): void =>
-    leaveOnRestored(() => void inactiveTabsAdapter.restore(entry.id))
   /**
    * A search row from another device leaves the overview on the tab it brings to the front: the
    * device's page in a new tab of this space, or the tab this device already holds. Either way
@@ -1870,8 +1846,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    * render's, read through a ref so that the one subscription sees the latest grid. New Tab and
    * New Private Tab are the New Tab card's tap (`newTabOn`: the phone's new tab page over the
    * overview); Private Tabs (N) / Tabs (N) switches the view (§3); Select Tabs enters the mode;
-   * Search Tabs pins the field; Inactive Tabs and Recently Closed read their lists and open
-   * their sheets; Close All asks or closes as the setting says; the selection's three act on the
+   * Search Tabs pins the field; Recently Closed reads its list and opens its sheet; Close All asks or closes as the setting says; the selection's three act on the
    * picks.
    */
   const onCommand = (command: OverviewChromeCommand): void => {
@@ -1890,9 +1865,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
         return
       case 'search-tabs':
         openSearch()
-        return
-      case 'inactive-tabs':
-        void openInactiveTabs()
         return
       case 'recently-closed':
         void openRecentlyClosed()
@@ -2464,14 +2436,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           initial={sheet.closed}
           onClose={() => leaveSheet('recently-closed')}
           onRestore={restoreClosed}
-        />
-      )}
-      {interactive && sheet?.kind === 'inactive-tabs' && (
-        <InactiveTabsSheet
-          initial={sheet.entries}
-          archiveDays={state.settings.inactiveTabsArchiveDays}
-          onClose={() => leaveSheet('inactive-tabs')}
-          onRestore={restoreArchived}
         />
       )}
     </>

@@ -3893,7 +3893,6 @@ export class Menus {
         selectable,
         regular: essentials.length + spaceTabs.length,
         private: privateTabs.length,
-        inactive: state.archivedTabs.length,
         recentlyClosed: state.recentlyClosed.filter((entry) => entry.kind === 'tab').length
       },
       spaces: m.spaces.map((s) => ({
