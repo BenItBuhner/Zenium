@@ -10,7 +10,7 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 /*
  * "Delete <folder>?" (TAB-16's desktop half; components/sidebar/FolderDeleteDialog.tsx and
  * lib/folderDelete.ts): the desktop's folder menu and the group editor bubble both ask through
- * `requestFolderDelete` – an empty folder goes at once, one holding tabs or saved pages only
+ * `requestFolderDelete` – an empty folder goes at once, one holding tabs only
  * through the §9.23 prompt (components/dialogs/ConfirmDialog.tsx) at §9.20's 320 on the frame's
  * dialog host, the dialog itself holding the focus as it opens (§9.22 as the #340 verdict reads
  * it: no verb preselected, no ring; Tab enters at Cancel, Shift+Tab at Delete, the keys wrap at
@@ -155,35 +155,23 @@ afterEach(() => {
 })
 
 describe('folderDeleteWords', () => {
-  it('asks with the folder’s name and says what goes: an open folder’s tabs to Recently Closed, a saved one’s pages for good', () => {
-    expect(folderDeleteWords('Trip planning', 3, false)).toEqual({
+  it('asks with the folder’s name and says what goes: its tabs, to Recently Closed', () => {
+    expect(folderDeleteWords('Trip planning', 3)).toEqual({
       title: 'Delete Trip planning?',
       detail: 'Its 3 tabs close with it; Recently Closed keeps their pages.'
     })
-    expect(folderDeleteWords('Trip planning', 1, false)).toEqual({
+    expect(folderDeleteWords('Trip planning', 1)).toEqual({
       title: 'Delete Trip planning?',
       detail: 'Its 1 tab closes with it; Recently Closed keeps its page.'
-    })
-    expect(folderDeleteWords('Trip planning', 3, true)).toEqual({
-      title: 'Delete Trip planning?',
-      detail: 'Its 3 saved pages are forgotten with it. There is no undo.'
-    })
-    expect(folderDeleteWords('  ', 1, true)).toEqual({
-      title: 'Delete folder?',
-      detail: 'Its 1 saved page is forgotten with it. There is no undo.'
     })
   })
 
   it('names a nameless one "folder" on every host, and a named one by its name', () => {
-    expect(folderDeleteWords('  ', 1, true)).toEqual({
-      title: 'Delete folder?',
-      detail: 'Its 1 saved page is forgotten with it. There is no undo.'
-    })
-    expect(folderDeleteWords('', 2, false)).toEqual({
+    expect(folderDeleteWords('', 2)).toEqual({
       title: 'Delete folder?',
       detail: 'Its 2 tabs close with it; Recently Closed keeps their pages.'
     })
-    expect(folderDeleteWords('Research', 2, false).title).toBe('Delete Research?')
+    expect(folderDeleteWords('Research', 2).title).toBe('Delete Research?')
   })
 })
 
@@ -204,15 +192,6 @@ describe('requestFolderDelete', () => {
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
     expect(uiStore.get().folderDeleteConfirm).toEqual({ folderId: 'g', keyboard: false })
     uiStore.set({ folderDeleteConfirm: null })
-
-    const saved = folder({ savedTabs: [{ url: 'https://t.example/', title: 'T' }] })
-    browserStore.set({ state: state([tab('home', null)], [saved]) })
-    expect(folderHoldsAnything('g')).toBe(true)
-    requestFolderDelete('g', true)
-    await settle()
-    expect(uiStore.get().folderDeleteConfirm).toEqual({ folderId: 'g', keyboard: true })
-    // The prompt takes the bubble's place (§9.20: one popover at a time).
-    expect(uiStore.get().groupEditor).toBeNull()
   })
 
   it('keeps the bubble’s word on the keyboard when the ask comes from it, and ignores a folder that is gone', async () => {
@@ -349,23 +328,6 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
     await settle()
     expect(document.activeElement).not.toBe(document.querySelector('[data-tab-folder="g"]'))
-  })
-
-  it('says of a saved folder that its pages are forgotten', async () => {
-    const saved = folder({
-      savedTabs: [
-        { url: 'https://a.example/', title: 'A' },
-        { url: 'https://b.example/', title: 'B' },
-        { url: 'https://c.example/', title: 'C' }
-      ]
-    })
-    browserStore.set({ state: state([tab('home', null)], [saved]) })
-    render(<Dialogs />)
-    requestFolderDelete('g', false)
-    await settle()
-    expect(dialog()!.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
-      'Its 3 saved pages are forgotten with it. There is no undo.'
-    )
   })
 
   it('asks a nameless folder’s question the same on every host: "Delete folder?" on the desktop and on the tablet', async () => {

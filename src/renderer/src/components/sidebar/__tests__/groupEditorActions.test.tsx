@@ -10,12 +10,10 @@ import { FOLDER_COLOR_ORDER } from '@shared/defaults'
 import { TOAST_UNDO_MS } from '@shared/toastCard'
 
 /*
- * The group editor bubble's actions and swatch row on a saved group (TAB-16's desktop half;
- * components/sidebar/GroupEditorBubble.tsx): an open folder's rows are New tab, Unpack, Close
- * (Chrome's Close group – the folder stays saved with its pages, so the plain ink) and Delete in
- * the danger ink; a saved folder's are Open folder with its page count and Delete alone – New
- * tab in folder would forget the pages it kept (the model's `folderOpened` rule), so the row
- * waits for Open; Delete goes through the "Delete <folder>?" prompt when the folder holds anything
+ * The group editor bubble's actions and swatch row (TAB-16's desktop half;
+ * components/sidebar/GroupEditorBubble.tsx): a folder's rows are New tab, Unpack, Close
+ * (Chrome's Close group – the folder stays in the sidebar, folded, so the plain ink) and Delete in
+ * the danger ink; Delete goes through the "Delete <folder>?" prompt when the folder holds anything
  * and deletes an empty folder outright. The colour row is §9.14's swatch form: the nine colours
  * in Chrome's order as a radio group of 28 px round targets touching (the 20 px discs 8 apart
  * on a 28 pitch, the nine discs 244 wide), the picked one ringed. On the touch layout (the
@@ -67,12 +65,6 @@ const folder = (over: Partial<Folder> = {}): Folder =>
     collapsed: false,
     ...over
   }) as Folder
-
-const PAGES = [
-  { url: 'https://a.example/', title: 'A' },
-  { url: 'https://b.example/', title: 'B' },
-  { url: 'https://c.example/', title: 'C' }
-]
 
 function state(tabs: Tab[], folders: Folder[]): UIState {
   return {
@@ -187,41 +179,7 @@ describe('the bubble’s actions', () => {
     expect(uiStore.get().toasts).toEqual([])
   })
 
-  it('for a saved folder: Open folder with its count in the menu’s noun (N tabs), New tab in folder (the core opens the folder first, then adds) and Delete – no Unpack or Close; Open brings the pages back', async () => {
-    let el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
-    let rows = actions(el)
-    expect(rows.map((r) => r.dataset.action)).toEqual(['open', 'new-tab', 'delete'])
-    const open = rows[0]!
-    expect(open.querySelector('.zen-v2-label')!.textContent).toBe('Open folder')
-    // One noun for one number: the menu's Open Folder (3 Tabs), the bubble's "3 tabs".
-    expect(open.querySelector('.zen-group-editor-count')!.textContent).toBe('3 tabs')
-    expect(open.hasAttribute('data-danger')).toBe(false)
-    expect(open.querySelector('svg.lucide-folder-open')).not.toBeNull()
-    // New tab in folder in the plain ink, with no count of its own: the core's `folder.newTab`
-    // brings the pages back before it adds the tab, so the row loses nothing.
-    const newTab = rows[1]!
-    expect(newTab.querySelector('.zen-v2-label')!.textContent).toBe('New tab in folder')
-    expect(newTab.querySelector('.zen-group-editor-count')).toBeNull()
-    expect(newTab.hasAttribute('data-danger')).toBe(false)
-    click(newTab)
-    expect(run).toHaveBeenCalledWith('folder.newTab', { folderId: 'g' })
-    expect(run).not.toHaveBeenCalledWith('folder.open', expect.anything())
-    expect(uiStore.get().groupEditor).toBeNull()
-    run.mockClear()
-    el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
-    rows = actions(el)
-    click(rows[0]!)
-    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
-    expect(uiStore.get().groupEditor).toBeNull()
-    // The singular, as the menu's Open Folder (1 Tab).
-    el = await bubble(
-      [tab('home', null)],
-      folder({ savedTabs: PAGES.slice(0, 1), collapsed: true })
-    )
-    expect(actions(el)[0]!.querySelector('.zen-group-editor-count')!.textContent).toBe('1 tab')
-  })
-
-  it('Delete asks first for a folder holding tabs or pages – the prompt taking the bubble’s place – and deletes an empty one outright', async () => {
+  it('Delete asks first for a folder holding tabs – the prompt taking the bubble’s place – and deletes an empty one outright', async () => {
     let el = await bubble([tab('home', null), tab('a', 'g')], folder())
     click(actions(el).find((r) => r.dataset.action === 'delete')!)
     expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
@@ -231,17 +189,6 @@ describe('the bubble’s actions', () => {
       await Promise.resolve()
     })
     // (Whether the header had the keyboard is the focus ring's word – folderDelete.test.tsx.)
-    expect(uiStore.get().folderDeleteConfirm?.folderId).toBe('g')
-    uiStore.set({ folderDeleteConfirm: null })
-    run.mockClear()
-
-    el = await bubble([tab('home', null)], folder({ savedTabs: PAGES }))
-    click(actions(el).find((r) => r.dataset.action === 'delete')!)
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
     expect(uiStore.get().folderDeleteConfirm?.folderId).toBe('g')
     uiStore.set({ folderDeleteConfirm: null })
     run.mockClear()
@@ -284,13 +231,6 @@ describe('the colour row (§9.14’s swatch form)', () => {
     expect(blue.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
     click(swatches.find((s) => s.dataset.color === 'green')!)
     expect(run).toHaveBeenCalledWith('folder.update', { folderId: 'g', patch: { color: 'green' } })
-    // A saved folder's row is the same: its colour is its header's ring's.
-    const savedEl = await bubble([tab('home', null)], folder({ savedTabs: PAGES, color: 'pink' }))
-    expect(
-      [...savedEl.querySelectorAll<HTMLButtonElement>('[role="radio"][aria-checked="true"]')].map(
-        (s) => s.dataset.color
-      )
-    ).toEqual(['pink'])
   })
 
   it('draws 28 px round targets touching – the 20 px discs 8 apart on a 28 pitch, the nine discs 244 wide – the picked disc ringed 2 px outside', () => {
@@ -335,8 +275,8 @@ describe('on the touch layout (TABLET-22: the tablet shows the bubble once after
   const labelsOf = (el: HTMLElement): string[] =>
     actions(el).map((r) => r.querySelector('.zen-v2-label')!.textContent!)
 
-  it('says Folder as the desktop does: the title, the field’s placeholder, the actions’ name and every row, open and saved alike', async () => {
-    let el = await bubble([tab('home', null), tab('a', 'g'), tab('b', 'g')], folder(), 'tablet')
+  it('says Folder as the desktop does: the title, the field’s placeholder, the actions’ name and every row', async () => {
+    const el = await bubble([tab('home', null), tab('a', 'g'), tab('b', 'g')], folder(), 'tablet')
     expect(el.querySelector('.zen-bm-title')!.textContent).toBe('Edit folder')
     expect(el.querySelector<HTMLInputElement>('.zen-v2-field')!.placeholder).toBe(
       'Name this folder'
@@ -352,10 +292,6 @@ describe('on the touch layout (TABLET-22: the tablet shows the bubble once after
     ])
     expect(actions(el)[2]!.querySelector('.zen-group-editor-count')!.textContent).toBe('2 tabs')
     expect(actions(el)[3]!.hasAttribute('data-danger')).toBe(true)
-    expect(el.textContent).not.toMatch(/group/i)
-    el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }), 'tablet')
-    expect(labelsOf(el)).toEqual(['Open folder', 'New tab in folder', 'Delete folder'])
-    expect(actions(el)[0]!.querySelector('.zen-group-editor-count')!.textContent).toBe('3 tabs')
     expect(el.textContent).not.toMatch(/group/i)
   })
 
@@ -396,7 +332,7 @@ describe('on the touch layout (TABLET-22: the tablet shows the bubble once after
     })
     const toasts = uiStore.get().toasts
     expect(toasts.map((t) => [t.message, t.action?.label, t.duration])).toEqual([
-      ['Research closed and saved', 'Undo', TOAST_UNDO_MS]
+      ['Research closed', 'Undo', TOAST_UNDO_MS]
     ])
     cmd.mockClear()
     await act(async () => {

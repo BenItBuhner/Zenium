@@ -1365,7 +1365,6 @@ describe('the tab group row (OMN-15)', () => {
     const mark = glyph(groupLi)!
     expect(mark).not.toBeNull()
     expect(mark.querySelector('.zen-group-row-dot')).not.toBeNull()
-    expect(mark.hasAttribute('data-saved')).toBe(false)
     expect(mark.style.getPropertyValue('--zen-group-rgb-light')).not.toBe('')
     expect(option(groupLi).querySelector('svg.lucide-folder')).toBeNull()
     expect(option(groupLi).querySelector('[data-testid="urlbar-row-title"]')?.textContent).toBe(
@@ -1398,24 +1397,13 @@ describe('the tab group row (OMN-15)', () => {
     expect(uiStore.get().urlbar.open).toBe(false)
   })
 
-  it('phone: a saved group wears the ring; a group the chrome no longer has keeps the kind’s glyph', async () => {
+  it('phone: a group the chrome no longer has keeps the kind’s glyph', async () => {
     layout('phone')
-    const saved: Folder = {
-      ...research,
-      savedTabs: [{ url: 'https://arxiv.org/abs/1', title: 'Paper' }]
-    }
     suggestions = (q) => (q === 'res' ? [groupRow()] : [])
-    let el = await render(phoneWith(withGroup(tab(PAGE), saved, false)))
-    await type(input(el), 'res')
-    let [groupLi] = await listed(el, 1)
-    expect(glyph(groupLi)?.hasAttribute('data-saved')).toBe(true)
-    act(() => root?.unmount())
-    invoke.mockClear()
-
     // The row outlived its group (deleted between the keystroke and the answer).
-    el = await render(phoneWith({ ...state(tab(PAGE)), folders: {} } as UIState))
+    const el = await render(phoneWith({ ...state(tab(PAGE)), folders: {} } as UIState))
     await type(input(el), 'res')
-    ;[groupLi] = await listed(el, 1)
+    const [groupLi] = await listed(el, 1)
     expect(glyph(groupLi)).toBeNull()
     expect(option(groupLi).querySelector('svg.lucide-folder')).not.toBeNull()
     expect(option(groupLi).getAttribute('aria-label')).toBe(

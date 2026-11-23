@@ -59,13 +59,10 @@ export function GroupColorPalette({ folder }: { folder: Folder }): JSX.Element {
 }
 
 /**
- * A saved group's card's sheet (TAB-16; §2: its hold): the colour swatches under the group's
- * name, then the menu items – Title Case (§9.1) – by the group's state as the sheet reads it
- * live. A SAVED group: Open (N Tabs) (its pages come back as tabs, what the card's tap does),
- * Rename, Delete Group in the danger ink; an EMPTY one: Rename, Delete Group; a group that has
- * come OPEN under the sheet (its pages back as tabs meanwhile): Show in Tabs, Rename, Close
- * Group (N Tabs) in the plain ink (its tabs close, the group stays saved with their pages:
- * nothing of the user's is destroyed, §6), Delete Group. Delete asks first when the group holds
+ * A group row's sheet (§2: its hold): the colour swatches under the group's name, then the menu
+ * items – Title Case (§9.1) – by the group's state as the sheet reads it live. An EMPTY group:
+ * Rename, Delete Group; an OPEN one: Show in Tabs, Rename, Close Group (N Tabs) in the plain ink
+ * (its tabs close to Recently Closed and the folder stays, §6), Delete Group. Delete asks first when the group holds
  * anything (`DeleteGroupSheet`, §9.23); the caller decides.
  */
 export function GroupRowSheet({
@@ -85,8 +82,6 @@ export function GroupRowSheet({
   const actions: SheetAction[] = []
   if (kind === 'open')
     actions.push({ id: 'show', label: OVERVIEW_LABELS.showInTabs, onPick: () => onOpen(row) })
-  if (kind === 'saved')
-    actions.push({ id: 'open', label: OVERVIEW_LABELS.openGroup(count), onPick: () => onOpen(row) })
   actions.push({
     id: 'rename',
     label: OVERVIEW_LABELS.rename,
@@ -118,8 +113,7 @@ export function GroupRowSheet({
  * "Delete group" asks first when the group holds anything (TAB-16; v2 §9.23: a prompt sheet
  * with the title block, the one paragraph, the §9.11 footer with Cancel and the verb in the
  * danger ink): an open group's tabs close with it, each to Recently Closed – the ask is the
- * guard, so no Undo follows on a toast (TAB-13, the Design Lead's option C) – and a saved
- * group's pages are forgotten with no way back. The words are `folderDeleteWords`'s in the
+ * guard, so no Undo follows on a toast (TAB-13, the Design Lead's option C). The words are `folderDeleteWords`'s in the
  * touch hosts' noun (v2 §6: "this group" for a group with no name), the one source the tablet's
  * dialog and the desktop's read from too. Escape, the scrim, the back gesture and Cancel keep
  * the group. Focus lands on the sheet itself, the title announced first (§9.22: a
@@ -136,8 +130,8 @@ export function DeleteGroupSheet({
   onConfirm: (row: GroupRow) => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const { folder, kind, count } = row
-  const words = folderDeleteWords(folder.name, count, kind === 'saved')
+  const { folder, count } = row
+  const words = folderDeleteWords(folder.name, count)
   return (
     <PhoneSheet
       name="overview-delete-group"

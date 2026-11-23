@@ -466,22 +466,22 @@ async function closeAllRun(
 // --- a group ------------------------------------------------------------------------------------
 
 describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close, on both touch hosts)', () => {
-  it('the toast reads "<Name> closed and saved" for a group the user named; a group still wearing a default name is not called by it – "Tab group closed and saved" (the Lead’s addendum; the default read through the shared module)', () => {
-    expect(groupClosedMessage({ name: 'Research' })).toBe('Research closed and saved')
-    expect(groupClosedMessage({ name: '  Reading ' })).toBe('Reading closed and saved')
+  it('the toast reads "<Name> closed" for a group the user named; a group still wearing a default name is not called by it – "Folder closed" (the Lead’s addendum; the default read through the shared module)', () => {
+    expect(groupClosedMessage({ name: 'Research' })).toBe('Research closed')
+    expect(groupClosedMessage({ name: '  Reading ' })).toBe('Reading closed')
     // The default names are the shared module's set, never a literal here: the touch hosts'
     // constant, no name at all, and whatever else `isDefaultGroupName` counts as one.
     expect(isDefaultGroupName('Group')).toBe(true)
-    expect(groupClosedMessage({ name: 'Group' })).toBe('Folder closed and saved')
-    expect(groupClosedMessage({ name: '' })).toBe('Folder closed and saved')
-    expect(groupClosedMessage({ name: '   ' })).toBe('Folder closed and saved')
+    expect(groupClosedMessage({ name: 'Group' })).toBe('Folder closed')
+    expect(groupClosedMessage({ name: '' })).toBe('Folder closed')
+    expect(groupClosedMessage({ name: '   ' })).toBe('Folder closed')
     // The legacy "New Folder" – a touch group made before the touch hosts had a word of their own
     // – is a default name too, on every host (the Lead's ruling; no migration renames records).
     expect(isDefaultGroupName(NEW_FOLDER_NAME)).toBe(true)
-    expect(groupClosedMessage({ name: NEW_FOLDER_NAME })).toBe('Folder closed and saved')
+    expect(groupClosedMessage({ name: NEW_FOLDER_NAME })).toBe('Folder closed')
     // A name the module does not count as a default is spoken – the constant with more on it.
     expect(isDefaultGroupName(`Group 2`)).toBe(false)
-    expect(groupClosedMessage({ name: `Group 2` })).toBe(`Group 2 closed and saved`)
+    expect(groupClosedMessage({ name: `Group 2` })).toBe(`Group 2 closed`)
     // The tab closes' words stand as they were: the one by name, several by their count.
     expect(closedMessage([entry(tab('a', { title: 'Zenium docs' }), 1)])).toBe('Closed Zenium docs')
     expect(closedMessage([entry(tab('a'), 1), entry(tab('b'), 2)])).toBe('2 tabs closed')
@@ -496,7 +496,7 @@ describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close,
     expect(h.toasts).toEqual([])
     core.file(entry(a, h.now.value), entry(b, h.now.value))
     await flush()
-    expect(h.toasts.map((t) => t.message)).toEqual(['Research closed and saved'])
+    expect(h.toasts.map((t) => t.message)).toEqual(['Research closed'])
     expect(h.toasts[0].action.label).toBe('Undo')
     h.toasts[0].action.onPick()
     await flush()
@@ -512,7 +512,7 @@ describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close,
     h.close([a], null, UNLOAD, { name: 'Group' })
     core.file(entry(a, h.now.value))
     await flush()
-    expect(h.toasts.map((t) => t.message)).toEqual(['Folder closed and saved'])
+    expect(h.toasts.map((t) => t.message)).toEqual(['Folder closed'])
   })
 
   it('a group close that files nothing (private members alone) gets no toast, as a tab close does', async () => {

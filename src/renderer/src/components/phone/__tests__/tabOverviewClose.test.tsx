@@ -740,7 +740,7 @@ describe('on a host with private tabs', () => {
 
 // --- a group's Close Group and Delete Group (TAB-16 / TAB-13; §2) ------------------------------
 
-describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo for Close Group, an ask for Delete Group, never both (TAB-16 / TAB-13, option C)', () => {
+describe('the group card’s ⋯ sheet: Undo for Close Group, an ask for Delete Group, never both (TAB-16 / TAB-13, option C)', () => {
   const GROUP = 'folder_research'
   const research = (patch: Partial<Folder> = {}): Folder =>
     ({
@@ -771,32 +771,11 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     const state = grouped(research(), tag)
     file(entry(state.tabs[`${tag}a`]!, NOW), entry(state.tabs[`${tag}b`]!, NOW))
   }
-  /** Research SAVED: no live member, its two pages kept (`Folder.savedTabs`). */
-  const savedResearch = (): UIState => ({
-    ...stateOf([tab('loose', 'https://c.example/', { title: 'Gamma' })]),
-    folders: {
-      [GROUP]: research({
-        savedTabs: [
-          { url: 'https://a.example/', title: 'Alpha' },
-          { url: 'https://b.example/', title: 'Beta' }
-        ]
-      })
-    }
-  })
   const dialogText = (): string =>
     document.querySelector<HTMLElement>('.zen-frame-dialogs')?.textContent ?? ''
   /** Open the group card's ⋯ sheet (`Group options`, the open card's header) and let it come up. */
   async function groupMenu(): Promise<void> {
     act(() => byLabel('Folder options').click())
-    await settle()
-    await land()
-  }
-  /** Hold the saved card (a right click is the hold, for the mouse) and let its sheet come up. */
-  async function savedMenu(): Promise<void> {
-    const card = document.querySelector<HTMLElement>('[data-testid="saved-group-card"]')!
-    act(() => {
-      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
-    })
     await settle()
     await land()
   }
@@ -816,7 +795,7 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     })
   }
 
-  it('Close Folder (N Tabs) asks nothing: the core’s folder.close at once, then the one toast, "<Name> closed and saved" with Undo, which brings the tabs back into the group', async () => {
+  it('Close Folder (N Tabs) asks nothing: the core’s folder.close at once, then the one toast, "<Name> closed" with Undo, which brings the tabs back into the group', async () => {
     show(grouped())
     await groupMenu()
     // The group's rows (§2): Rename, New Tab in Group, Ungroup, Close Group (N), Delete Group.
@@ -832,7 +811,7 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     expect(seps).toHaveLength(1)
     expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Delete Folder')
     await pick('Close Folder (2 Tabs)')
-    // No prompt (§9.23: the ask is Delete's alone); the group stays, saved with the pages.
+    // No prompt (§9.23: the ask is Delete's alone); the folder stays.
     expect(dialogTitle()).toBeUndefined()
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     expect(toasts()).toEqual([])
@@ -840,9 +819,9 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     // "2 tabs closed" – with Undo.
     fileMembers('r')
     await settle()
-    expect(toasts()).toEqual([['Research closed and saved', 'Undo', false]])
-    // Undo restores newest first – the core puts each back into the group, whose record the
-    // saved group kept, and the group re-opens – then the tab the user was on is activated.
+    expect(toasts()).toEqual([['Research closed', 'Undo', false]])
+    // Undo restores newest first – the core puts each back into the folder, which stayed –
+    // then the tab the user was on is activated.
     act(() => pickToastAction(liveToast().id))
     await settle()
     expect(of('session.restoreClosed')).toEqual([{ id: 'closed:rb' }, { id: 'closed:ra' }])
@@ -850,14 +829,14 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     expect(of('folder.delete')).toEqual([])
   })
 
-  it('a group still wearing the default name closes to "Tab group closed and saved" – not called by it (the Lead’s addendum)', async () => {
+  it('a group still wearing the default name closes to "Tab group closed" – not called by it (the Lead’s addendum)', async () => {
     show(grouped(research({ name: 'Group' }), 'n'))
     await groupMenu()
     await pick('Close Folder (2 Tabs)')
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     fileMembers('n')
     await settle()
-    expect(toasts()).toEqual([['Folder closed and saved', 'Undo', false]])
+    expect(toasts()).toEqual([['Folder closed', 'Undo', false]])
   })
 
   it('Delete Group asks first – "Its N tabs close with it; Recently Closed keeps their pages." – and Cancel keeps the group', async () => {
@@ -895,29 +874,5 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     expect(toasts()).toEqual([])
     expect(of('session.restoreClosed')).toEqual([])
     expect(commands()).toEqual([['folder.delete', { folderId: GROUP, unpack: false }]])
-  })
-
-  it('a saved group’s Delete asks in the pages’ words – "Its N saved pages are forgotten with it. There is no undo." – and Delete drops the record, no toast', async () => {
-    show(savedResearch())
-    // The saved card stands at the grid's end, before New Tab (§2); its hold sheet is Open,
-    // Rename, Delete Group.
-    const order = [...document.querySelectorAll<HTMLElement>('[data-cell]')].map(
-      (el) => el.dataset.cell
-    )
-    expect(order).toEqual(['loose', `saved:${GROUP}`, 'new-tab'])
-    await savedMenu()
-    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
-      'Open (2 Tabs)',
-      'Rename',
-      'Delete Folder'
-    ])
-    await pick('Delete Folder')
-    expect(dialogTitle()).toBe('Delete Research?')
-    expect(dialogText()).toContain('Its 2 saved pages are forgotten with it. There is no undo.')
-    await confirmDelete()
-    expect(commands()).toEqual([['folder.delete', { folderId: GROUP, unpack: false }]])
-    await settleClose()
-    expect(toasts()).toEqual([])
-    expect(of('session.recentlyClosed')).toEqual([])
   })
 })

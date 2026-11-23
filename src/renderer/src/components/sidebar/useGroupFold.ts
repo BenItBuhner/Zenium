@@ -1,20 +1,14 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import type { SavedGroupTab, Tab } from '@shared/types'
+import type { Tab } from '@shared/types'
 import { SPRING_GENTLE, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import { useListMotion } from './listMotion'
 
-/**
- * What a group's block draws under its header: its live member rows (`tabs`) and, on the
- * desktop, the pages a SAVED group keeps as rows of its own (`pages`, TAB-16's desktop half –
- * `SavedPageRow`). A group has one or the other: live regular members make it open, pages
- * with none make it saved.
- */
+/** What a group's block draws under its header: its live member rows. */
 export interface GroupRows {
   tabs: Tab[]
-  pages: SavedGroupTab[]
 }
 
-const NO_ROWS: GroupRows = { tabs: [], pages: [] }
+const NO_ROWS: GroupRows = { tabs: [] }
 
 /**
  * A tab group's fold on every host (TABLET-04, tabs-15; v2 §9.36 as amended, §11.4's container
@@ -35,10 +29,8 @@ const NO_ROWS: GroupRows = { tabs: [], pages: [] }
  * "storing information from previous renders", so they are there for the very commit that
  * folds) and go then; unfolding, the rows come back in that commit. The live rows are placed
  * for the list's FLIP (`SlideMotion.placeNext`) – their arrival is this motion's, not a row's
- * entry; a saved group's page rows have no motion of their own in the list (a page is a button
- * that opens the folder, no item that slides), so the clip is their whole arrival. Either kind
- * is kept through the fold, so the shell measures the whole block – the desktop's saved folder
- * folded shut and sprang open until its pages were kept (#360's F5). A fold caught mid-flight
+ * entry. The rows are kept through the fold, so the shell measures the whole block. A fold
+ * caught mid-flight
  * retargets from where it is. Under reduced motion the spring jumps: the cut (§11.3). The
  * horizontal strip (v2 §9.37) runs the same fold along its `axis`, `x`: the block's width
  * between the chip alone and the chip with its members, the fold clipped the same way.

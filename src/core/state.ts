@@ -114,6 +114,7 @@ import {
   createBookmarkRoots,
   defaultBookmarkFolderId,
   foldArchivedTabsIntoBookmarks,
+  foldPagesIntoBookmarks,
   foldReadingListIntoBookmarks,
   migrateLegacyBookmarks,
   normalizeBookmarkNodes
@@ -125,6 +126,9 @@ import {
   createSpace,
   createTabRecord,
   emptyModel,
+  getSpace,
+  insertTabIntoSpace,
+  regularFolderTabs,
   tabVisibleIn,
   userSpaceInstead,
   type Model
@@ -1036,6 +1040,68 @@ export class BrowserState {
   /** Re-run the consistency checks after bulk changes (sync). */
   repair(): void {
     this.ensureValid()
+  }
+
+  /**
+   * Zen has no saved (closed) folders: a folder an older build kept as SAVED – its tabs closed,
+   * its pages in `Folder.savedTabs` – comes back as a folder, folded shut. When the session
+   * continues its pages return as the folder's tabs, unloaded until picked; when the session's
+   * tabs are forgotten at this launch (`forgetSession`), the pages go to a bookmarks folder of
+   * the folder's name instead, so nothing kept is lost. Runs once, after the startup choice;
+   * the field is never written again.
+   */
+  migrateSavedFolders(asTabs: boolean): void {
+    const m = this.model
+    const now = Date.now()
+    let changed = false
+    for (const folder of Object.values(m.folders)) {
+      if (!('savedTabs' in folder)) continue
+      const raw = folder.savedTabs
+      delete folder.savedTabs
+      changed = true
+      if (!Array.isArray(raw) || regularFolderTabs(m, folder.id).length > 0) continue
+      const space = getSpace(m, folder.spaceId)
+      if (!space) continue
+      const pages = raw
+        .filter(
+          (p): p is { url: string; title?: unknown; favicon?: unknown } =>
+            Boolean(p) && typeof p === 'object' && typeof (p as { url?: unknown }).url === 'string'
+        )
+        .filter((p) => p.url)
+      if (pages.length === 0) continue
+      folder.collapsed = true
+      const usedAt = folder.lastUsedAt ?? now
+      if (!asTabs) {
+        this.bookmarks = foldPagesIntoBookmarks(
+          this.bookmarks,
+          pages.map((p) => ({
+            url: p.url,
+            title: typeof p.title === 'string' ? p.title : '',
+            addedAt: usedAt
+          })),
+          folder.name.trim() || 'Folder',
+          defaultBookmarkFolderId(this.platform),
+          now
+        )
+        continue
+      }
+      for (const page of pages) {
+        const tab = createTabRecord({
+          url: page.url,
+          title: typeof page.title === 'string' && page.title ? page.title : undefined,
+          favicon: typeof page.favicon === 'string' ? page.favicon : null,
+          spaceId: space.id,
+          containerId: space.containerId,
+          folderId: folder.id,
+          discarded: true,
+          createdAt: usedAt,
+          lastActiveAt: usedAt
+        })
+        m.tabs[tab.id] = tab
+        insertTabIntoSpace(m, space, tab)
+      }
+    }
+    if (changed) this.commit()
   }
 
   /**

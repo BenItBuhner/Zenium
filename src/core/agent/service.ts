@@ -2431,8 +2431,6 @@ export class AgentService implements SessionStore, McpHandlers {
     const m = this.browser.state.model
     const tabs = this.browser.tabs
     const win = this.agentWindow()
-    // Joining a group whose tabs the user closed must not resurrect the pages it kept.
-    if (group.savedTabs) group.savedTabs = null
     if (tab.spaceId !== group.spaceId)
       tabs.moveTab(
         tab.id,

@@ -1,9 +1,8 @@
 import type { CSSProperties, FocusEvent as ReactFocusEvent, JSX, Ref } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus, VenetianMask } from 'lucide-react'
-import type { Folder, SavedGroupTab, Space, Tab, UIState } from '@shared/types'
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
-import { getHost } from '@shared/url'
+import type { Folder, Space, Tab, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
@@ -31,7 +30,6 @@ import { GroupGlyph } from '../GroupGlyph'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { useLongPress } from '../phone/useLongPress'
 import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
-import { Favicon, type FaviconSource } from './Favicon'
 import { watchGutter } from './listGutter'
 import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { SlideSnapshot } from './SlideSnapshot'
@@ -544,15 +542,12 @@ interface FolderRowProps {
  * glyph, name, count, chevron – with the members indented beneath it; on the tablet the
  * full-width group row (§9.36). In the horizontal strip (§9.37, the list's axis `x`) the header
  * is the group's chip – 32 tall at radius 8, the one group glyph (`GroupGlyph`, §9.37: the 16 box,
- * the 10 colour dot, the 10 ring at a 2 stroke of a saved group, or the folder's own icon), the name at
+ * the 10 colour dot or the folder's own icon), the name at
  * 13/600 – ahead of its members, and the group's colour runs as one continuous 2 px line in the
  * band's top inset from the chip's start to the last member's end, bridging the gaps
  * (`.zen-strip-group-line` on the shell, never a dash per pill), wearing the colour as the §9.14
  * pair (`groupColorVars`, `data-group-rgb`) so the theme's pick recolours it with the glyph's
- * dot; the fold runs the shell's width on the spring. A SAVED group (TAB-16: its tabs closed,
- * its pages kept) is its chip alone along
- * the band – the ring, the name, the count of its pages as the aside – and a press on it opens
- * the folder (`folder.open`), as the tablet's saved row does; its menu is the folder's.
+ * dot; the fold runs the shell's width on the spring.
  */
 export function FolderRow({
   folder,
@@ -570,26 +565,22 @@ export function FolderRow({
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
   // The tablet's row (TABLET-04, v2 §9.36): the group as a full-width 44 row like Zen's folder –
-  // the colour dot or the saved ring in the glyph slot, the name, the count as a 13 aside, the
+  // the colour dot in the glyph slot, the name, the count as a 13 aside, the
   // chevron trailing, the tabs indented beneath while open – the phone overview's own group
   // header on the sidebar's grid; the fold on a spring (`useGroupFold`), the chevron turning
   // with it – one glyph rotated 90° on the fold's progress, the same value as the height
-  // (§9.36 as amended; the lead's #398 ruling binds both hosts); a SAVED group – its tabs
-  // closed, its pages kept (TAB-16) – as a row whose tap opens it.
+  // (§9.36 as amended; the lead's #398 ruling binds both hosts).
   //
   // The desktop's row (TAB-16's desktop half, tabs-15): Zen's folder header on §5's 32 row, the
-  // group's colour in the glyph slot alone – the same dot, saved ring or own icon as the tablet's
+  // group's colour in the glyph slot alone – the same dot or own icon as the tablet's
   // (`GroupGlyph`) – and the rows' 20 px indent as the bracket that says which rows are the
   // folder's (§9.36: no group line down the block, no fill across the row); the count as the
-  // tablet row's 13 tabular aside at 69%, folded and open alike – the tabs it holds, or the
-  // pages a saved one keeps; a SAVED folder stays in the strip as a saved group, a disclosure
-  // like any folder whose rows, while it is unfolded, are the pages it kept (`SavedPageRow`),
-  // and whose menu and editor open it. Its fold is the tablet's spring (`useGroupFold`, §9.36
-  // as amended): the block's height on SPRING_GENTLE with the rows it had – tabs or pages –
-  // kept drawn until the spring rests, the cut under reduced motion (§11.3).
+  // tablet row's 13 tabular aside at 69%, folded and open alike – the tabs it holds. Its fold
+  // is the tablet's spring (`useGroupFold`, §9.36 as amended): the block's height on
+  // SPRING_GENTLE with the rows it had kept drawn until the spring rests, the cut under reduced
+  // motion (§11.3).
   const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
   const row = groupRowOf(folder, tabs)
-  const saved = row.kind === 'saved'
   const lastClick = useRef(0)
   const collapsedBeforeClick = useRef(folder.collapsed)
   const containsActive = tabs.some((t) => t.id === activeTabId)
@@ -608,29 +599,14 @@ export function FolderRow({
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
   const shell = useRef<HTMLDivElement>(null)
   const header = useRef<HTMLDivElement>(null)
-  // The desktop's sidebar lists a saved folder's pages under its header while it is unfolded;
-  // the tablet's saved row has nothing to fold (its tap opens the group), and neither has the
-  // strip's saved chip (§9.37): along the band a saved group is its chip alone – the ring, the
-  // name, the count of the pages it keeps as the aside – and a press on it opens the folder.
-  const savedPages = !tablet && !horizontal && saved ? (folder.savedTabs ?? []) : []
-  // The fold keeps the rows it had – the tabs, or the pages – through the spring, so the block
-  // measures whole as it folds (a saved folder's pages are rows of the block as much as tabs).
-  const drawn = useGroupFold(
-    shell,
-    header,
-    folder.collapsed,
-    { tabs, pages: savedPages },
-    horizontal ? 'x' : 'y'
-  )
-  // The strip's saved chip opens the group, as the tablet's saved row does; the sidebar's saved
-  // folder is a disclosure over its pages.
-  const opensOnPress = saved && (tablet || horizontal)
+  // The fold keeps the rows it had through the spring, so the block measures whole as it folds.
+  const drawn = useGroupFold(shell, header, folder.collapsed, { tabs }, horizontal ? 'x' : 'y')
   const count = row.count
   const unit = count === 1 ? 'tab' : 'tabs'
   const description =
     tablet || horizontal
-      ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
-      : `${live ? 'Live folder' : 'Folder'}, ${saved ? 'saved, ' : ''}${count} ${unit}`
+      ? `Tab group, ${count} ${unit}`
+      : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
   // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
   // menu on the release, the click after it swallowed): the group's menu as a §9.36 popover at
   // the finger.
@@ -661,7 +637,7 @@ export function FolderRow({
         role="button"
         aria-label={folder.name}
         aria-description={description}
-        aria-expanded={opensOnPress ? undefined : !folder.collapsed}
+        aria-expanded={!folder.collapsed}
         data-strip-item={key}
         tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
@@ -669,23 +645,14 @@ export function FolderRow({
         data-drop-into={isDropTarget || undefined}
         data-tab-folder={folder.id}
         data-strip-group={horizontal ? folder.id : undefined}
-        data-saved={saved || undefined}
         onFocus={stripFocusIn}
         onBlur={stripFocusOut}
         onKeyDown={stripKeyDown}
         onClick={() => {
           if (tablet) {
-            // A hold's release is the menu's, not a tap; the name being edited takes the taps;
-            // a saved group's tap brings its pages back.
+            // A hold's release is the menu's, not a tap; the name being edited takes the taps.
             if (press.swallowsClick() || renaming) return
-            if (saved) run('folder.open', { folderId: folder.id })
-            else toggle()
-            return
-          }
-          if (opensOnPress) {
-            // The strip's saved chip (§9.37): a press brings the pages back as the group's
-            // tabs; there is nothing along the band to fold.
-            if (!renaming) run('folder.open', { folderId: folder.id })
+            toggle()
             return
           }
           const now = performance.now()
@@ -716,8 +683,8 @@ export function FolderRow({
         {horizontal ? (
           <>
             {/* The chip's glyph is the shared group glyph (§9.36 / §9.37): the 16 box with the
-                10 colour dot, the saved ring, or the folder's own icon – one glyph on every host. */}
-            <GroupGlyph folder={folder} saved={saved} />
+                10 colour dot or the folder's own icon – one glyph on every host. */}
+            <GroupGlyph folder={folder} />
             {renaming ? (
               <FolderRename folder={folder} />
             ) : (
@@ -727,17 +694,6 @@ export function FolderRow({
                 data-testid="group-chip-name"
               >
                 {folder.name}
-              </span>
-            )}
-            {/* A saved group's members are not along the band, so its chip carries the count
-                of the pages it keeps as the row's 13 tabular aside (§9.36); an open group's
-                tabs are its own count. */}
-            {saved && !renaming && (
-              <span
-                className="shrink-0 text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
-                data-testid="group-chip-count"
-              >
-                {count}
               </span>
             )}
             {live && (
@@ -752,7 +708,7 @@ export function FolderRow({
           </>
         ) : tablet ? (
           <>
-            <GroupGlyph folder={folder} saved={saved} />
+            <GroupGlyph folder={folder} />
             {!compact &&
               (renaming ? (
                 <FolderRename folder={folder} />
@@ -764,25 +720,18 @@ export function FolderRow({
                   <span className="zen-group-row-count" data-testid="group-row-count">
                     {count}
                   </span>
-                  {/* A saved group has nothing to fold: its chevron's box stays, empty, so the
-                      counts of saved and open rows share one edge. An open group's chevron is
-                      the ONE glyph, turned 90° by the fold's progress (`.zen-group-row-chevron`,
+                  {/* The chevron is the ONE glyph, turned 90° by the fold's progress (`.zen-group-row-chevron`,
                       `--zen-fold-progress`): › folded, ⌄ open, and every angle between as the
                       rows fold – never a swap at the commit. */}
-                  {saved ? (
-                    <span className="zen-group-row-chevron" aria-hidden />
-                  ) : (
-                    <ChevronRight className="zen-group-row-chevron" aria-hidden />
-                  )}
+                  <ChevronRight className="zen-group-row-chevron" aria-hidden />
                 </>
               ))}
           </>
         ) : (
           <>
-            {/* The group's mark in the glyph slot – the 10 dot of its colour, the 2 px ring for
-                a saved one, the folder's own icon where it has one – the tablet row's and the
-                phone card's (Chrome's saved-group mark is the hollow one). */}
-            <GroupGlyph folder={folder} saved={saved} />
+            {/* The group's mark in the glyph slot – the 10 dot of its colour, the folder's own
+                icon where it has one – the tablet row's and the phone card's. */}
+            <GroupGlyph folder={folder} />
             {!compact &&
               (renaming ? (
                 <FolderRename folder={folder} />
@@ -803,7 +752,7 @@ export function FolderRow({
                     />
                   )}
                   {/* The count as the tablet row's 13 tabular aside at 69% (§9.36), folded and
-                      open alike: the tabs the folder holds, or the pages a saved one keeps. */}
+                      open alike: the tabs the folder holds. */}
                   <span
                     className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
                     data-testid="group-count"
@@ -854,24 +803,6 @@ export function FolderRow({
           </TabSet>
         </div>
       )}
-      {/* A saved folder's pages, unfolded (the sidebar's disclosure): buttons that open the
-          folder, not tabs – so a run of their own under the header, outside any tablist (a
-          tablist holds tabs alone); kept drawn while the fold shuts over them. */}
-      {drawn.pages.length > 0 && (
-        <div className="zen-group-rows flex flex-col gap-0.5" data-saved-pages={folder.id}>
-          {drawn.pages.map((page, index) => (
-            <SavedPageRow
-              key={`${index}:${page.url}`}
-              folder={folder}
-              page={page}
-              index={index}
-              count={drawn.pages.length}
-              compact={compact}
-              parent={key}
-            />
-          ))}
-        </div>
-      )}
       {horizontal && (
         <span
           className="zen-strip-group-line"
@@ -880,78 +811,6 @@ export function FolderRow({
           style={groupColorVars(folder.color) as CSSProperties}
           aria-hidden
         />
-      )}
-    </div>
-  )
-}
-
-/**
- * A page a saved folder keeps (TAB-16's desktop half), listed under the unfolded header as a
- * row of the folder: §5's 32 row, indented as the folder's tabs are, with the page's favicon at
- * 16 and its title in the deemphasised 69% (the sleeping row's fade: a page, not a live tab – no
- * close, no audio, no drag). The live row's trailing slot – the 24 px its close control takes –
- * stays reserved and empty, so the title's edge holds as the folder closes and opens again and
- * a name truncates the same way in both rows. A press, Enter or Space opens the folder, which
- * brings every page back as its tabs (`folder.open`); the row is a strip item in the tab order
- * (`saved:<id>:<n>`, lib/tabStrip.ts) and its context menu is the folder's.
- */
-function SavedPageRow({
-  folder,
-  page,
-  index,
-  count,
-  compact,
-  parent
-}: {
-  folder: Folder
-  page: SavedGroupTab
-  index: number
-  count: number
-  compact: boolean
-  parent: string
-}): JSX.Element {
-  const key = `saved:${folder.id}:${index}`
-  const tabIndex = useStripTabIndex(key, false)
-  const title = page.title.trim() || getHost(page.url) || page.url
-  const source: FaviconSource = {
-    url: page.url,
-    title,
-    favicon: page.favicon ?? null,
-    customIcon: null,
-    customTitle: null,
-    loading: false,
-    discarded: false,
-    containerId: DEFAULT_CONTAINER_ID
-  }
-  return (
-    <div
-      className={cn('zen-tab zen-saved-page', compact && 'justify-center px-0', 'ml-5')}
-      role="button"
-      aria-label={title}
-      aria-description={`Saved page ${index + 1} of ${count}, opens the folder`}
-      data-saved-page={index}
-      data-indent
-      data-strip-item={key}
-      data-strip-parent={parent}
-      tabIndex={tabIndex}
-      data-tooltip={compact ? title : undefined}
-      onFocus={stripFocusIn}
-      onBlur={stripFocusOut}
-      onKeyDown={stripKeyDown}
-      onClick={() => run('folder.open', { folderId: folder.id })}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
-      }}
-    >
-      <Favicon tab={source} />
-      {!compact && (
-        <>
-          <span className="zen-tab-title min-w-0 flex-1" data-testid="saved-page-title">
-            {title}
-          </span>
-          <span className="h-6 w-6 shrink-0" data-testid="saved-page-slot" aria-hidden />
-        </>
       )}
     </div>
   )

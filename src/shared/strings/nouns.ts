@@ -15,7 +15,7 @@ const LEGACY_GROUP_NAME = 'Group'
 
 /**
  * Whether a folder still wears a default name – no name at all, "New Folder", or the touch hosts'
- * old "Group" – so a message about it can leave the name out ("Folder closed and saved") where a
+ * old "Group" – so a message about it can leave the name out ("Folder closed") where a
  * folder the user named is called by that name.
  */
 export function isDefaultGroupName(name: string | undefined | null): boolean {

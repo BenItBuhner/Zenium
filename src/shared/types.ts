@@ -943,13 +943,6 @@ export type FolderColor =
  */
 export type FolderColorScheme = Exclude<ColorScheme, 'system'>
 
-/** A page of a saved (closed) group: what "Open" brings back (Chrome's saved tab groups). */
-export interface SavedGroupTab {
-  url: string
-  title: string
-  favicon?: string | null
-}
-
 /**
  * The mark an MCP agent's group carries (`Folder.agent`): whose it is, and since when. `name` is
  * the display name of the session that made the group, kept current while that session lives
@@ -986,15 +979,11 @@ export interface Folder {
    */
   agent?: FolderAgentMark | null
   /**
-   * Chrome's saved tab groups (Android's Tab groups pane, TAB-16): the group's pages as they
-   * were when its last live member closed – the whole group on "Close group" (`folder.close`),
-   * the last member alone when the members were closed one by one, as Chrome's saved group
-   * mirrors its live tabs – so the group stays listed as SAVED with its pages, and "Open"
-   * (`folder.open`) brings them back into it, in order. Meaningful only while the group has no
-   * live member: a group with members is open, and this is cleared as it opens or a tab joins
-   * it. Additive and local: a folder without it is as before, and the sync record ignores it.
+   * @deprecated The pages of a closed ("saved") group, from builds before folders took Zen's
+   * shape. Read once at startup, where they come back as the folder's tabs
+   * (`BrowserState.migrateSavedFolders`), and never written again.
    */
-  savedTabs?: SavedGroupTab[] | null
+  savedTabs?: unknown
   /**
    * When the group was last used – a member activated, a tab joining, the group closed or
    * opened – as ms since the epoch; the Tab groups pane's "last used". Local, never synced.
@@ -5374,17 +5363,14 @@ export interface CommandDescriptor {
 export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
 /**
- * A tab group's mark before a row's label (the app menu's Tab Folders submenu, where every row
- * is a saved group; shortcuts-menus-111): the one group glyph (`GroupGlyph`, design language
- * v2 §9.37) drawn from the group's colour and its own icon – the 10 ring at a 2 stroke for a
- * SAVED group, the 10 dot for an open one – in the favicon's 16 box, so the row reads as the
+ * A tab group's mark before a row's label: the one group glyph (`GroupGlyph`, design language
+ * v2 §9.37) drawn from the group's colour and its own icon – the 10 dot – in the favicon's 16 box, so the row reads as the
  * sidebar's header and the strip's chip do. A native menu host has no such glyph and draws
  * the row as text.
  */
 export interface MenuGroupMark {
   color: FolderColor | null
   icon: string
-  saved: boolean
 }
 
 /**
@@ -5941,24 +5927,19 @@ export interface Commands {
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   /**
-   * Chrome's "Close group" on a host with saved groups (Android, TAB-16): the group's tabs close
-   * (to the recently closed list, so the close has an undo) and the group stays as a saved one
-   * holding their pages (`Folder.savedTabs`). Nothing happens to a group with no live member.
+   * Close Folder: the folder's tabs close (to the recently closed list, so the close has an
+   * undo) and the folder stays, folded. Nothing happens to a folder with no live member.
    */
   'folder.close': { args: { folderId: string }; result: void }
   /**
-   * "Open" a saved group: its pages come back as tabs of the group, in their order, at the end
-   * of the space's tabs, the first one active; an open group is expanded and its first tab
-   * activated instead. Resolves with the tab made active, or null when there was nothing to
-   * open.
+   * Open a folder: it is expanded and its first tab activated. Resolves with that tab, or null
+   * when there was nothing to open.
    */
   'folder.open': { args: { folderId: string }; result: string | null }
   'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
-   * folder's space and the container of its last member. A SAVED folder opens first – its pages
-   * back as its tabs, as `folder.open` brings them – and the new tab joins behind them.
-   * Resolves with the new tab's id.
+   * folder's space and the container of its last member. Resolves with the new tab's id.
    */
   'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: MenuAnchor | void; result: void }
@@ -7861,8 +7842,8 @@ export interface Events {
   /**
    * Close the group's tabs with Undo on the toast (the touch hosts' group menu's "Close Group (N
    * Tabs)", TAB-16): the chrome runs `folder.close` through its one close-with-undo
-   * (`lib/closeUndo.ts`) so the toast reads "<Name> tab group closed and saved" and Undo brings
-   * the tabs back into the group, which re-opens. The desktop's folder menu never emits it: its
+   * (`lib/closeUndo.ts`) so the toast reads "<Name> closed" and Undo brings the tabs back into
+   * the folder. The desktop's folder menu never emits it: its
    * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
    */
   'folder.closeUndoable': { folderId: string }

@@ -1674,6 +1674,7 @@ export class Browser {
     // in the one window kept – Settings › On startup).
     this.launchStartup = this.startupPlan()
     if (this.launchStartup.mode !== 'continue') this.state.forgetSession()
+    this.state.migrateSavedFolders(this.launchStartup.mode === 'continue')
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
@@ -2209,10 +2210,7 @@ export class Browser {
    * Chrome's "Open all in new tab group" (bookmarks-41): the bookmark folder's pages open as
    * the tabs of a new tab folder named after it, in the window's space (a private window's own
    * space: a private group there, as any folder its tabs make), wearing the next free colour as
-   * every new group. The folder model has no saved-or-plain choice to make at birth – a folder
-   * is open while it holds live regular tabs and becomes a saved one, its pages kept, when the
-   * last of them closes (`saveFolderOnLastClose`) – so this makes an open folder that lives on
-   * like any other. The name is given, so no editor opens (unlike "Add tab to new group"); the
+   * every new group: an ordinary folder that lives on like any other. The name is given, so no editor opens (unlike "Add tab to new group"); the
    * threshold's question is asked before anything is made, and a "no" makes no folder.
    */
   async openBookmarksInFolder(id: string, win: ZenWindow): Promise<void> {
@@ -2374,16 +2372,12 @@ export class Browser {
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
    * member, in that member's container – active, with the new tab page (or the URL bar) as any
-   * new tab. On a SAVED folder the folder opens first – its pages back as its tabs, as Open
-   * Folder brings them – and the new tab joins behind them (open-then-add): the row takes a
-   * tab without losing what the folder kept. Resolves with the tab's id.
+   * new tab. Resolves with the tab's id.
    */
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    this.tabs.restoreSavedFolder(folderId, win)
-    // The group's members are its regular ones – the pages just brought back among them: a
-    // private tab in it lends neither its place nor its container to a tab the group's menu
+    // The group's members are its regular ones: a private tab in it lends neither its place nor its container to a tab the group's menu
     // makes.
     const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
@@ -2430,20 +2424,14 @@ export class Browser {
     this.state.commit()
   }
 
-  /**
-   * Chrome's "Close group" where groups are saved (TAB-16): the tabs close, the group stays as a
-   * saved one with their pages (`Folder.savedTabs`), listed in the Tab groups pane until it is
-   * opened again or deleted.
-   */
+  /** Close Folder: its tabs close (to the recently closed list) and the folder stays, folded. */
   closeFolder(folderId: string, win: ZenWindow = this.focusedWindow()): void {
     this.tabs.closeFolderTabs(folderId, win)
   }
 
   /**
-   * "Open" a saved group (TAB-16): its pages come back as tabs of the group, in the order they
-   * were kept, at the end of the space's regular tabs – unloaded but for the first, which is
-   * made active – and the group is expanded. An open group is expanded and its first member
-   * activated instead. Resolves with the tab made active, or null with nothing to open.
+   * Open a folder: it unfolds and its first member is activated. Resolves with that tab, or
+   * null for a folder with no tab to show.
    */
   openFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string | null {
     const m = this.state.model
@@ -2452,20 +2440,12 @@ export class Browser {
     // The group's live members are its regular ones: a private tab in it is not what a regular
     // surface's row opens (`regularFolderTabs`).
     const live = regularFolderTabs(m, folderId)
-    if (live.length > 0) {
-      folder.collapsed = false
-      folder.lastUsedAt = Date.now()
-      this.tabs.activateTab(live[0].id, win)
-      this.state.commit()
-      return live[0].id
-    }
-    // The pages back as the group's tabs, at the end of the space's tabs as Chrome reopens a
-    // saved group, in their order; the group unfolded and used now (`restoreSavedFolder`).
-    const restored = this.tabs.restoreSavedFolder(folderId, win)
-    if (restored.length === 0) return null
-    this.tabs.activateTab(restored[0].id, win)
+    if (live.length === 0) return null
+    folder.collapsed = false
+    folder.lastUsedAt = Date.now()
+    this.tabs.activateTab(live[0].id, win)
     this.state.commit()
-    return restored[0].id
+    return live[0].id
   }
 
   /** Delete a space without asking (sync applied a deletion made elsewhere). */
@@ -3238,9 +3218,6 @@ export class Browser {
       case 'folder': {
         const folder = m.folders[drop.folderId]
         if (!folder) return
-        // A SAVED folder opens first, as it does for a tab dropped on it (`moveToFolder`): its
-        // pages back as its tabs, the dropped addresses behind them.
-        tabs.restoreSavedFolder(folder.id, win)
         placement = {
           spaceId: folder.spaceId,
           section: 'regular',

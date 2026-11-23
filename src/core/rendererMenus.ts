@@ -28,7 +28,7 @@ export function serialiseMenu(
         checked: Boolean(item.checked),
         icon: item.icon ?? null,
         submenu: item.submenu ? serialise(item.submenu) : null,
-        // Only an icon-row item carries a glyph, only a saved group's row its mark, only a
+        // Only an icon-row item carries a glyph, only a group's row its mark, only a
         // device's row its kind, only a bound action a chord, only an empty state's sentence the
         // note, only a destructive item the danger, only a field-mounting item the kept keyboard,
         // only an item standing for a shortcut action the action, only the managed row its

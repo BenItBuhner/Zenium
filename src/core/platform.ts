@@ -1578,9 +1578,8 @@ export interface MenuItemTemplate {
    */
   icon?: string | null
   /**
-   * A tab group's mark before the label of a renderer-drawn menu's row (the app menu's Tab
-   * Groups submenu, shortcuts-menus-111): the chrome draws the one group glyph from the group's
-   * colour and icon, the ring for a saved group. Native menu hosts draw the row as text.
+   * A tab group's mark before the label of a renderer-drawn menu's row: the chrome draws the
+   * one group glyph from the group's colour and icon. Native menu hosts draw the row as text.
    */
   group?: MenuGroupMark
   /**

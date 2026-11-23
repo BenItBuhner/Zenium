@@ -42,7 +42,6 @@ import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
 import { useFaviconSrc } from '@renderer/lib/favicons'
-import { regularMembers } from '@renderer/lib/groupRows'
 import { DEFAULT_GROUP_COLOR } from '@renderer/lib/groups'
 import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
@@ -833,8 +832,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           if (item.targetId) run('tab.activate', { tabId: item.targetId })
           break
         case 'folder':
-          // "Open tab group" (OMN-15): the group unfolded and its first tab shown, or a saved
-          // group's pages back – the Tab groups pane's Open (`folder.open`).
+          // "Open tab group" (OMN-15): the group unfolded and its first tab shown (`folder.open`).
           if (item.targetId) run('folder.open', { folderId: item.targetId })
           break
         case 'space':
@@ -1417,12 +1415,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // trailing text (a page's host, an answer's expression, an engine row's "Search <engine>").
   const firstSearch = results.findIndex((r) => r.kind === 'search')
   // A tab group's row (OMN-15) draws its group's glyph – the group as the chrome has it now, so
-  // a recolour or a save lands on the row – and names it a folder.
+  // a recolour lands on the row – and names it a folder.
   const groupOf = (item: Suggestion): SuggestionGroup | undefined => {
     const folder = item.kind === 'folder' && item.targetId ? state.folders[item.targetId] : null
     if (!folder) return undefined
-    const live = Object.values(state.tabs).filter((t) => t.folderId === folder.id)
-    return { folder, saved: regularMembers(live).length === 0 && Boolean(folder.savedTabs?.length) }
+    return { folder }
   }
 
   // The rows that stay: a leaving row (OMN-17) is drawn as a ghost out of the flow and takes no
@@ -2120,10 +2117,9 @@ function PageHeader({
   )
 }
 
-/** A tab group row's group (OMN-15), as the chrome has it: the folder, and whether it is saved. */
+/** A tab group row's group (OMN-15), as the chrome has it. */
 interface SuggestionGroup {
   folder: Folder
-  saved: boolean
 }
 
 /**
@@ -2174,7 +2170,7 @@ function SuggestionRow({
   onPick: (e: React.MouseEvent) => void
   /**
    * A tab group row's group (OMN-15), for its glyph – the one group glyph (`GroupGlyph`, §9.37)
-   * in the favicon slot, the saved ring for a saved group – and its colour's name; unset while
+   * in the favicon slot – and its colour's name; unset while
    * the row outlives its group, when the kind's folder glyph stands in.
    */
   group?: SuggestionGroup
@@ -2278,12 +2274,11 @@ function SuggestionRow({
   // 69%, §10.4's one exception; a kind's glyph (the clock, the star, the magnifier) says what
   // the row is and is no stand-in.
   const standIn = !favicon && !page && item.kind === 'url'
-  // A tab group's row (OMN-15) wears its group's glyph – the 10 dot, the saved ring, the
-  // folder's own icon – as every other mark of a group does (§9.37), not the kind's glyph.
+  // A tab group's row (OMN-15) wears its group's glyph – the 10 dot or the folder's own icon – as every other mark of a group does (§9.37), not the kind's glyph.
   const isGroup = item.kind === 'folder'
   const icon =
     isGroup && group ? (
-      <GroupGlyph folder={group.folder} saved={group.saved} />
+      <GroupGlyph folder={group.folder} />
     ) : favicon ? (
       <img
         src={favicon}

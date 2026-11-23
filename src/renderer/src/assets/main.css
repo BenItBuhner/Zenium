@@ -10318,10 +10318,6 @@
   border-radius: 50%;
   background: rgb(var(--zen-group-rgb));
 }
-.zen-group-row-glyph[data-saved] .zen-group-row-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
-}
 .zen-group-row-icon {
   font-size: calc(14px / var(--zen-text-zoom, 1));
   line-height: 1;

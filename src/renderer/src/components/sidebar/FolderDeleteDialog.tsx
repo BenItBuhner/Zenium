@@ -13,8 +13,7 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog'
  * glyph, one line at 15 in the deemphasised ink on what goes, then Cancel and the danger verb,
  * no primary (§6) – at §9.20's 320 over the active page's picture, centred in the content frame
  * under the frame's scrim (§9.5), through TabDialogs' `FrameDialogHost`. Deleting an open folder
- * closes its tabs with it (each to Recently Closed); deleting a saved folder forgets the pages
- * it kept, which nothing brings back. The tablet's group menu (TAB-16's tablet half) lands here
+ * closes its tabs with it (each to Recently Closed). The tablet's group menu (TAB-16's tablet half) lands here
  * too, and the words follow the host (v2 §6): a nameless group's question says "folder" on the
  * desktop and "this group" – the phone sheet's – on the touch layouts.
  *
@@ -35,9 +34,7 @@ export function FolderDeleteDialog({
   request: NonNullable<UiState['folderDeleteConfirm']>
 }): JSX.Element | null {
   const folder = state.folders[request.folderId]
-  const live = Object.values(state.tabs).filter((t) => t.folderId === request.folderId).length
-  const saved = live === 0 ? (folder?.savedTabs?.length ?? 0) : 0
-  const count = live || saved
+  const count = Object.values(state.tabs).filter((t) => t.folderId === request.folderId).length
   // The folder went, or emptied, under the question (deleted or opened in another window): the
   // question goes with it.
   useEffect(() => {
@@ -50,7 +47,6 @@ export function FolderDeleteDialog({
       folderId={folder.id}
       name={folder.name}
       count={count}
-      saved={live === 0}
       keyboard={request.keyboard}
     />
   )
@@ -60,16 +56,14 @@ function FolderDeletePrompt({
   folderId,
   name,
   count,
-  saved,
   keyboard
 }: {
   folderId: string
   name: string
   count: number
-  saved: boolean
   keyboard: boolean
 }): JSX.Element {
-  const words = folderDeleteWords(name, count, saved)
+  const words = folderDeleteWords(name, count)
   /** How the prompt was answered, for the return: only a keyboard's Cancel goes to the header. */
   const answer = useRef<'cancel' | 'delete' | null>(null)
   const cancel = (): void => {

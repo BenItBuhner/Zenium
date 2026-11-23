@@ -198,7 +198,7 @@ function rowSheet(row: GroupRow): SheetPicks {
   return picks
 }
 
-describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
+describe('the group row’s sheet (§9.1, §6)', () => {
   it('for a group come open under it: Show in Tabs, Rename, Close Group (N Tabs) in the plain ink, Delete Group in the danger ink', () => {
     const rows = rowsOf([folder('work')], [tab('w1', 'work'), tab('w2', 'work')])
     rowSheet(rows.open[0])
@@ -245,16 +245,6 @@ describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
       folderId: 'work',
       patch: { color: 'green' }
     })
-  })
-
-  it('for a saved group: Open (N Tabs), Rename, Delete Group – nothing to close; one page in the singular', () => {
-    const rows = rowsOf([
-      folder('trip', { savedTabs: [{ url: 'https://t.example/', title: 't' }] })
-    ])
-    rowSheet(rows.saved[0])
-    expect(sheetLabels()).toEqual(['Open (1 Tab)', 'Rename', 'Delete Folder'])
-    expect(sheetItem('Delete Folder').style.color).toBe('var(--zen-danger)')
-    expectHairlineBefore('Delete Folder')
   })
 
   it('for an empty group: Rename and Delete Group alone', () => {
@@ -306,7 +296,7 @@ describe('Delete Group’s prompt (§9.23)', () => {
       'Its 3 tabs close with it; Recently Closed keeps their pages.'
     )
     expect(sheet.textContent).not.toContain('Undo')
-    expect(sheet.textContent).toContain(folderDeleteWords('Work', 3, false).detail)
+    expect(sheet.textContent).toContain(folderDeleteWords('Work', 3).detail)
     const buttons = all('.zen-sheet .zen-sheet-footer button')
     expect(buttons.map((b) => b.textContent?.trim())).toEqual(['Cancel', 'Delete'])
     expect(buttons[0].hasAttribute('data-danger')).toBe(false)
@@ -316,33 +306,6 @@ describe('Delete Group’s prompt (§9.23)', () => {
     act(() => buttons[0].click())
     settle()
     expect(confirmed).toEqual([])
-  })
-
-  it('for a saved group says its pages are forgotten with no undo', () => {
-    const rows = rowsOf([
-      folder('trip', {
-        savedTabs: [
-          { url: 'https://a.example/', title: 'a' },
-          { url: 'https://b.example/', title: 'b' }
-        ]
-      })
-    ])
-    const confirmed: GroupRow[] = []
-    render(
-      <>
-        <FrameDialogHost frame />
-        <DeleteGroupSheet row={rows.saved[0]} onClose={noop} onConfirm={(r) => confirmed.push(r)} />
-      </>
-    )
-    const sheet = q<HTMLElement>('.zen-sheet[role="dialog"]')!
-    expect(sheet.textContent).toContain('Delete Trip?')
-    expect(sheet.textContent).toContain(
-      'Its 2 saved pages are forgotten with it. There is no undo.'
-    )
-    expect(sheet.textContent).toContain(folderDeleteWords('Trip', 2, true).detail)
-    act(() => q<HTMLElement>('[data-testid="overview-delete-group-confirm"]')!.click())
-    settle()
-    expect(confirmed.map((r) => r.folder.id)).toEqual(['trip'])
   })
 
   it('for a group with no name asks "Delete this group?" (v2 §6, the touch hosts’ noun; #711’s fallback), one tab in the singular', () => {

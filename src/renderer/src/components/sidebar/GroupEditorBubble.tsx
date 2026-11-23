@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { FolderOpen, Plus, Trash2, Ungroup, X } from 'lucide-react'
+import { Plus, Trash2, Ungroup, X } from 'lucide-react'
 import { touchLayout } from '@shared/formFactor'
 import type { Folder, FolderColor, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
@@ -36,7 +36,6 @@ const WORDS = {
   title: 'Edit folder',
   placeholder: 'Name this folder',
   actions: 'Folder actions',
-  open: 'Open folder',
   newTab: 'New tab in folder',
   unpack: 'Unpack folder',
   close: 'Close folder',
@@ -79,15 +78,11 @@ export function GroupEditorLayer(): JSX.Element | null {
  * round swatches, a radio group (§9.14's swatch form: the picked one wears the 2 px accent
  * outline 2 px outside its edge). Under a hairline, the group's actions as `.zen-v2-row` rows
  * with a leading 16 px glyph (§9.34): New tab in folder, Unpack folder (Chrome's Ungroup), Close
- * folder with its tab count (Chrome's Close group – the tabs close and the folder stays SAVED
- * with their pages, TAB-16, so the plain ink) and Delete folder in the danger ink, which asks
- * first when the folder holds anything (`requestFolderDelete`); a saved folder – its tabs
- * closed, its pages kept – has Open folder with the count of the tabs it brings back (the
- * menu's noun, one for one number), New tab in folder (the core opens the folder first) and
- * Delete folder. On the touch layout – the tablet, after a group is made from its tab menu –
- * the nouns read Group ({@link WORDS}; §6, TABLET-22) and Close goes the phone's undoable way
+ * folder with its tab count (the tabs close and the folder stays, folded, so the plain ink) and
+ * Delete folder in the danger ink, which asks first when the folder holds anything
+ * (`requestFolderDelete`). On the touch layout Close goes the phone's undoable way
  * (`closeGroupUndoable`: the tabs close through the core's `folder.close` as here, and the toast
- * that follows, "<Name> tab group closed and saved", offers Undo); the desktop's bubble is the
+ * that follows offers Undo); the desktop's bubble is the
  * one it always was, by the same condition. It renders through
  * the chrome layer (`ChromePortal`) over a picture of the page (`holdFloatingChrome`) and the
  * layer's light dismiss puts it away: a press anywhere else closes it on `pointerdown` and
@@ -226,19 +221,10 @@ function GroupEditorBubble({
   useBackSurface({ name: 'group-editor', onCommit: close })
 
   if (!ready) return null
-  // A SAVED folder (TAB-16's desktop half): its tabs closed, its pages kept. Its actions are
-  // Open folder – the pages come back as its tabs – New tab in folder and Delete folder; an
-  // open folder's are New tab, Unpack, Close (the tabs close, the folder stays saved with their
-  // pages) and Delete. New tab in a saved folder opens it first – its pages back as its tabs –
-  // and adds the tab behind them (the model's open-then-add, `newTabInFolder`), so the
-  // plain-ink row loses nothing (§5, §9.1). One noun for one number: the count beside Open
-  // folder and Close folder reads "N tabs" as the menu's Open Folder (N Tabs) and Close Folder
-  // (N Tabs) do – the tabs the folder brings back, or closes – in the bubble's lower-case
-  // register.
-  const saved = count === 0 && Boolean(folder.savedTabs?.length)
-  const countLabel = (n: number): string => `${n} ${n === 1 ? 'tab' : 'tabs'}`
-  const tabsLabel = countLabel(count)
-  const savedLabel = countLabel(folder.savedTabs?.length ?? 0)
+  // A folder's actions are New tab, Unpack, Close (the tabs close, the folder stays) and
+  // Delete. The count beside Close folder reads "N tabs" as the menu's Close Folder (N Tabs)
+  // does, in the bubble's lower-case register.
+  const tabsLabel = `${count} ${count === 1 ? 'tab' : 'tabs'}`
   const deleteFolder = (): void => {
     // The prompt's Cancel hands the keyboard back to the header when the bubble had it (§9.22);
     // read before the bubble goes, since the prompt takes its place (§9.20).
@@ -300,18 +286,6 @@ function GroupEditorBubble({
             </div>
           </div>
           <div className="zen-group-editor-actions" role="group" aria-label={words.actions}>
-            {saved && (
-              <button
-                type="button"
-                className="zen-v2-row zen-group-editor-action"
-                data-action="open"
-                onClick={() => act(() => run('folder.open', { folderId: folder.id }))}
-              >
-                <FolderOpen className={V2_GLYPH} aria-hidden />
-                <span className="zen-v2-label truncate">{words.open}</span>
-                <span className="zen-v2-description zen-group-editor-count">{savedLabel}</span>
-              </button>
-            )}
             <button
               type="button"
               className="zen-v2-row zen-group-editor-action"
@@ -334,9 +308,8 @@ function GroupEditorBubble({
                   <Ungroup className={V2_GLYPH} aria-hidden />
                   <span className="zen-v2-label truncate">{words.unpack}</span>
                 </button>
-                {/* Chrome's Close group: the tabs close, the folder stays saved with their
-                    pages – it destroys nothing the saved folder does not keep, so the plain
-                    ink (§6); Delete alone takes the danger ink. The touch layout's close is
+                {/* Close folder: the tabs close to Recently Closed and the folder stays, so
+                    the plain ink (§6); Delete alone takes the danger ink. The touch layout's close is
                     the group row menu's (`folder.closeUndoable`'s route): Undo on the toast. */}
                 <button
                   type="button"

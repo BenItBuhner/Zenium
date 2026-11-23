@@ -7,10 +7,9 @@ import type {
   Suggestion
 } from '../../shared/types'
 import { NEW_FOLDER_NAME } from '../../shared/groupNames'
-import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
-import { createSpace, createTabRecord, isPrivateFolder, isSavedFolder } from '../model'
+import { isPrivateFolder } from '../model'
 import type {
   MenuHost,
   MenuItemTemplate,
@@ -21,15 +20,12 @@ import type {
   TabViewHost,
   WindowHost
 } from '../platform'
-import { PERSISTED_VERSION } from '../state'
 import type { ZenWindow } from '../window'
 
 /**
- * Saved tab groups (TAB-16, Chrome for Android's Tab groups pane): closing a group's tabs keeps
- * the group as a saved one with their pages (`Folder.savedTabs`), "Open" brings them back into
- * it in order, and the group's name and colour survive the round trip; the link menu's "Open
- * Link in New Tab in Group" (TAB-15) for a tab in a group on a touch host; and the touch host's
- * group menu (TABLET-04, the tablet sidebar row's hold; `groupMenu`) by the group's state.
+ * Folders without saved groups: Close Folder closes the tabs and the folder stays; a folder an
+ * older build saved is migrated; the link menu's "Open Link in New Tab in Folder" (TAB-15) for a
+ * tab on a touch host; the one folder menu; private tabs in folders; the omnibox's group row.
  */
 
 /** The profile's files by name, `files` being what the store starts from and writes into. */
@@ -178,312 +174,80 @@ const linkParams = (linkURL: string): PageContextParams => ({
   }
 })
 
-describe('a saved group (TAB-16)', () => {
-  it('folder.close closes the tabs and keeps the group with their pages, in order', () => {
+describe('a folder outlives its tabs (Zen has no saved groups)', () => {
+  it('folder.close closes the tabs to Recently Closed and keeps the folder, empty and folded', () => {
     const h = harness()
     const m = h.browser.state.model
     const loose = h.open('https://loose.test/')
     const folder = h.group('Trip')
     const a = h.open('https://a.test/', { folderId: folder })
     const b = h.open('https://b.test/', { folderId: folder })
-    const c = h.open('https://c.test/', { folderId: folder })
-    m.tabs[b].title = 'B page'
-    m.tabs[b].favicon = 'https://b.test/icon.png'
-    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
 
     h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
 
-    for (const id of [a, b, c]) expect(h.browser.tabs.tab(id)).toBeUndefined()
+    for (const id of [a, b]) expect(h.browser.tabs.tab(id)).toBeUndefined()
     expect(h.browser.tabs.tab(loose)).toBeDefined()
-    expect(m.folders[folder]).toMatchObject({ name: 'Trip', color: 'blue' })
-    expect(m.folders[folder].savedTabs).toEqual([
-      { url: 'https://a.test/', title: 'a.test', favicon: null },
-      { url: 'https://b.test/', title: 'B page', favicon: 'https://b.test/icon.png' },
-      { url: 'https://c.test/', title: 'c.test', favicon: null }
-    ])
-    expect(typeof m.folders[folder].lastUsedAt).toBe('number')
-    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
-    // The tabs are filed too: the close has its undo, and the group is where they come back.
-    expect(
-      h.browser.state.recentlyClosed.map((e) => (e.kind === 'tab' ? e.folderId : e.kind))
-    ).toEqual([folder, folder, folder])
-    // Closing a group with no live tab changes nothing.
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
-    expect(m.folders[folder].savedTabs).toHaveLength(3)
-  })
-
-  it('folder.open brings the pages back into the group in their order, the first active', () => {
-    const h = harness()
-    const m = h.browser.state.model
-    const folder = h.group('Trip')
-    h.open('https://a.test/', { folderId: folder })
-    h.open('https://b.test/', { folderId: folder })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
-    h.browser.updateFolder(folder, { collapsed: true })
-    const later = h.open('https://later.test/')
-    expect(h.urls()).toEqual(['https://later.test/'])
-
-    const active = h.browser.handleCommand(h.win, 'folder.open', { folderId: folder }) as string
-
-    expect(h.urls()).toEqual(['https://later.test/', 'https://a.test/', 'https://b.test/'])
-    const [restoredA, restoredB] = h.win.activeSpace().tabIds.slice(1)
-    expect(m.tabs[restoredA].folderId).toBe(folder)
-    expect(m.tabs[restoredB].folderId).toBe(folder)
-    expect(active).toBe(restoredA)
-    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(restoredA)
-    expect(h.browser.tabs.tab(later)).toBeDefined()
-    const reopened = m.folders[folder]
-    expect(reopened.savedTabs).toBeNull()
-    expect(reopened.collapsed).toBe(false)
-    expect(isSavedFolder(m, reopened)).toBe(false)
-    // An open group is not restored again: it is unfolded and its first tab activated.
-    h.browser.updateFolder(folder, { collapsed: true })
-    h.browser.tabs.activateTab(later, h.win)
-    expect(h.browser.handleCommand(h.win, 'folder.open', { folderId: folder })).toBe(restoredA)
-    expect(m.folders[folder].collapsed).toBe(false)
-    expect(h.urls()).toHaveLength(3)
-    // Nothing to open: an empty group, or none.
-    const empty = h.group('Empty')
-    expect(h.browser.handleCommand(h.win, 'folder.open', { folderId: empty })).toBeNull()
-    expect(h.browser.handleCommand(h.win, 'folder.open', { folderId: 'folder:gone' })).toBeNull()
-  })
-
-  it('members closed one by one leave the group with the last one, as Chrome’s saved group does', () => {
-    const h = harness()
-    const m = h.browser.state.model
-    const folder = h.group('Reading')
-    const a = h.open('https://a.test/', { folderId: folder })
-    const b = h.open('https://b.test/', { folderId: folder })
-    h.browser.tabs.closeTab(a, false, h.win)
-    expect(m.folders[folder].savedTabs).toBeUndefined()
-    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
-    h.browser.tabs.closeTab(b, false, h.win)
-    expect(m.folders[folder].savedTabs).toEqual([
-      { url: 'https://b.test/', title: 'b.test', favicon: null }
-    ])
-    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
-  })
-
-  it('a tab moved into a saved group opens it first: the kept pages back as its tabs, the tab behind them, the group unfolded and used', () => {
-    const h = harness()
-    const m = h.browser.state.model
-    const folder = h.group('Trip')
-    h.open('https://a.test/', { folderId: folder })
-    h.open('https://b.test/', { folderId: folder })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
-    // Closing folded it shut with its pages (the desktop's saved chip); the tab moved into it
-    // must not find it folded around itself: it is live and unfolded, whichever way it came.
-    expect(m.folders[folder].collapsed).toBe(true)
-    m.folders[folder].lastUsedAt = 1
-    const loose = h.open('https://loose.test/')
-    const other = h.open('https://other.test/')
-    h.browser.tabs.moveToFolder(loose, folder)
-    // Open-then-add: the pages first, in their order, then the joiner – all the group's; the
-    // tab that was not moved keeps its slot ahead of them.
-    expect(h.urls()).toEqual([
-      'https://other.test/',
-      'https://a.test/',
-      'https://b.test/',
-      'https://loose.test/'
-    ])
-    const members = h.win.activeSpace().tabIds.filter((id) => m.tabs[id].folderId === folder)
-    expect(members.map((id) => m.tabs[id].url)).toEqual([
-      'https://a.test/',
-      'https://b.test/',
-      'https://loose.test/'
-    ])
-    expect(m.folders[folder].savedTabs).toBeNull()
-    expect(m.folders[folder].collapsed).toBe(false)
-    expect(m.folders[folder].lastUsedAt).toBeGreaterThan(1)
-    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
-    // The pages came back reading as they did, and the move activated nothing: the tab that
-    // was active stays so.
-    expect(m.tabs[members[0]].title).toBe('a.test')
-    expect(m.tabs[members[1]].title).toBe('b.test')
-    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(other)
-
-    // Undo of the close – the recently closed entry restored – takes the group as open: the
-    // reopened tab is one of its pages come back on its own, so the kept pages go (a restore
-    // that brought them back too would double it).
-    const again = h.group('Again')
-    h.open('https://again.test/', { folderId: again })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: again })
-    expect(isSavedFolder(m, m.folders[again])).toBe(true)
-    expect(m.folders[again].collapsed).toBe(true)
-    const entry = h.browser.state.recentlyClosed.find(
-      (e) => e.kind === 'tab' && e.folderId === again
-    )!
-    h.browser.handleCommand(h.win, 'session.restoreClosed', { id: entry.id })
-    expect(isSavedFolder(m, m.folders[again])).toBe(false)
-    const restored = Object.values(m.tabs).filter((t) => t.url === 'https://again.test/')
-    expect(restored).toHaveLength(1)
-    expect(restored[0].folderId).toBe(again)
-    expect(m.folders[again].savedTabs).toBeNull()
-    expect(m.folders[again].collapsed).toBe(false)
-
-    // A tab made in the saved group by a path that is no join of the user's – a live folder's
-    // refresh repopulating it – takes the group as open the same way.
-    const third = h.group('Third')
-    h.open('https://third.test/', { folderId: third })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: third })
-    expect(m.folders[third].collapsed).toBe(true)
-    h.open('https://new.test/', { folderId: third })
-    expect(m.folders[third].savedTabs).toBeNull()
-    expect(m.folders[third].collapsed).toBe(false)
-    expect(h.urls().filter((u) => u === 'https://third.test/')).toEqual([])
-
-    // A tab joining an open group is as it was: it takes the group's id, keeps its slot, and
-    // the group's members are as they were plus it.
-    const open = h.group('Open')
-    const member = h.open('https://member.test/', { folderId: open })
-    const joiner = h.open('https://joiner.test/')
-    const before = h.urls()
-    h.browser.tabs.moveToFolder(joiner, open)
-    expect(h.urls()).toEqual(before)
-    expect(m.tabs[joiner].folderId).toBe(open)
-    expect(m.tabs[member].folderId).toBe(open)
-  })
-
-  it('New Tab in Group on a saved group opens it first and adds the tab behind its pages (open-then-add), on the touch menu as on the desktop’s', () => {
-    const h = harness('tablet')
-    const m = h.browser.state.model
-    const folder = h.group('Trip')
-    h.open('https://a.test/', { folderId: folder })
-    h.open('https://b.test/', { folderId: folder })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
-    const loose = h.open('https://loose.test/')
-    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
-    // The tablet's group menu on the saved group: Open Group (2 Tabs) leads, New Tab in Group
-    // is offered (TABLET-04's shape), and it forgets nothing.
+    expect(m.folders[folder]).toMatchObject({ name: 'Trip', color: 'blue', collapsed: true })
+    expect(m.folders[folder]).not.toHaveProperty('savedTabs')
+    expect(h.browser.state.recentlyClosed.filter((e) => e.kind === 'tab')).toHaveLength(2)
+    // Its menu offers no Open Folder and nothing to close; New Tab in Folder fills it again.
     h.browser.menus.showFolderContextMenu(folder, h.win)
-    expect(labels(h.shown())).toContain('Open Folder (2 Tabs)')
-    expect(labels(h.shown())).toContain('New Tab in Folder')
-    click(h.shown(), 'New Tab in Folder')
-    const members = h.win.activeSpace().tabIds.filter((id) => m.tabs[id].folderId === folder)
-    expect(members.map((id) => m.tabs[id].url)).toEqual([
-      'https://a.test/',
-      'https://b.test/',
-      m.tabs[members[2]].url
-    ])
-    expect(isEmptyTabUrl(m.tabs[members[2]].url)).toBe(true)
-    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(members[2])
-    expect(h.browser.tabs.tab(loose)).toBeDefined()
-    expect(m.folders[folder].savedTabs).toBeNull()
+    const menu = labels(h.shown())
+    expect(menu.some((l) => l.startsWith('Open Folder'))).toBe(false)
+    expect(menu.some((l) => l.startsWith('Close Folder'))).toBe(false)
+    const made = h.browser.newTabInFolder(folder, h.win)
+    expect(m.tabs[made].folderId).toBe(folder)
     expect(m.folders[folder].collapsed).toBe(false)
-    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
-    // The pages came back titled as they were kept.
-    expect(m.tabs[members[0]].title).toBe('a.test')
-    // On an open group the same row adds one tab at the end, and nothing else moves.
-    const before = h.urls()
-    const created = h.browser.newTabInFolder(folder, h.win)
-    expect(h.urls()).toEqual([...before, m.tabs[created].url])
-    expect(m.tabs[created].folderId).toBe(folder)
   })
 
-  it('rename and colour keep the saved pages; delete removes the group', () => {
+  it('the last tab closing leaves the folder where it was, with no pages kept', () => {
     const h = harness()
     const m = h.browser.state.model
-    const folder = h.group('Trip')
-    h.open('https://a.test/', { folderId: folder })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
-    h.browser.handleCommand(h.win, 'folder.update', {
-      folderId: folder,
-      patch: { name: 'Holiday', color: 'pink' }
-    })
-    expect(m.folders[folder]).toMatchObject({
-      name: 'Holiday',
-      color: 'pink',
-      savedTabs: [{ url: 'https://a.test/', title: 'a.test', favicon: null }]
-    })
-    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
-    h.browser.handleCommand(h.win, 'folder.delete', { folderId: folder, unpack: false })
-    expect(m.folders[folder]).toBeUndefined()
-  })
-
-  it('activating a member marks the group used', () => {
-    const h = harness()
-    const m = h.browser.state.model
+    h.open('https://loose.test/')
     const folder = h.group('Trip')
     const a = h.open('https://a.test/', { folderId: folder })
-    const loose = h.open('https://loose.test/')
-    m.folders[folder].lastUsedAt = 1
-    h.browser.tabs.activateTab(loose, h.win)
-    expect(m.folders[folder].lastUsedAt).toBe(1)
-    h.browser.tabs.activateTab(a, h.win)
-    expect(m.folders[folder].lastUsedAt).toBe(m.tabs[a].lastActiveAt)
+    h.browser.tabs.closeTab(a, true, h.win)
+    expect(m.folders[folder]).toBeDefined()
+    expect(m.folders[folder]).not.toHaveProperty('savedTabs')
   })
 
-  it('an old state file loads through the reader as it is, and the saved pages and the last use come back through it', async () => {
-    // A profile written before saved groups (state.json v2): a folder with the fields of its day
-    // and nothing of TAB-16's – no `savedTabs`, no `lastUsedAt` – holding one tab.
-    const space = createSpace('Work', '')
-    const folder = {
-      id: 'folder_trip',
-      spaceId: space.id,
-      name: 'Trip',
-      icon: '📁',
-      collapsed: false
-    }
-    const tab = createTabRecord({
-      spaceId: space.id,
-      containerId: 'default',
-      url: 'https://a.test/',
-      title: 'a.test',
-      folderId: folder.id
-    })
-    space.tabIds = [tab.id]
-    space.activeTabId = tab.id
-    const old = {
-      version: 2,
-      spaces: [space],
-      tabs: [tab],
-      essentialTabIds: [],
-      activeSpaceId: space.id,
-      settings: {},
-      folders: [folder]
-    }
-    const files = { 'state.json': JSON.stringify(old) }
-
-    // The real reader (`BrowserState.load`, which the browser's start runs) takes the folder
-    // whole: no migration, no version bump, the optionals simply absent and the group as before.
-    const h = harness('phone', true, files)
+  it('a folder an older build saved comes back with its pages as unloaded tabs when the session continues', () => {
+    const h = harness()
     const m = h.browser.state.model
-    expect(m.folders[folder.id]).toEqual(folder)
-    expect('savedTabs' in m.folders[folder.id]).toBe(false)
-    expect('lastUsedAt' in m.folders[folder.id]).toBe(false)
-    expect(isSavedFolder(m, m.folders[folder.id])).toBe(false)
-    expect(m.tabs[tab.id]?.folderId).toBe(folder.id)
-
-    // Closing the group writes the pages and the moment, and folds the group shut (the desktop
-    // sidebar lists a saved group's pages only once it is unfolded); the file is the current
-    // version.
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder.id })
-    await h.browser.state.flush()
-    const written = JSON.parse(files['state.json']) as { version: number; folders: unknown[] }
-    expect(written.version).toBe(PERSISTED_VERSION)
-    expect(written.folders).toEqual([
-      {
-        ...folder,
-        collapsed: true,
-        savedTabs: [{ url: 'https://a.test/', title: 'a.test', favicon: null }],
-        lastUsedAt: expect.any(Number)
-      }
+    h.open('https://loose.test/')
+    const folder = h.group('Trip')
+    Object.assign(m.folders[folder], {
+      savedTabs: [
+        { url: 'https://a.test/', title: 'A page', favicon: null },
+        { url: 'https://b.test/', title: '' }
+      ],
+      lastUsedAt: 5
+    })
+    h.browser.state.migrateSavedFolders(true)
+    expect(m.folders[folder]).not.toHaveProperty('savedTabs')
+    expect(m.folders[folder].collapsed).toBe(true)
+    const members = Object.values(m.tabs).filter((t) => t.folderId === folder)
+    expect(members.map((t) => [t.url, t.discarded])).toEqual([
+      ['https://a.test/', true],
+      ['https://b.test/', true]
     ])
+    expect(members[0].title).toBe('A page')
+    expect(h.urls()).toContain('https://b.test/')
+  })
 
-    // Read back through the same reader on a fresh browser: the saved group, its pages in order,
-    // and Open bringing them back into it.
-    const again = harness('phone', true, { 'state.json': files['state.json'] })
-    const stored = again.browser.state.model.folders[folder.id]
-    expect(stored.savedTabs).toEqual([{ url: 'https://a.test/', title: 'a.test', favicon: null }])
-    expect(typeof stored.lastUsedAt).toBe('number')
-    expect(isSavedFolder(again.browser.state.model, stored)).toBe(true)
-    expect(again.urls()).not.toContain('https://a.test/')
-    again.browser.handleCommand(again.win, 'folder.open', { folderId: folder.id })
-    expect(again.urls()).toContain('https://a.test/')
-    const reopened = again.urls().indexOf('https://a.test/')
-    const reopenedTab = again.browser.tabs.tab(again.win.activeSpace().tabIds[reopened])!
-    expect(reopenedTab.folderId).toBe(folder.id)
-    expect(isSavedFolder(again.browser.state.model, stored)).toBe(false)
+  it('a saved folder whose session is forgotten at launch keeps its pages as a bookmarks folder', () => {
+    const h = harness()
+    const m = h.browser.state.model
+    const folder = h.group('Trip')
+    Object.assign(m.folders[folder], { savedTabs: [{ url: 'https://a.test/', title: 'A page' }] })
+    h.browser.state.migrateSavedFolders(false)
+    expect(m.folders[folder]).not.toHaveProperty('savedTabs')
+    expect(Object.values(m.tabs).some((t) => t.folderId === folder)).toBe(false)
+    const kept = h.browser.state.bookmarks.find((n) => n.type === 'folder' && n.title === 'Trip')
+    expect(kept).toBeDefined()
+    expect(
+      h.browser.state.bookmarks.filter((n) => n.parentId === kept?.id).map((n) => n.url)
+    ).toEqual(['https://a.test/'])
   })
 })
 
@@ -778,7 +542,6 @@ describe('one folder menu on every host', () => {
     expect(closeFolder).not.toHaveBeenCalled()
     expect(m.tabs[a]).toBeDefined()
     expect(m.tabs[b]).toBeDefined()
-    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
     // Ungroup and Delete Group keep their paths: the core's own, and the ask.
     h.browser.menus.showFolderContextMenu(folder, h.win)
     h.sent.length = 0
@@ -818,7 +581,7 @@ describe('one folder menu on every host', () => {
     expect(h.sent.filter((e) => e.name === 'folder.closeUndoable')).toEqual([])
     expect(m.tabs[a]).toBeUndefined()
     expect(m.tabs[b]).toBeUndefined()
-    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
+    expect(m.folders[folder]).toMatchObject({ collapsed: true })
   })
 })
 
@@ -868,7 +631,7 @@ describe('private browsing and the space’s groups (a private group named on no
     expect(foldersOffered(h.shown())).toEqual(['📁 Trip', '📁 Ghost'])
   })
 
-  it('a private tab in a group is no member of it for the regular profile: it neither opens a saved group nor counts, marks it neither used nor kept, and Close Group, Delete Group and New Tab in Group leave it be', () => {
+  it('a private tab in a group is no member of it for the regular profile: it neither counts nor marks it used, and Close Group, Delete Group and New Tab in Group leave it be', () => {
     const h = harness('tablet')
     const m = h.browser.state.model
     const trip = h.group('Trip')
@@ -876,8 +639,8 @@ describe('private browsing and the space’s groups (a private group named on no
     h.open('https://b.test/', { folderId: trip })
     h.open('https://loose.test/')
 
-    // Close Group with a private tab in it: the regular members close to the saved pages, the
-    // private tab – none of the group's "2 Tabs" – stays open where it was.
+    // Close Group with a private tab in it: the regular members close, the private tab – none
+    // of the group's "2 Tabs" – stays open where it was.
     const attached = h.browser.tabs.newPrivateTab('https://p.test/', h.win)!
     h.browser.tabs.moveToFolder(attached, trip)
     h.browser.menus.showFolderContextMenu(trip, h.win)
@@ -890,37 +653,24 @@ describe('private browsing and the space’s groups (a private group named on no
       ['folder.closeUndoable', { folderId: trip }]
     ])
     h.browser.handleCommand(h.win, 'folder.close', { folderId: trip })
-    expect(m.folders[trip].savedTabs?.map((t) => t.url)).toEqual([
-      'https://a.test/',
-      'https://b.test/'
-    ])
+    expect(m.tabs[a]).toBeUndefined()
     expect(m.tabs[attached]?.folderId).toBe(trip)
-    expect(isSavedFolder(m, m.folders[trip])).toBe(true)
-    expect(isPrivateFolder(m, m.folders[trip])).toBe(false)
+    expect(m.folders[trip]).toMatchObject({ name: 'Trip', collapsed: true })
+    expect(isPrivateFolder(m, m.folders[trip])).toBe(true)
     const lastUsed = m.folders[trip].lastUsedAt
 
-    // A private tab joining a saved group, viewed in it, closing from it: the pages stay, the
-    // group stays saved, its last use as it was – no trace of the private session on it.
+    // A private tab viewed in it and closing from it leaves the folder's last use as it was –
+    // no trace of the private session on it.
     const q = h.browser.tabs.newPrivateTab('https://q.test/', h.win)!
     h.browser.tabs.moveToFolder(q, trip)
     h.browser.tabs.activateTab(q, h.win)
-    expect(isSavedFolder(m, m.folders[trip])).toBe(true)
-    expect(m.folders[trip].savedTabs).toHaveLength(2)
     expect(m.folders[trip].lastUsedAt).toBe(lastUsed)
     h.browser.tabs.closeTab(q, true, h.win)
-    expect(m.folders[trip].savedTabs).toHaveLength(2)
     expect(m.folders[trip].lastUsedAt).toBe(lastUsed)
 
-    // The saved row's menu and tap: Open Group (2 Tabs) brings the pages back as regular tabs
-    // – not the attached private tab into view.
-    h.browser.menus.showFolderContextMenu(trip, h.win)
-    expect(labels(h.shown())).toContain('Open Folder (2 Tabs)')
-    const opened = h.browser.openFolder(trip, h.win)!
-    expect(opened).not.toBe(attached)
-    expect(h.browser.tabs.isPrivate(m.tabs[opened])).toBe(false)
-    expect(m.tabs[opened].url).toBe('https://a.test/')
-    expect(m.folders[trip].savedTabs).toBeNull()
-    expect(m.tabs[attached]?.folderId).toBe(trip)
+    // Open Folder has no regular tab to show: the private one is not brought into view.
+    expect(h.browser.openFolder(trip, h.win)).toBeNull()
+    const opened = h.open('https://c.test/', { folderId: trip })
 
     // New Tab in Group makes a regular tab of the space, after the last regular member, though
     // the private tab sits last in the group.
@@ -941,7 +691,6 @@ describe('private browsing and the space’s groups (a private group named on no
     expect(m.tabs[made]).toBeUndefined()
     expect(m.tabs[attached]).toBeDefined()
     expect(m.tabs[attached].folderId).toBeNull()
-    expect(m.tabs[a]).toBeUndefined()
   })
 
   it('touches no desktop menu: a private window’s menus offer no folder, a regular window’s space holds no private tab', () => {
@@ -994,19 +743,13 @@ describe('the omnibox’s tab group row (OMN-15)', () => {
     expect(m.folders[trip].collapsed).toBe(false)
     expect(typeof m.folders[trip].lastUsedAt).toBe('number')
 
-    // A saved group is offered by the pages it kept, and its pick brings them back.
+    // A folder whose tabs closed has no pages to offer.
     h.browser.handleCommand(h.win, 'folder.close', { folderId: trip })
-    const saved = (await h.browser.handleCommand(h.win, 'urlbar.suggest', {
+    const closed = (await h.browser.handleCommand(h.win, 'urlbar.suggest', {
       query: 'hotel',
       tabId: loose,
       grouped: true
     })) as Suggestion[]
-    expect(saved.find((r) => r.kind === 'folder')).toMatchObject({
-      title: 'Trip',
-      subtitle: 'hotel.test, flights.test'
-    })
-    const restored = h.browser.handleCommand(h.win, 'folder.open', { folderId: trip }) as string
-    expect(m.tabs[restored]).toMatchObject({ url: 'https://hotel.test/booking', folderId: trip })
-    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(restored)
+    expect(closed.find((r) => r.kind === 'folder')).toBeUndefined()
   })
 })

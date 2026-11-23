@@ -116,7 +116,6 @@ import { markUpdateMenuOpened } from './updateDot'
 import {
   folderTabs,
   isPrivateFolder,
-  isSavedFolder,
   regularFolderTabs,
   splitLinksToRight,
   tabVisibleIn
@@ -3018,24 +3017,17 @@ export class Menus {
     const folder = state.model.folders[folderId]
     if (!folder) return
     const live = this.browser.liveFolders.get(folderId)
-    // One folder menu on every host, Zen's word on every row: what the folder does (Open
-    // Folder while it is saved, New Tab in Folder), what changes it (Edit Folder… – name, colour
-    // and icon in one bubble – and the live folder's two rows), what ends one half of an open
-    // folder (Unpack Folder leaves the tabs loose; Close Folder closes them and the folder stays
-    // saved with their pages – with Undo on a touch host's toast), then Delete Folder alone,
+    // One folder menu on every host, Zen's word on every row: what the folder does (New Tab in
+    // Folder), what changes it (Edit Folder… – name, colour and icon in one bubble – and the live
+    // folder's two rows), what ends one half of a folder with tabs (Unpack Folder leaves the tabs
+    // loose; Close Folder closes them and the folder stays, folded – with Undo on a touch host's
+    // toast), then Delete Folder alone,
     // which asks first when there is anything to lose (`folder.confirmDelete`). No Rename and no
     // Expand or Collapse: the bubble and the header's own click are those.
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
-    const saved = isSavedFolder(state.model, folder)
-    const count = saved
-      ? (folder.savedTabs?.length ?? 0)
-      : regularFolderTabs(state.model, folderId).length
+    const count = regularFolderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
     const act: Template = [
-      ...when(saved, {
-        label: `Open Folder (${tabs})`,
-        click: () => this.browser.openFolder(folderId, win)
-      }),
       { label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }
     ]
     const change: Template = [
@@ -3055,7 +3047,7 @@ export class Menus {
       }
     ]
     const end: Template =
-      count && !saved
+      count > 0
         ? [
             { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
             {
@@ -3107,8 +3099,8 @@ export class Menus {
     const { model } = this.browser.state
     const folder = model.folders[folderId]
     if (!folder) return
-    const holds = folderTabs(model, folderId).length > 0 || Boolean(folder.savedTabs?.length)
-    if (holds) this.browser.emit('folder.confirmDelete', { folderId }, win)
+    if (folderTabs(model, folderId).length > 0)
+      this.browser.emit('folder.confirmDelete', { folderId }, win)
     else this.browser.deleteFolder(folderId, false)
   }
 
@@ -4118,21 +4110,7 @@ export class Menus {
         {
           label: 'Export Bookmarks…',
           click: () => void this.browser.exportBookmarks(win)
-        },
-        // Chrome's Tab groups ▸ (shortcuts-menus-111) as "Tab Folders": the saved groups by name
-        // with their mark, seated as the submenu's last group – Chrome's own seat for a list
-        // beside the bookmarks, not its top-level row:
-        // a twenty-first row gives 692 at rest and 732 folded against the 718 of room on 800 px,
-        // the numbers #396 turned down, where this submenu has the room (258 for its seven rows).
-        // The noun is the desktop's Folder on every row (#398 F10; the #435 lead check), "Tab"
-        // telling them from the bookmark folders above; the touch hosts keep Chrome Android's
-        // Group – their pane is the overview's (TAB-16). A `local` window has no synced space.
-        ...desktop(
-          ...when(!local, separator, {
-            label: 'Tab Folders',
-            submenu: this.tabGroupsSubmenu(win)
-          })
-        )
+        }
       ]
     }
     /**
@@ -4825,34 +4803,6 @@ export class Menus {
     if (next === state.updateDot) return
     state.updateDot = next
     state.commit()
-  }
-
-  /**
-   * Chrome's Tab groups submenu – "Tab Folders" on the desktop (shortcuts-menus-111;
-   * `IDS_SAVED_TAB_GROUPS_MENU`): the SAVED groups of the synced spaces – a folder whose tabs
-   * closed and whose pages are kept (TAB-16, `isSavedFolder`) – one row each, named by the group
-   * and marked by the one group glyph (`group`: the ring of its colour, or the folder's own icon;
-   * §9.37, #360's pair), the most recently used first as the Tab groups pane orders them
-   * (`groupRows`), the name breaking ties. A row's pick opens the group in this window – its
-   * pages back as its tabs at the end of their space, the first made active, the window switched
-   * to the space where it is another (`Browser.openFolder`). A blank or private window's local
-   * space has no saved group (its tabs keep no pages): the row is left out of its menu. With
-   * nothing saved, §9.17's empty state: "No saved tab folders" as the note row (the History
-   * submenu's "No recently closed tabs" form) – the desktop's noun is Folder (#398 F10; the touch
-   * hosts keep Group). An open group is the sidebar's, not this list's: Chrome's lists the rest.
-   */
-  private tabGroupsSubmenu(win: ZenWindow): Template {
-    const m = this.browser.state.model
-    const synced = new Set(m.spaces.map((space) => space.id))
-    const saved = Object.values(m.folders)
-      .filter((folder) => synced.has(folder.spaceId) && isSavedFolder(m, folder))
-      .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.name.localeCompare(b.name))
-    if (saved.length === 0) return [{ label: 'No saved tab folders', enabled: false, note: true }]
-    return saved.map((folder) => ({
-      label: folder.name,
-      group: { color: folder.color ?? null, icon: folder.icon, saved: true },
-      click: () => void this.browser.openFolder(folder.id, win)
-    }))
   }
 
   /**

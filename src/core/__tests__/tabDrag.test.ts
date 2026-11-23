@@ -595,47 +595,6 @@ describe('a folder moved to a new window', () => {
     expect(space.tabIds).toEqual([kept.id])
   })
 
-  it('a saved folder in the closing window goes with its space, its pages with it', () => {
-    const f = fixture()
-    const win = f.browser.focusedWindow()
-    f.openPage(win, 'https://kept.test/')
-    const { folder } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
-    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
-    if (!moved) throw new Error('no new window')
-    // Closed in its new window, the folder is SAVED there with its two pages; a tab keeps the
-    // window open while it is.
-    f.openPage(moved, 'https://loose.test/')
-    f.browser.closeFolder(folder.id, moved)
-    expect(folder.savedTabs?.map((p) => p.url)).toEqual(['https://a.test/', 'https://b.test/'])
-    expect(folder.spaceId).toBe(moved.localSpace?.id)
-    moved.host.close()
-    const m = f.browser.state.model
-    expect(m.folders[folder.id]).toBeUndefined()
-    expect(m.localSpaces[moved.localSpace!.id]).toBeUndefined()
-    expect(f.browser.state.snapshot(win).folders[folder.id]).toBeUndefined()
-  })
-
-  it('opens a saved folder first – its pages back as its tabs – and moves it whole', () => {
-    const f = fixture()
-    const win = f.browser.focusedWindow()
-    const space = win.activeSpace()
-    const keep = f.openPage(win, 'https://keep.test/')
-    const { folder } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
-    f.browser.closeFolder(folder.id, win)
-    expect(folder.savedTabs?.map((p) => p.url)).toEqual(['https://a.test/', 'https://b.test/'])
-    expect(folderTabs(f.browser.state.model, folder.id)).toEqual([])
-    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
-    if (!moved) throw new Error('no new window')
-    expect(folder.savedTabs ?? null).toBeNull()
-    expect(folder.spaceId).toBe(moved.localSpace?.id)
-    const members = folderTabs(f.browser.state.model, folder.id)
-    expect(members.map((t) => t.url)).toEqual(['https://a.test/', 'https://b.test/'])
-    expect(moved.localSpace?.tabIds).toEqual(members.map((t) => t.id))
-    expect(moved.selectedTabIn(moved.activeSpace())).toBe(members[0].id)
-    expect(space.tabIds).toEqual([keep.id])
-    expect(win.selectedTabIn(space)).toBe(keep.id)
-  })
-
   it('a member leaves its split behind; an empty or unknown folder moves nothing', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()

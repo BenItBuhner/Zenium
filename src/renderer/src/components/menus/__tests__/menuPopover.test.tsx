@@ -156,14 +156,14 @@ describe('the popover menu', () => {
     expect(menus()[0].dataset.context).toBeUndefined()
   })
 
-  it("a saved group's row draws the one group glyph in the slot – the ring of its colour, or the folder's own icon – and gives the level the slot (the Tab Folders submenu, shortcuts-menus-111)", () => {
+  it("a group's row draws the one group glyph in the slot – the dot of its colour, or the folder's own icon – and gives the level the slot", () => {
     show(
       tabMenu({
         source: 'app',
         items: [
-          item('trip', 'Trip', { group: { color: 'green', icon: '✈️', saved: true } }),
-          item('research', 'Research', { group: { color: 'blue', icon: '📁', saved: true } }),
-          item('none', 'No saved tab folders', { enabled: false, note: true })
+          item('trip', 'Trip', { group: { color: 'green', icon: '✈️' } }),
+          item('research', 'Research', { group: { color: 'blue', icon: '📁' } }),
+          item('none', 'No folders', { enabled: false, note: true })
         ]
       })
     )
@@ -174,7 +174,6 @@ describe('the popover menu', () => {
       '.zen-v2-menu-glyph [data-testid="group-row-glyph"]'
     )!
     expect(research).not.toBeNull()
-    expect(research.dataset.saved).toBe('true')
     expect(research.querySelector('.zen-group-row-dot')).not.toBeNull()
     // §9.14's pair on the glyph itself (`groupColorVars`, `data-group-rgb`): the theme's rule
     // picks one, so a flip recolours the mark with the rest of the chrome.
