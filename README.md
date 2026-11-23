@@ -224,6 +224,26 @@ app and the Android WebView host.
   the connection token; private windows are never exposed and running scripts in pages
   (`browser_evaluate`) is a toggle. The endpoint and token are shown in Settings → AI Agents.
 
+### Running on a server
+
+`zenium --server` runs the browser on a Linux machine with no screen (no X server, no Wayland)
+so agents can drive it there. It is the same build as the desktop app (AppImage or `.deb`):
+nothing is drawn, the AI agents' server is turned on, and its endpoint and token are printed.
+
+```bash
+zenium --server                # print the MCP endpoint and token, then keep running
+zenium --server --sign-in      # also link this machine to your Zenium account by a code
+zenium --mcp                   # on the same machine: stdio for agents that launch a command
+```
+
+Agents on the same machine use `zenium --mcp` or the printed URL with the token as a bearer
+token; nobody is there to answer the approval prompt, so a connection without the token waits
+and is refused. Zenium starts itself again on Chromium's headless Ozone platform (or pass
+`--ozone-platform=headless` yourself, as a systemd unit should); stopping the first process
+stops the browser, and SIGTERM or Ctrl+C saves the profile before it exits. Use
+`--user-data-dir` to keep the server's profile apart from a desktop one. macOS and Windows start
+with their windows as usual for now.
+
 ## Running it
 
 Requirements: Node 22+, npm.

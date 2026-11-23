@@ -33,6 +33,14 @@ export interface CliSwitches {
    * (`resolveSearchChoiceRegion`). Null when the launch carried none.
    */
   region: string | null
+  /**
+   * `--server`: run with no screen, for a machine without a display (Linux). No window is ever
+   * shown, the MCP server is on, and the endpoint is printed (`headless.ts`). Not Chromium's
+   * `--headless`, which Electron only half wires: with it a page's DevTools capture hangs.
+   */
+  server: boolean
+  /** `--sign-in`: with `--server`, link this machine to the Zenium account by a printed code. */
+  signIn: boolean
 }
 
 export const KIOSK_SWITCH = 'kiosk'
@@ -41,6 +49,8 @@ export const RESTORE_LAST_SESSION_SWITCH = 'restore-last-session'
 export const START_MAXIMIZED_SWITCH = 'start-maximized'
 export const PROFILE_DIRECTORY_SWITCH = 'profile-directory'
 export const REGION_SWITCH = 'zen-region'
+export const SERVER_SWITCH = 'server'
+export const SIGN_IN_SWITCH = 'sign-in'
 /** The environment's spelling of `--zen-region` (the switch wins when both are set). */
 export const REGION_ENV = 'ZEN_REGION'
 
@@ -50,7 +60,9 @@ const NO_SWITCHES: CliSwitches = {
   restoreLastSession: false,
   startMaximized: false,
   profileDirectory: null,
-  region: null
+  region: null,
+  server: false,
+  signIn: false
 }
 
 /**
@@ -83,6 +95,12 @@ export function parseCliSwitches(argv: readonly string[]): CliSwitches {
         break
       case REGION_SWITCH:
         if (value) switches.region = value
+        break
+      case SERVER_SWITCH:
+        switches.server = true
+        break
+      case SIGN_IN_SWITCH:
+        switches.signIn = true
         break
     }
   }
@@ -150,6 +168,10 @@ export function describeSwitches(switches: CliSwitches, userDataDir: string): st
   if (switches.region !== null) {
     lines.push(`--${REGION_SWITCH}=${switches.region}: the search engine choice reads this region`)
   }
+  if (switches.server) lines.push(`--${SERVER_SWITCH}: no windows are shown, AI agents are on`)
+  if (switches.signIn && !switches.server) {
+    lines.push(`--${SIGN_IN_SWITCH} ignored: it works with --${SERVER_SWITCH}`)
+  }
   return lines
 }
 
@@ -164,6 +186,8 @@ export function droppedSecondInstanceSwitches(switches: CliSwitches): string | n
   if (switches.startMaximized) dropped.push(`--${START_MAXIMIZED_SWITCH}`)
   if (switches.restoreLastSession) dropped.push(`--${RESTORE_LAST_SESSION_SWITCH}`)
   if (switches.profileDirectory !== null) dropped.push(`--${PROFILE_DIRECTORY_SWITCH}`)
+  if (switches.server) dropped.push(`--${SERVER_SWITCH}`)
+  if (switches.signIn) dropped.push(`--${SIGN_IN_SWITCH}`)
   if (dropped.length === 0) return null
   return `${dropped.join(', ')} from a second instance: the running instance keeps its own mode`
 }

@@ -17,7 +17,9 @@ describe('parseCliSwitches', () => {
       restoreLastSession: false,
       startMaximized: false,
       profileDirectory: null,
-      region: null
+      region: null,
+      server: false,
+      signIn: false
     })
     expect(
       parseCliSwitches(['https://example.com', '--no-sandbox', '--disable-gpu', '-psn_0_1', '--'])
@@ -32,7 +34,9 @@ describe('parseCliSwitches', () => {
       '--restore-last-session',
       '--user-data-dir=/tmp/profile one',
       '--profile-directory=Profile 2',
-      '--zen-region=de'
+      '--zen-region=de',
+      '--server',
+      '--Sign-In'
     ])
     expect(switches).toEqual({
       kiosk: true,
@@ -40,7 +44,9 @@ describe('parseCliSwitches', () => {
       restoreLastSession: true,
       startMaximized: true,
       profileDirectory: 'Profile 2',
-      region: 'de'
+      region: 'de',
+      server: true,
+      signIn: true
     })
   })
 

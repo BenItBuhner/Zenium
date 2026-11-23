@@ -22,6 +22,14 @@ import {
   windowSwitchesOf
 } from './cli'
 import type { Browser } from '../core/browser'
+import { spawnSync } from 'node:child_process'
+import {
+  SERVER_PARENT_ENV,
+  runServer,
+  serverRelaunchArgs,
+  serverUnsupportedLine,
+  watchParent
+} from './headless'
 
 app.setName('Zenium')
 // The desktop entry electron-builder installs; Electron uses it for the Wayland app id, and
@@ -49,8 +57,20 @@ if (switches.userDataDir !== null) {
   app.setPath('userData', resolve(process.cwd(), switches.userDataDir))
 }
 
-// `zenium --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
-if (process.argv.slice(1).includes('--mcp')) {
+// `zenium --server` without an Ozone platform: start again on the headless one and wait for it
+// (`headless.ts`). Synchronously, so this process never reaches the display it does not have.
+const relaunch = process.argv.slice(1).includes('--mcp')
+  ? null
+  : serverRelaunchArgs(process.argv.slice(1), process.platform, switches.server)
+
+if (relaunch) {
+  const child = spawnSync(process.execPath, relaunch, {
+    stdio: 'inherit',
+    env: { ...process.env, [SERVER_PARENT_ENV]: String(process.pid) }
+  })
+  process.exit(child.status ?? 1)
+} else if (process.argv.slice(1).includes('--mcp')) {
+  // `zenium --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch('disable-gpu')
   void runStdioShim(app.getPath('userData')).then((code) => app.exit(code))
@@ -94,6 +114,8 @@ function main(): void {
   // Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and
   // can only be applied before the browser process finishes starting up.
   applyResourceSwitches(app.getPath('userData'))
+  // A server has no GPU to draw with: software from the start, not after a failed GPU process.
+  if (switches.server && process.platform === 'linux') app.disableHardwareAcceleration()
 
   // Shortcuts are handled by Zenium's own table, not by menu accelerators. macOS still needs an
   // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there);
@@ -181,6 +203,40 @@ function main(): void {
     openLaunch({ urls: [pathToFileUrl(path)], window: 'current', makeDefault: false, app: null })
   })
 
+  // `--server`: on Linux the windows exist but nothing is drawn (headless Ozone). A stop signal
+  // persists the profile and quits without the quit checks, which nobody is there to answer.
+  const server = switches.server && process.platform === 'linux'
+  const unsupported = switches.server ? serverUnsupportedLine(process.platform) : null
+  if (unsupported) console.warn('[zenium]', unsupported)
+  const startServer = (b: Browser): void => {
+    let stopping = false
+    const stop = (): void => {
+      if (stopping) return
+      stopping = true
+      b.shutdown()
+      app.quit()
+    }
+    process.once('SIGTERM', stop)
+    process.once('SIGINT', stop)
+    const parent = Number(process.env[SERVER_PARENT_ENV])
+    if (Number.isInteger(parent) && parent > 0) watchParent(parent, stop)
+    void runServer(
+      {
+        agentStatus: () => b.agents.serverStatus(),
+        enableAgents: () => {
+          if (!b.state.settings.agents.enabled)
+            b.updateSettings(
+              { agents: { ...b.state.settings.agents, enabled: true } },
+              b.ensureBrowserWindow()
+            )
+        },
+        syncStatus: () => b.sync.status(),
+        startSignIn: () => b.sync.startAccountLink(b.ensureBrowserWindow())
+      },
+      { signIn: switches.signIn }
+    ).catch((error: unknown) => console.error('[zenium] server:', error))
+  }
+
   app.whenReady().then(() => {
     // Windows groups taskbar buttons and toast notifications by this id; it must be the one the
     // installer stamps on the shortcuts, in development too (electron-toolkit's helper would
@@ -227,6 +283,7 @@ function main(): void {
       windows: !appAlone,
       restoreLastSession: switches.restoreLastSession
     })
+    if (server) startServer(browser)
     installShellTasks((kind) => void browser?.createWindow({ kind }))
     openLaunch(initial)
     for (const launch of queued.splice(0)) openLaunch(launch)
