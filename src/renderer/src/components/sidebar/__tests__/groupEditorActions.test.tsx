@@ -335,26 +335,28 @@ describe('on the touch layout (TABLET-22: the tablet shows the bubble once after
   const labelsOf = (el: HTMLElement): string[] =>
     actions(el).map((r) => r.querySelector('.zen-v2-label')!.textContent!)
 
-  it('says Group where the desktop says Folder (§6): the title, the field’s placeholder, the actions’ name and every row, open and saved alike; the counts keep the bubble’s register', async () => {
+  it('says Folder as the desktop does: the title, the field’s placeholder, the actions’ name and every row, open and saved alike', async () => {
     let el = await bubble([tab('home', null), tab('a', 'g'), tab('b', 'g')], folder(), 'tablet')
-    expect(el.querySelector('.zen-bm-title')!.textContent).toBe('Edit group')
-    expect(el.querySelector<HTMLInputElement>('.zen-v2-field')!.placeholder).toBe('Name this group')
+    expect(el.querySelector('.zen-bm-title')!.textContent).toBe('Edit folder')
+    expect(el.querySelector<HTMLInputElement>('.zen-v2-field')!.placeholder).toBe(
+      'Name this folder'
+    )
     expect(el.querySelector('.zen-group-editor-actions')!.getAttribute('aria-label')).toBe(
-      'Group actions'
+      'Folder actions'
     )
     expect(labelsOf(el)).toEqual([
-      'New tab in group',
-      'Unpack group',
-      'Close group',
-      'Delete group'
+      'New tab in folder',
+      'Unpack folder',
+      'Close folder',
+      'Delete folder'
     ])
     expect(actions(el)[2]!.querySelector('.zen-group-editor-count')!.textContent).toBe('2 tabs')
     expect(actions(el)[3]!.hasAttribute('data-danger')).toBe(true)
-    expect(el.textContent).not.toMatch(/folder/i)
+    expect(el.textContent).not.toMatch(/group/i)
     el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }), 'tablet')
-    expect(labelsOf(el)).toEqual(['Open group', 'New tab in group', 'Delete group'])
+    expect(labelsOf(el)).toEqual(['Open folder', 'New tab in folder', 'Delete folder'])
     expect(actions(el)[0]!.querySelector('.zen-group-editor-count')!.textContent).toBe('3 tabs')
-    expect(el.textContent).not.toMatch(/folder/i)
+    expect(el.textContent).not.toMatch(/group/i)
   })
 
   it('Close group takes the group row menu’s route (folder.closeUndoable’s, #721): the core’s folder.close at once, the bubble away, and once the core has filed the tabs a toast in the group’s words whose Undo brings them back newest first', async () => {
@@ -394,7 +396,7 @@ describe('on the touch layout (TABLET-22: the tablet shows the bubble once after
     })
     const toasts = uiStore.get().toasts
     expect(toasts.map((t) => [t.message, t.action?.label, t.duration])).toEqual([
-      ['Research tab group closed and saved', 'Undo', TOAST_UNDO_MS]
+      ['Research closed and saved', 'Undo', TOAST_UNDO_MS]
     ])
     cmd.mockClear()
     await act(async () => {

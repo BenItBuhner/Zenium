@@ -1,13 +1,10 @@
-import { touchLayout } from '../formFactor'
-import type { FormFactor, Platform } from '../types'
+import type { Platform } from '../types'
 import { ACTIONS } from './actions'
 import type { ActId } from './acts'
 import { APP_MENU } from './appMenu'
 import { COPY_SHARE } from './copyShare'
-import type { Noun, NounWords } from './nouns'
 
 export type { ActId, MenuAct, PaletteAct } from './acts'
-export type { Noun, NounWords } from './nouns'
 
 /**
  * The string table (spec §9 item 10; the D7 proposal §C): every user-facing label lives once,
@@ -52,13 +49,6 @@ export interface Entry {
    */
   ask?: true
   /**
-   * The one per-host axis (TABLET-22): the desktop says Folder, the touch hosts Group. The side's
-   * word fills `{noun}` in the face – "Add Tab to New {noun}" – or is the whole face where the
-   * sides share no words ("Unpack Folder" / "Ungroup": `menu: '{noun}'`). `nounFor(formFactor)`
-   * picks the side; a caller with none reads the desktop's, as `newFolderName` does.
-   */
-  noun?: NounWords
-  /**
    * The words while the state the act toggles is ON – the row turns it off: "Exit Full Screen",
    * "Unpin Tab", "Unmute Site" – and while it is OFF: "Enter Full Screen", "Pin Tab", "Mute
    * Site". Read when the context says which (`state: boolean`); `menu` is the row that does not
@@ -81,9 +71,8 @@ export interface Entry {
   orientation?: { horizontal: string; vertical: string }
 }
 
-/** What a face is read for: the host's noun, the state's side, the count, the platform, the strip's orientation. */
+/** What a face is read for: the state's side, the count, the platform, the strip's orientation. */
 export interface Ctx {
-  noun?: Noun
   /** Whether the state the act toggles is on now (`state.on` is read: the row turns it off). */
   state?: boolean
   n?: number
@@ -147,8 +136,7 @@ export const PROTECTED: ReadonlySet<string> = new Set([
 const PHRASES: ReadonlyArray<readonly [menu: string, sentence: string]> = [
   ['New Tab Page', 'New Tab page'],
   ['Home Screen', 'Home screen'],
-  ['Live Folder', 'Live Folder'],
-  ['Live Group', 'Live Group']
+  ['Live Folder', 'Live Folder']
 ]
 
 /** The letters of a word, without the punctuation around it and a possessive's `'s`. */
@@ -198,7 +186,7 @@ type Values<T extends string> = [Holes<T>] extends [never]
   : { readonly [K in Holes<T>]: string | number }
 
 /**
- * A template's `{name}` holes filled: `fill('Add {n} Tabs to {noun}', { n: 3, noun: 'Folder' })`.
+ * A template's `{name}` holes filled: `fill('Add {n} Tabs to Folder', { n: 3 })`.
  * Values are plain strings with holes, never template literals, so a `{name}` maps one-to-one
  * onto Android's `%1$s` by position and a Kotlin twin can compare the two tables. A hole with no
  * value is left as typed – visible in review, never thrown over.
@@ -214,11 +202,6 @@ export function fill<T extends string>(template: T, values: Values<T>): string {
 /** The counted face: `one` for a count of 1, `other` else, `{n}` filled. */
 export function plural(count: { one: string; other: string }, n: number): string {
   return fill(n === 1 ? count.one : count.other, { n })
-}
-
-/** The side of the noun axis the host `formFactor` draws: the touch hosts' Group, else Folder. */
-export function nounFor(formFactor: FormFactor | undefined): Noun {
-  return formFactor !== undefined && touchLayout(formFactor) ? 'group' : 'folder'
 }
 
 /** The words of an entry for a context, before the face's case and ellipsis are applied. */
@@ -243,7 +226,6 @@ function wordsOf(entry: Entry, ctx: Ctx): { text: string; ask: boolean; derived:
   }
   const values: Record<string, string | number> = {}
   if (ctx.n !== undefined) values.n = ctx.n
-  if (entry.noun) values.noun = entry.noun[ctx.noun ?? 'folder']
   return { text: fill(text, values), ask: entry.ask === true, derived }
 }
 
@@ -284,8 +266,7 @@ export function entryOf(id: TableId): Entry {
 /**
  * The lookup every surface reads: `S.menu('tab.copyUrl')` → "Copy Link"; `S.row('share.open')`
  * → "Share…"; `S.button('share.open')` → "Share"; `S.title('bookmark.allTabs')` → "Bookmark all
- * tabs"; `S.menu('page.fullscreen', { state: true })` → "Exit Full Screen";
- * `S.menu('folder.edit', { noun: nounFor(win.formFactor) })` → "Edit Folder…" / "Edit Group…".
+ * tabs"; `S.menu('page.fullscreen', { state: true })` → "Exit Full Screen".
  */
 export const S = {
   menu: (id: TableId, ctx?: Ctx): string => face(entryOf(id), 'menu', ctx),
@@ -297,7 +278,7 @@ export const S = {
 /**
  * Every word of the table a literal elsewhere must not repeat (the sweep's rule): each face of
  * each entry – the menu's and the derived sentence, with and without the ellipsis – and every
- * axis's words, filled per side of the noun axis.
+ * axis's words.
  */
 export function tableValues(): ReadonlyMap<string, string> {
   const out = new Map<string, string>()
@@ -313,35 +294,29 @@ export function tableValues(): ReadonlyMap<string, string> {
         add(sentence(text) + ELLIPSIS)
       }
     }
-    const nouns: Array<Noun | undefined> = entry.noun ? ['folder', 'group'] : [undefined]
-    for (const noun of nouns) {
-      const ctx: Ctx = { noun }
-      faces(wordsOf(entry, ctx).text, entry.ask === true)
-      if (entry.sentence !== undefined) {
-        add(entry.sentence)
-        if (entry.ask) add(entry.sentence + ELLIPSIS)
-      }
-      if (entry.state) {
-        faces(wordsOf(entry, { ...ctx, state: true }).text, entry.ask === true)
-        faces(wordsOf(entry, { ...ctx, state: false }).text, entry.ask === true)
-      }
-      if (entry.count) {
-        // The count's hole stays a hole: "Add {n} Tabs to Folder" names every count at once.
-        const side: Record<string, string> = entry.noun
-          ? { noun: entry.noun[noun ?? 'folder'] }
-          : {}
-        faces(fill(entry.count.one, side), entry.ask === true)
-        faces(fill(entry.count.other, side), entry.ask === true)
-      }
-      if (entry.orientation) {
-        faces(wordsOf(entry, { ...ctx, orientation: 'horizontal' }).text, entry.ask === true)
-        faces(wordsOf(entry, { ...ctx, orientation: 'vertical' }).text, entry.ask === true)
-      }
-      if (entry.os) {
-        for (const os of Object.keys(entry.os) as Platform[]) {
-          const { text, ask } = wordsOf(entry, { ...ctx, os })
-          faces(text, ask)
-        }
+    const ctx: Ctx = {}
+    faces(wordsOf(entry, ctx).text, entry.ask === true)
+    if (entry.sentence !== undefined) {
+      add(entry.sentence)
+      if (entry.ask) add(entry.sentence + ELLIPSIS)
+    }
+    if (entry.state) {
+      faces(wordsOf(entry, { ...ctx, state: true }).text, entry.ask === true)
+      faces(wordsOf(entry, { ...ctx, state: false }).text, entry.ask === true)
+    }
+    if (entry.count) {
+      // The count's hole stays a hole: "Add {n} Tabs to Folder" names every count at once.
+      faces(entry.count.one, entry.ask === true)
+      faces(entry.count.other, entry.ask === true)
+    }
+    if (entry.orientation) {
+      faces(wordsOf(entry, { ...ctx, orientation: 'horizontal' }).text, entry.ask === true)
+      faces(wordsOf(entry, { ...ctx, orientation: 'vertical' }).text, entry.ask === true)
+    }
+    if (entry.os) {
+      for (const os of Object.keys(entry.os) as Platform[]) {
+        const { text, ask } = wordsOf(entry, { ...ctx, os })
+        faces(text, ask)
       }
     }
   }

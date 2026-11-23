@@ -533,7 +533,7 @@ describe('the card and group menus', () => {
     hold('a')
     expect(sheetLabels()).toEqual([
       'Select Tabs',
-      'New Group',
+      'New Folder',
       'Add to Research',
       'Share…',
       'Bookmark Tab',
@@ -553,8 +553,8 @@ describe('the card and group menus', () => {
     hold('m1')
     expect(sheetLabels()).toEqual([
       'Select Tabs',
-      'New Group',
-      'Remove from Group',
+      'New Folder',
+      'Remove from Folder',
       'Share…',
       'Bookmark Tab',
       'Close Other Tabs (3)',
@@ -624,7 +624,12 @@ describe('the card and group menus', () => {
       const labels = sheetLabels()
       expect(labels, url).not.toContain('Share…')
       expect(labels, url).not.toContain('Bookmark Tab')
-      expect(labels, url).toEqual(['Select Tabs', 'New Group', 'Close Other Tabs (1)', 'Close Tab'])
+      expect(labels, url).toEqual([
+        'Select Tabs',
+        'New Folder',
+        'Close Other Tabs (1)',
+        'Close Tab'
+      ])
       // Escape dismisses the sheet; nothing was sent for it.
       act(() => {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
@@ -638,7 +643,7 @@ describe('the card and group menus', () => {
   it("a held group's rows are menu items in Title Case, the count with its unit", () => {
     render(grouped())
     // A right click is the hold, for the mouse (`useLongPress`): the header opens its sheet.
-    const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
+    const header = document.querySelector<HTMLElement>('[aria-label^="Research, folder"]')!
     act(() => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
@@ -646,18 +651,18 @@ describe('the card and group menus', () => {
     // The cleanup spec's §2 rows, in its order: no Collapse (a tap on the header folds the group).
     expect(sheetLabels()).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (2 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (2 Tabs)',
+      'Delete Folder'
     ])
     // Close Group keeps the group, saved with its pages (`folder.close`): the plain ink, as on
     // every group menu; Delete Group alone takes the danger ink (v2 §6).
     const items = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')]
     const ink = (label: string): string =>
       items.find((el) => el.textContent?.startsWith(label))!.style.color
-    expect(ink('Close Group')).toBe('')
-    expect(ink('Delete Group')).toBe('var(--zen-danger)')
+    expect(ink('Close Folder')).toBe('')
+    expect(ink('Delete Folder')).toBe('var(--zen-danger)')
     // The colour swatches are a radio group, named for assistive technology; not menu rows.
     expect(document.querySelector('[role="radiogroup"][aria-label="Colour"]')).not.toBeNull()
   })
@@ -669,12 +674,12 @@ describe('the card and group menus', () => {
         tab('a', 'https://a.example/')
       ])
     )
-    const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
+    const header = document.querySelector<HTMLElement>('[aria-label^="Research, folder"]')!
     act(() => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
     act(() => settleSprings())
-    expect(sheetLabels()).toContain('Close Group (1 Tab)')
+    expect(sheetLabels()).toContain('Close Folder (1 Tab)')
   })
 })
 
@@ -2603,7 +2608,7 @@ describe('the private pane', () => {
     )
     expect(labels).toContain('Close Other Tabs (3)')
     // No grouping on the private pane: the session is not a workspace.
-    expect(labels).not.toContain('New Group')
+    expect(labels).not.toContain('New Folder')
   })
 
   it('a held private card’s rows: Share… and Bookmark Tab between Select Tabs and the closes, no group row; Share… sends the private tab (TAB-28)', () => {

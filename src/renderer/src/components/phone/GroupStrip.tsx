@@ -386,7 +386,7 @@ export const GroupStrip = memo(function GroupStrip({
     []
   )
 
-  const label = group.name.trim() || 'Group'
+  const label = group.name.trim() || 'Folder'
 
   return (
     <div

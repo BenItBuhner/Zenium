@@ -322,7 +322,7 @@ describe('the tab menu’s group items (context-menus-91)', () => {
 })
 
 describe('the folder header menu (tabs-13)', () => {
-  it('runs act / change / destroy: New Tab in Folder – Edit Folder… with Zenium’s live folder item and Move Folder to New Window last – Unpack and Close – Delete Folder', () => {
+  it('runs act / change / destroy: New Tab in Folder – Edit Folder… with the live folder item – Unpack and Close – Delete Folder', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
@@ -330,14 +330,11 @@ describe('the folder header menu (tabs-13)', () => {
     h.open('https://b.test/', { folderId: folder.id })
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
-    // Move Folder to New Window is a change of place: it closes the change group, as the tab
-    // menu files Move Tab to New Window with its place-changing verbs, not beside New Tab.
     expect(shown).toEqual([
       'New Tab in Folder',
       '-',
       'Edit Folder…',
       'Make Live Folder…',
-      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (2 Tabs)',
@@ -380,18 +377,13 @@ describe('the folder header menu (tabs-13)', () => {
       '-',
       'Edit Folder…',
       'Refresh Live Folder',
-      'Refresh Every',
       'Live Folder Settings…',
-      'Stop Updating (make static)',
-      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (1 Tab)',
       '-',
       'Delete Folder'
     ])
-    expect(labels(h.shown())).toContain('Refresh Every > 1 hour')
-    expect(item(h.shown(), 'Refresh Every').submenu?.find((i) => i.checked)?.label).toBe('1 hour')
   })
 
   it('reads Close Folder (1 Tab) for one member and, for none, no Unpack or Close and Delete Folder alone at the end', () => {
@@ -563,15 +555,14 @@ describe('the folder header menu (tabs-13)', () => {
     expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(members[1])
   })
 
-  it('Move Folder to New Window takes the folder’s tabs and the folder into a window of their own (context-menus-107)', () => {
+  it('moveFolderToNewWindow takes the folder’s tabs and the folder into a window of their own (context-menus-107)', () => {
     const h = harness()
     const space = h.win.activeSpace()
     const folder = h.browser.createFolder(space.id, 'Docs', '📁', h.win, { rename: false })
     const a = h.open('https://a.test/', { folderId: folder.id })
     const b = h.open('https://b.test/', { folderId: folder.id })
     const loose = h.open('https://loose.test/')
-    h.browser.menus.showFolderContextMenu(folder.id, h.win)
-    item(h.shown(), 'Move Folder to New Window').click!()
+    void h.browser.tabs.moveFolderToNewWindow(folder.id, h.win)
     const moved = h.browser.allWindows().find((w) => w !== h.win)
     if (!moved) throw new Error('no new window')
     // Shared tabs (sync all) can only live alone in a blank window: the folder follows them
@@ -585,7 +576,7 @@ describe('the folder header menu (tabs-13)', () => {
     expect(Object.keys(h.browser.state.snapshot(moved).folders)).toEqual([folder.id])
     expect(h.browser.state.snapshot(h.win).folders[folder.id]).toBeUndefined()
     // The source keeps its loose tab and nothing of the folder; in the new window the folder's
-    // menu is an open folder's, the folder movable on (a blank window's tab tears off the same).
+    // menu is an open folder's.
     expect(space.tabIds).toEqual([loose])
     h.browser.menus.showFolderContextMenu(folder.id, moved)
     expect(labels(h.shown())).toEqual([
@@ -593,7 +584,6 @@ describe('the folder header menu (tabs-13)', () => {
       '-',
       'Edit Folder…',
       'Make Live Folder…',
-      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (2 Tabs)',
@@ -602,8 +592,8 @@ describe('the folder header menu (tabs-13)', () => {
     ])
   })
 
-  it('offers no Move Folder to New Window on a host without windows', () => {
-    const h = harness({ windows: false })
+  it('offers no Move Folder to New Window: Zen’s folder menu has none', () => {
+    const h = harness()
     const folder = h.browser.createFolder(h.win.activeSpaceId, 'Docs', '📁', h.win, {
       rename: false
     })

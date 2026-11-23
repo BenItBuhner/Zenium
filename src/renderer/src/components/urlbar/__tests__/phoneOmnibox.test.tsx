@@ -1262,7 +1262,7 @@ describe('the field’s engine mark (NTP-09)', () => {
  * The tab group row (OMN-15; Chrome for Android's `TabGroupSuggestionProcessor`): the one group
  * glyph in the favicon slot (§9.37), the group's name over its sites, Chrome's sentence to
  * assistive technology, and the pick as the Tab groups pane's Open (`folder.open`). One kind
- * on every chassis: the phone's sheet row, the tablet's popup row with "Open tab group" where
+ * on every chassis: the phone's sheet row, the tablet's popup row with "Open folder" where
  * the tab row says "Switch to tab", the desktop's with its "Folder" noun.
  */
 describe('the tab group row (OMN-15)', () => {
@@ -1379,7 +1379,7 @@ describe('the tab group row (OMN-15)', () => {
     expect(groupLi.querySelector('.zen-omnibox-refine')).toBeNull()
     // Chrome's content description, in the touch hosts' noun.
     expect(option(groupLi).getAttribute('aria-label')).toBe(
-      'Open Research tab group, colour Blue, with sites arxiv.org, scholar.google.com.'
+      'Open Research folder, colour Blue, with sites arxiv.org, scholar.google.com.'
     )
     expect(option(tabLi).hasAttribute('aria-label')).toBe(false)
   })
@@ -1419,11 +1419,11 @@ describe('the tab group row (OMN-15)', () => {
     expect(glyph(groupLi)).toBeNull()
     expect(option(groupLi).querySelector('svg.lucide-folder')).not.toBeNull()
     expect(option(groupLi).getAttribute('aria-label')).toBe(
-      'Open Research tab group, colour Grey, with sites arxiv.org, scholar.google.com.'
+      'Open Research folder, colour Grey, with sites arxiv.org, scholar.google.com.'
     )
   })
 
-  it('tablet: the popup row says "Open tab group" where the tab row says "Switch to tab"', async () => {
+  it('tablet: the popup row says "Open folder" where the tab row says "Switch to tab"', async () => {
     layout('tablet')
     suggestions = (q) => (q === 'res' ? [tabRow(), groupRow()] : [])
     const el = await render(bareWith(withGroup(tab(PAGE))))
@@ -1432,14 +1432,14 @@ describe('the tab group row (OMN-15)', () => {
     expect(tabLi.classList.contains('zen-omnibox-row')).toBe(true)
     expect(hint(tabLi)).toBe('Switch to tab')
     expect(groupLi.getAttribute('data-kind')).toBe('folder')
-    expect(hint(groupLi)).toBe('Open tab group')
+    expect(hint(groupLi)).toBe('Open folder')
     expect(glyph(groupLi)?.closest('.zen-omnibox-row-icon')).not.toBeNull()
     expect(groupLi.querySelector('.zen-omnibox-row-title')?.textContent).toBe('Research')
     expect(groupLi.querySelector('.zen-omnibox-row-host')?.textContent).toBe(
       ' — arxiv.org, scholar.google.com'
     )
     expect(option(groupLi).getAttribute('aria-label')).toBe(
-      'Open Research tab group, colour Blue, with sites arxiv.org, scholar.google.com.'
+      'Open Research folder, colour Blue, with sites arxiv.org, scholar.google.com.'
     )
     // No remove X: a group is not removable, as Chrome's match is not deletable.
     expect(groupLi.querySelector('[data-testid="urlbar-remove-suggestion"]')).toBeNull()

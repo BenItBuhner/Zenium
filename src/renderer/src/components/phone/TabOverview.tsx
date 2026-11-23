@@ -11,7 +11,7 @@ import type {
   UIState
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
+import { NEW_FOLDER_NAME } from '@shared/groupNames'
 import {
   otherOverviewView,
   OVERVIEW_LABELS,
@@ -1142,7 +1142,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     try {
       const folderId = await cmd('folder.create', {
         spaceId: space.id,
-        name: TOUCH_GROUP_DEFAULT_NAME,
+        name: NEW_FOLDER_NAME,
         icon: DEFAULT_FOLDER_ICON,
         color: nextGroupColor(state, space.id),
         rename
@@ -1839,8 +1839,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       : [
           {
             id: 'group',
-            label: 'Group',
-            name: named('Group', groupable.length),
+            label: 'Folder',
+            name: `Move ${groupable.length} ${groupable.length === 1 ? 'tab' : 'tabs'} to folder`,
             glyph: <Group className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
             disabled: groupable.length === 0,
             run: () => setSheet({ kind: 'group-picker' })
@@ -2668,7 +2668,7 @@ function GroupPickerSheet({
   onPick: (folderId: string | null) => void
 }): JSX.Element {
   const actions: SheetAction[] = [
-    { id: 'new-group', label: 'New group', onPick: () => onPick(null) },
+    { id: 'new-group', label: 'New folder', onPick: () => onPick(null) },
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,
@@ -2678,7 +2678,7 @@ function GroupPickerSheet({
   ]
   return (
     <OverviewSheet
-      title={`Group ${count} ${count === 1 ? 'tab' : 'tabs'}`}
+      title={`Move ${count} ${count === 1 ? 'tab' : 'tabs'} to folder`}
       actions={actions}
       onClose={onClose}
     />
@@ -2760,7 +2760,7 @@ function TabSheet({
     { id: 'select', label: 'Select Tabs', onPick: () => onSelect(tab) }
   ]
   if (groupable && !tab.pinned && !tab.essential) {
-    actions.push({ id: 'new-group', label: 'New Group', onPick: () => onNewGroup(tab) })
+    actions.push({ id: 'new-group', label: 'New Folder', onPick: () => onNewGroup(tab) })
     for (const g of groups) {
       if (g.id === current) continue
       actions.push({
@@ -2773,7 +2773,7 @@ function TabSheet({
     if (current)
       actions.push({
         id: 'ungroup',
-        label: 'Remove from Group',
+        label: 'Remove from Folder',
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: null })
       })
   }

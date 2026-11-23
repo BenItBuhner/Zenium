@@ -177,7 +177,7 @@ import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { sanitizeGameBestScore } from '../shared/game/bridge'
 import { sanitizeAppProxySettings } from '../shared/appProxy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
-import { newFolderName } from '../shared/formFactor'
+import { NEW_FOLDER_NAME } from '../shared/groupNames'
 import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
@@ -2333,7 +2333,7 @@ export class Browser {
     const folder = createFolder(
       this.state.model,
       space.id,
-      node.title || newFolderName(win.formFactor),
+      node.title || NEW_FOLDER_NAME,
       '📁',
       nextFolderColor(this.state.model, space.id)
     )
@@ -2470,7 +2470,7 @@ export class Browser {
     const folder = createFolder(
       this.state.model,
       spaceId,
-      newFolderName(win?.formFactor),
+      NEW_FOLDER_NAME,
       '📁',
       nextFolderColor(this.state.model, spaceId)
     )

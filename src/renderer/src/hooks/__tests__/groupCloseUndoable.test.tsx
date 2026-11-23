@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { ClosedEntrySummary, Events, Folder, Space, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
-import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
+import { NEW_FOLDER_NAME } from '@shared/groupNames'
 
 /*
  * The core's `folder.closeUndoable` as `useMainEvents` answers it (TAB-16 / TAB-13, the Design
@@ -14,7 +14,7 @@ import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
  * phone's undoable close. The handler reads the group's LIVE members the way the phone's overview
  * does for its own Close Group (the space's regular tabs in the group; a private one is none of
  * them), runs the core's `folder.close` at once through `lib/closeUndo.ts`, and the toast that
- * follows the core's filing reads "<Name> tab group closed and saved" – "Tab group closed and
+ * follows the core's filing reads "<Name> closed and saved" – "Tab group closed and
  * saved" for a group still wearing a default name (`isDefaultGroupName`, the shared module; the
  * Lead's addendum) – with Undo restoring the tabs newest first (each back INTO
  * the group, whose record the saved group keeps) and the user's tab activated. The desktop never
@@ -246,7 +246,7 @@ describe('folder.closeUndoable in the chrome', () => {
     // of the count: the toast comes with these two, no settle wait for a third.
     file(entry(tab('a'), NOW), entry(tab('b'), NOW))
     await flush()
-    expect(toasts()).toEqual([['Research tab group closed and saved', 'Undo']])
+    expect(toasts()).toEqual([['Research closed and saved', 'Undo']])
     // Undo: each entry restored newest first – the core puts each back into the group, whose
     // record the saved group kept – and the user stays on the tab they were on.
     act(() => uiStore.get().toasts[0].action!.onPick())
@@ -256,12 +256,12 @@ describe('folder.closeUndoable in the chrome', () => {
   })
 
   it('a group still wearing the default name is not called by it: "Tab group closed and saved" (the Lead’s addendum)', async () => {
-    act(() => browserStore.set({ state: research(TOUCH_GROUP_DEFAULT_NAME) }))
+    act(() => browserStore.set({ state: research('Group') }))
     act(() => fire('folder.closeUndoable', { folderId: GROUP }))
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     file(entry(tab('a'), NOW), entry(tab('b'), NOW))
     await flush()
-    expect(toasts()).toEqual([['Tab group closed and saved', 'Undo']])
+    expect(toasts()).toEqual([['Folder closed and saved', 'Undo']])
   })
 
   it('a group named "New Folder" – a touch group from before the touch hosts had a word of their own – closes to "Tab group closed and saved" too (the Lead’s ruling; no migration)', async () => {
@@ -270,7 +270,7 @@ describe('folder.closeUndoable in the chrome', () => {
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     file(entry(tab('a'), NOW), entry(tab('b'), NOW))
     await flush()
-    expect(toasts()).toEqual([['Tab group closed and saved', 'Undo']])
+    expect(toasts()).toEqual([['Folder closed and saved', 'Undo']])
   })
 
   it('a member the user is on comes back as the active tab', async () => {
@@ -302,6 +302,6 @@ describe('folder.closeUndoable in the chrome', () => {
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     file(entry(tab('a'), NOW), entry(tab('b'), NOW))
     await flush()
-    expect(toasts()).toEqual([['Reading tab group closed and saved', 'Undo']])
+    expect(toasts()).toEqual([['Reading closed and saved', 'Undo']])
   })
 })

@@ -192,22 +192,22 @@ export const OVERVIEW_LABELS = {
   /** The Spaces sheet's last row: the space editor follows. */
   newSpace: 'New Space…',
   /** The open group header's ⋯ (§2), its accessible name. */
-  groupOptions: 'Group options',
+  groupOptions: 'Folder options',
   /** The group's rename field (§2), its accessible name. */
-  groupName: 'Group name',
+  groupName: 'Folder name',
   /** The group sheet's colour palette (§2), the radio group's accessible name. */
   colour: 'Colour',
   /** The tab search's field (§4 Search Tabs; TAB-21), its accessible name. */
   searchTabs: 'Search tabs',
   /** The group sheets' rows (§2). */
   rename: 'Rename',
-  newTabInGroup: 'New Tab in Group',
-  ungroup: 'Ungroup',
-  deleteGroup: 'Delete Group',
+  newTabInGroup: 'New Tab in Folder',
+  ungroup: 'Unpack Folder',
+  deleteGroup: 'Delete Folder',
   /** An open group's card from its sheet: the grid scrolls to it, unfolded. */
   showInTabs: 'Show in Tabs',
-  /** "Close Group (2 Tabs)": its tabs close, the group stays saved with their pages (TAB-16). */
-  closeGroup: (count: number): string => `Close Group (${tabsUnit(count)})`,
+  /** "Close Folder (2 Tabs)": its tabs close, the folder stays saved with their pages (TAB-16). */
+  closeGroup: (count: number): string => `Close Folder (${tabsUnit(count)})`,
   /** The saved card's "Open (2 Tabs)": its pages come back as tabs. */
   openGroup: (count: number): string => `Open (${tabsUnit(count)})`
 } as const

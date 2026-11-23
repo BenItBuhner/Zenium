@@ -174,18 +174,16 @@ describe('folderDeleteWords', () => {
     })
   })
 
-  it('names a nameless one in the host’s word (v2 §6): the desktop’s "folder", the touch hosts’ "this group" – the phone sheet’s – and a named one by its name on either, with no noun', () => {
-    expect(folderDeleteWords('  ', 1, true, 'group')).toEqual({
-      title: 'Delete this group?',
+  it('names a nameless one "folder" on every host, and a named one by its name', () => {
+    expect(folderDeleteWords('  ', 1, true)).toEqual({
+      title: 'Delete folder?',
       detail: 'Its 1 saved page is forgotten with it. There is no undo.'
     })
-    expect(folderDeleteWords('', 2, false, 'group')).toEqual({
-      title: 'Delete this group?',
+    expect(folderDeleteWords('', 2, false)).toEqual({
+      title: 'Delete folder?',
       detail: 'Its 2 tabs close with it; Recently Closed keeps their pages.'
     })
-    expect(folderDeleteWords('', 2, false, 'folder').title).toBe('Delete folder?')
-    expect(folderDeleteWords('Research', 2, false, 'group').title).toBe('Delete Research?')
-    expect(folderDeleteWords('Research', 2, false, 'folder').title).toBe('Delete Research?')
+    expect(folderDeleteWords('Research', 2, false).title).toBe('Delete Research?')
   })
 })
 
@@ -370,7 +368,7 @@ describe('the "Delete <folder>?" prompt', () => {
     )
   })
 
-  it('asks a nameless group’s question in the host’s word (v2 §6): "Delete folder?" on the desktop, "Delete this group?" on the tablet, whose group menu lands here – the rest of the prompt the same', async () => {
+  it('asks a nameless folder’s question the same on every host: "Delete folder?" on the desktop and on the tablet', async () => {
     browserStore.set({
       state: state([tab('home', null), tab('a', 'g')], [folder({ name: '  ' })])
     })
@@ -391,7 +389,7 @@ describe('the "Delete <folder>?" prompt', () => {
       await settle()
       const d = dialog()!
       expect(d).not.toBeNull()
-      expect(d.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Delete this group?')
+      expect(d.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Delete folder?')
       expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
         'Its 1 tab closes with it; Recently Closed keeps its page.'
       )

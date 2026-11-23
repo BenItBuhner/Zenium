@@ -32,7 +32,8 @@ import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
 import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
-import { newFolderName, touchLayout } from '../shared/formFactor'
+import { touchLayout } from '../shared/formFactor'
+import { NEW_FOLDER_NAME } from '../shared/groupNames'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -51,7 +52,6 @@ import {
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
-  type Folder,
   type KeyBinding,
   type MenuAnchor,
   type MenuHeader,
@@ -84,7 +84,7 @@ import {
 import { MANAGED_MENU_LABEL } from '../shared/managed'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
-import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
+import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
@@ -814,7 +814,7 @@ export class Menus {
       const inGroup: MenuItemTemplate | undefined =
         group || groupable
           ? {
-              label: 'Open Link in New Tab in Group',
+              label: 'Open Link in New Tab in Folder',
               click: () =>
                 tabs.createTab(
                   {
@@ -952,7 +952,7 @@ export class Menus {
   private groupAround(tab: Tab, win: ZenWindow): string {
     const folder = this.browser.createFolder(
       tab.spaceId ?? win.activeSpaceId,
-      newFolderName(win.formFactor),
+      NEW_FOLDER_NAME,
       '📁',
       win,
       { rename: false }
@@ -2487,19 +2487,12 @@ export class Menus {
     // overview cleanup spec §7): a touch host says GROUP, as Chrome for Android's tab menu does
     // and as the phone's own sheets do; the desktop says Folder, its labels byte for byte as
     // before. One block, so the string table absorbs it whole.
-    const folderRows = touchLayout(win.formFactor)
-      ? {
-          addToNew: 'Add Tab to New Group',
-          moveTo: 'Move to Group',
-          newOne: 'New Group…',
-          remove: 'Remove from Group'
-        }
-      : {
-          addToNew: 'Add Tab to New Folder',
-          moveTo: 'Move to Folder',
-          newOne: 'New Folder…',
-          remove: 'Remove from Folder'
-        }
+    const folderRows = {
+      addToNew: 'Add Tab to New Folder',
+      moveTo: 'Move to Folder',
+      newOne: 'New Folder…',
+      remove: 'Remove from Folder'
+    }
     const moveTab: Template = joinGroups([
       [
         {
@@ -2775,12 +2768,8 @@ export class Menus {
     const folders = Object.values(m.folders).filter(
       (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
     )
-    // The group rows' words by the window's layout, as the tab menu's (the overview cleanup
-    // spec §7; the Lead's fold on #731): a touch host says GROUP, the desktop says Folder, its
-    // labels byte for byte as before.
-    const groupRows = touchLayout(win.formFactor)
-      ? { addTo: `Add ${n} Tabs to Group`, newOne: 'New Group…' }
-      : { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
+    // One word on every host: Zen's Folder.
+    const groupRows = { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
     this.popup(
       [
         {
@@ -2834,12 +2823,7 @@ export class Menus {
                   {
                     label: groupRows.newOne,
                     click: () => {
-                      const folder = this.browser.createFolder(
-                        space.id,
-                        newFolderName(win.formFactor),
-                        '📁',
-                        win
-                      )
+                      const folder = this.browser.createFolder(space.id, NEW_FOLDER_NAME, '📁', win)
                       for (const t of nonEssential)
                         if (!t.pinned) tabs.moveToFolder(t.id, folder.id)
                     }
@@ -2969,15 +2953,12 @@ export class Menus {
         ...(local
           ? []
           : [
-              // The strip's group rows say GROUP on a touch host, as the tab menu's do (the
-              // overview cleanup spec §7; the Lead's fold on #731); the desktop's say Folder.
               {
-                label: touchLayout(win.formFactor) ? 'New Group' : 'New Folder',
-                click: () =>
-                  this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
+                label: 'New Folder',
+                click: () => this.browser.createFolder(space.id, NEW_FOLDER_NAME, '📁', win)
               },
               {
-                label: touchLayout(win.formFactor) ? 'New Live Group…' : 'New Live Folder…',
+                label: 'New Live Folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               {
@@ -3151,35 +3132,19 @@ export class Menus {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
-    if (win.formFactor !== 'desktop') {
-      this.popup(this.groupMenu(folder, win), win, 'folder', anchor)
-      return
-    }
     const live = this.browser.liveFolders.get(folderId)
-    // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
-    // desktop half of the shared groups). Its menu runs act / change / destroy in four groups:
-    // what the folder does (Open Folder while it is saved, then New Tab in Folder on either),
-    // what changes it (Edit Folder… – Chrome's group editor bubble, tabs-13: name, colour and
-    // the group's actions in one surface beside the header – the live folder's items or Make
-    // Live Folder…, and last, for an open folder with tabs on a host with windows to give, Move
-    // Folder to New Window – a change of place, filed with the verbs that change the folder as
-    // the tab menu files Move Tab to New Window with its place-changing verbs, not beside New
-    // Tab), what ends one half of an open folder and can be undone (Unpack Folder leaves the
-    // tabs loose to regroup, Close Folder closes them and the folder stays SAVED with their
-    // pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
-    // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
-    // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
-    // Tab in Folder on a saved folder opens it first – its pages back as its tabs – and adds the
-    // tab behind them (`newTabInFolder`), so the plain-ink verb loses nothing (§5, §9.1). Move
-    // Folder to New Window (Chrome's Move group to new window, context-menus-107) takes the
-    // folder's tabs and the folder to a window of their own beside this one
-    // (`moveFolderToNewWindow`); the saved folder keeps its three rows (Open Folder brings the
-    // pages back here). No Rename Folder… and no Expand or Collapse Folder: each duplicates a
-    // control the row already has (the editor's Name field, the header's own click). Zen's word
-    // is Folder; the touch hosts say Group.
+    // One folder menu on every host, Zen's word on every row: what the folder does (Open
+    // Folder while it is saved, New Tab in Folder), what changes it (Edit Folder… – name, colour
+    // and icon in one bubble – and the live folder's two rows), what ends one half of an open
+    // folder (Unpack Folder leaves the tabs loose; Close Folder closes them and the folder stays
+    // saved with their pages – with Undo on a touch host's toast), then Delete Folder alone,
+    // which asks first when there is anything to lose (`folder.confirmDelete`). No Rename and no
+    // Expand or Collapse: the bubble and the header's own click are those.
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     const saved = isSavedFolder(state.model, folder)
-    const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
+    const count = saved
+      ? (folder.savedTabs?.length ?? 0)
+      : regularFolderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
     const act: Template = [
       ...when(saved, {
@@ -3193,43 +3158,16 @@ export class Menus {
         label: 'Edit Folder…',
         click: () => this.browser.emit('folder.edit', { folderId }, win)
       },
-      ...((live
-        ? [
-            {
-              label: 'Refresh Live Folder',
-              click: () => void this.browser.liveFolders.refresh(folderId, true)
-            },
-            {
-              label: 'Refresh Every',
-              submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
-                label:
-                  minutes < 60
-                    ? `${minutes} minutes`
-                    : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
-                type: 'radio' as const,
-                checked: live.intervalMinutes === minutes,
-                click: () => this.browser.liveFolders.setInterval(folderId, minutes)
-              }))
-            },
-            {
-              label: 'Live Folder Settings…',
-              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-            },
-            {
-              label: 'Stop Updating (make static)',
-              click: () => this.browser.liveFolders.remove(folderId)
-            }
-          ]
-        : [
-            {
-              label: 'Make Live Folder…',
-              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-            }
-          ]) as Template),
-      ...when(!saved && count > 0 && state.capabilities.windows, {
-        label: 'Move Folder to New Window',
-        click: () => void this.browser.tabs.moveFolderToNewWindow(folderId, win)
-      })
+      // A live folder refreshes on demand; its source, interval and the way back to a static
+      // folder are the Live Folder dialog's.
+      ...when(Boolean(live), {
+        label: 'Refresh Live Folder',
+        click: () => void this.browser.liveFolders.refresh(folderId, true)
+      }),
+      {
+        label: live ? 'Live Folder Settings…' : 'Make Live Folder…',
+        click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+      }
     ]
     const end: Template =
       count && !saved
@@ -3237,7 +3175,11 @@ export class Menus {
             { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
             {
               label: `Close Folder (${tabs})`,
-              click: () => this.browser.closeFolder(folderId, win)
+              // A touch host closes through the chrome's close-with-undo (`lib/closeUndo.ts`).
+              click: () =>
+                touchLayout(win.formFactor)
+                  ? this.browser.emit('folder.closeUndoable', { folderId }, win)
+                  : this.browser.closeFolder(folderId, win)
             }
           ]
         : []
@@ -3269,7 +3211,7 @@ export class Menus {
   }
 
   /**
-   * The desktop's "Delete Folder" and the touch host's "Delete Group" (`groupMenu`): a folder
+   * "Delete Folder": a folder
    * with tabs or saved pages is deleted only once the chrome's prompt (`folder.confirmDelete`,
    * a §9.23 dialog) is answered – the answer runs `folder.delete` – and an empty one goes at
    * once. Chrome for Android asks before a group is deleted on every form factor
@@ -3283,82 +3225,6 @@ export class Menus {
     const holds = folderTabs(model, folderId).length > 0 || Boolean(folder.savedTabs?.length)
     if (holds) this.browser.emit('folder.confirmDelete', { folderId }, win)
     else this.browser.deleteFolder(folderId, false)
-  }
-
-  /**
-   * A tab group's menu on a touch host (TABLET-04: the tablet sidebar chip's hold, a §9.36
-   * popover; the phone's groups have their sheets): Chrome's group header menu with the editor
-   * bubble's name and colour folded in, the bubble being the desktop's. Rename Group…, Colour
-   * (Chrome's nine as radio items, the group's checked), New Tab in Group, Collapse or Expand
-   * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
-   * group stays SAVED with their pages (TAB-16), with Undo on the toast: the item emits
-   * `folder.closeUndoable` for the chrome to run the close through its one close-with-undo
-   * (`lib/closeUndo.ts`, the phone's Close Group's path; the Design Lead's option C on
-   * TAB-16 / TAB-13), where the desktop's Close Folder calls `closeFolder` itself, toastless –
-   * and Delete Group, which asks first when the
-   * group holds anything (`deleteFolderAsking`: the chrome's §9.23 prompt, as the phone's sheet
-   * and the desktop's Delete Folder ask) and offers no Undo after the ask. A saved group (its
-   * tabs closed, its pages kept) leads
-   * with Open Group (N Tabs) and has nothing to fold, ungroup or close; Delete Group forgets its
-   * pages, asking first too. Title Case throughout (v2 §9.1). Delete Group alone
-   * takes the danger ink (§6: for what destroys the user's own; Close Group destroys nothing
-   * the saved group does not keep, and Chrome's "Close group" is plain), as the phone's group
-   * sheet writes them. The menu is a folder's and never the app menu's, whose renderer-drawn
-   * desktop form (#299) would draw a `danger` item red there too.
-   */
-  private groupMenu(folder: Folder, win: ZenWindow): Template {
-    const { browser } = this
-    const id = folder.id
-    // The group's tabs are its regular members (`regularFolderTabs`): a private tab in it is
-    // none of the count, and Close Group leaves it.
-    const live = regularFolderTabs(browser.state.model, id).length
-    const saved = isSavedFolder(browser.state.model, folder)
-    const count = saved ? (folder.savedTabs?.length ?? 0) : live
-    const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
-    const open: Template = saved
-      ? [{ label: `Open Group (${tabs})`, click: () => browser.openFolder(id, win) }]
-      : []
-    const fold: Template = live
-      ? [
-          {
-            label: folder.collapsed ? 'Expand Group' : 'Collapse Group',
-            click: () => browser.updateFolder(id, { collapsed: !folder.collapsed })
-          }
-        ]
-      : []
-    const closing: Template = live
-      ? [
-          { label: 'Ungroup', click: () => browser.deleteFolder(id, true) },
-          {
-            label: `Close Group (${tabs})`,
-            click: () => browser.emit('folder.closeUndoable', { folderId: id }, win)
-          }
-        ]
-      : []
-    return [
-      ...open,
-      {
-        label: 'Rename Group…',
-        // The pick mounts the row's rename field: the keyboard stays in the chrome for it.
-        keepsKeyboard: true,
-        click: () => browser.emit('folder.startRename', { folderId: id }, win)
-      },
-      {
-        label: 'Colour',
-        submenu: FOLDER_COLOR_ORDER.map((color) => ({
-          label: FOLDER_COLOR_NAMES[color],
-          type: 'radio' as const,
-          checked: (folder.color ?? null) === color,
-          click: () => browser.updateFolder(id, { color })
-        }))
-      },
-      { label: 'New Tab in Group', click: () => browser.newTabInFolder(id, win) },
-      ...fold,
-      { type: 'separator' },
-      ...closing,
-      ...this.releaseItems(id, win),
-      { label: 'Delete Group', danger: true, click: () => this.deleteFolderAsking(id, win) }
-    ]
   }
 
   // ---------------------------------------------------------------------------

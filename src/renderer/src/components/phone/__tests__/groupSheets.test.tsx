@@ -206,16 +206,16 @@ describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
     expect(sheetLabels()).toEqual([
       'Show in Tabs',
       'Rename',
-      'Close Group (2 Tabs)',
-      'Delete Group'
+      'Close Folder (2 Tabs)',
+      'Delete Folder'
     ])
     // Close Group destroys nothing the saved group does not keep: the plain ink (§6).
-    expect(sheetItem('Close Group').style.color).toBe('')
-    expect(sheetItem('Delete Group').style.color).toBe('var(--zen-danger)')
+    expect(sheetItem('Close Folder').style.color).toBe('')
+    expect(sheetItem('Delete Folder').style.color).toBe('var(--zen-danger)')
     // Delete Group stands last after a hairline (cleanup spec §4: the one form for every sheet
     // here, the ⋯ sheet's hairline before Close All Tabs): the phone menu's `.zen-sheet-sep`,
     // out of the tree, between Close Group's row and Delete Group's and nowhere else.
-    expectHairlineBefore('Delete Group')
+    expectHairlineBefore('Delete Folder')
     // The colour swatches: Chrome's nine as a radio group, the group's checked.
     const swatches = all('.zen-sheet [role="radiogroup"][aria-label="Colour"] [role="radio"]')
     expect(swatches).toHaveLength(9)
@@ -252,16 +252,16 @@ describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
       folder('trip', { savedTabs: [{ url: 'https://t.example/', title: 't' }] })
     ])
     rowSheet(rows.saved[0])
-    expect(sheetLabels()).toEqual(['Open (1 Tab)', 'Rename', 'Delete Group'])
-    expect(sheetItem('Delete Group').style.color).toBe('var(--zen-danger)')
-    expectHairlineBefore('Delete Group')
+    expect(sheetLabels()).toEqual(['Open (1 Tab)', 'Rename', 'Delete Folder'])
+    expect(sheetItem('Delete Folder').style.color).toBe('var(--zen-danger)')
+    expectHairlineBefore('Delete Folder')
   })
 
   it('for an empty group: Rename and Delete Group alone', () => {
     const rows = rowsOf([folder('later')])
     rowSheet(rows.open[0])
-    expect(sheetLabels()).toEqual(['Rename', 'Delete Group'])
-    expectHairlineBefore('Delete Group')
+    expect(sheetLabels()).toEqual(['Rename', 'Delete Folder'])
+    expectHairlineBefore('Delete Folder')
   })
 
   it('Rename puts the row into its editing state; the other rows hand the group back to the pane', () => {
@@ -277,11 +277,11 @@ describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
     settle()
     expect(uiStore.get().renamingFolderId).toBe('work')
     picks = rowSheet(rows.open[0])
-    act(() => sheetItem('Close Group').click())
+    act(() => sheetItem('Close Folder').click())
     settle()
     expect(picks.closed.map((f) => f.id)).toEqual(['work'])
     picks = rowSheet(rows.open[0])
-    act(() => sheetItem('Delete Group').click())
+    act(() => sheetItem('Delete Folder').click())
     settle()
     expect(picks.deleted.map((r) => r.folder.id)).toEqual(['work'])
   })
@@ -306,7 +306,7 @@ describe('Delete Group’s prompt (§9.23)', () => {
       'Its 3 tabs close with it; Recently Closed keeps their pages.'
     )
     expect(sheet.textContent).not.toContain('Undo')
-    expect(sheet.textContent).toContain(folderDeleteWords('Work', 3, false, 'group').detail)
+    expect(sheet.textContent).toContain(folderDeleteWords('Work', 3, false).detail)
     const buttons = all('.zen-sheet .zen-sheet-footer button')
     expect(buttons.map((b) => b.textContent?.trim())).toEqual(['Cancel', 'Delete'])
     expect(buttons[0].hasAttribute('data-danger')).toBe(false)
@@ -339,7 +339,7 @@ describe('Delete Group’s prompt (§9.23)', () => {
     expect(sheet.textContent).toContain(
       'Its 2 saved pages are forgotten with it. There is no undo.'
     )
-    expect(sheet.textContent).toContain(folderDeleteWords('Trip', 2, true, 'group').detail)
+    expect(sheet.textContent).toContain(folderDeleteWords('Trip', 2, true).detail)
     act(() => q<HTMLElement>('[data-testid="overview-delete-group-confirm"]')!.click())
     settle()
     expect(confirmed.map((r) => r.folder.id)).toEqual(['trip'])
@@ -354,7 +354,7 @@ describe('Delete Group’s prompt (§9.23)', () => {
       </>
     )
     const sheet = q<HTMLElement>('.zen-sheet[role="dialog"]')!
-    expect(sheet.textContent).toContain('Delete this group?')
+    expect(sheet.textContent).toContain('Delete folder?')
     expect(sheet.textContent).toContain('Its 1 tab closes with it; Recently Closed keeps its page.')
     expect(sheet.textContent).not.toContain('Undo')
   })

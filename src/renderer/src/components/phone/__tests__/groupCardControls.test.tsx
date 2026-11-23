@@ -168,10 +168,10 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     expect(options.nextElementSibling).toBe(controls(el))
     expect(names(el)).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (3 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (3 Tabs)',
+      'Delete Folder'
     ])
     // The same names as the sheet's rows, from the one builder: every row (§2's order, Colour
     // being the sheet's palette, not a row); the fold is no row – the header is itself (its
@@ -180,10 +180,10 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     const sheetRows = groupActions(folder(), 3, on)
     expect(sheetRows.map((a) => a.label)).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (3 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (3 Tabs)',
+      'Delete Folder'
     ])
     expect(sheetRows.map((a) => a.id)).toEqual(['rename', 'new-tab', 'ungroup', 'close', 'delete'])
     expect(groupCardControls(folder(), 3, on).map((a) => a.label)).toEqual(
@@ -216,10 +216,10 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
     expect(names(card({ tabs: 1 }))).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (1 Tab)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (1 Tab)',
+      'Delete Folder'
     ])
     act(() => root?.unmount())
     root = null
@@ -227,10 +227,10 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     expect(header(folded).getAttribute('aria-expanded')).toBe('false')
     expect(names(folded)).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (3 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (3 Tabs)',
+      'Delete Folder'
     ])
   })
 
@@ -240,10 +240,10 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
     expect(names(el)).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (3 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (3 Tabs)',
+      'Delete Folder'
     ])
     act(() => applyAccessibilityState({ touchExploration: false, fontScale: 1 }))
     expect(controls(el)).toBeNull()
@@ -257,23 +257,23 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     click(button('Rename'))
     expect(uiStore.get().renamingFolderId).toBe('g')
     // The header shows the name's field now; the controls stand on.
-    expect(el.querySelector('input[aria-label="Group name"]')).not.toBeNull()
+    expect(el.querySelector('input[aria-label="Folder name"]')).not.toBeNull()
     expect(names(el)).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (3 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (3 Tabs)',
+      'Delete Folder'
     ])
-    click(button('New Tab in Group'))
+    click(button('New Tab in Folder'))
     expect(onNewTab).toHaveBeenCalledTimes(1)
     expect(onNewTab.mock.calls[0][0].id).toBe('g')
-    click(button('Ungroup'))
+    click(button('Unpack Folder'))
     expect(invoke).toHaveBeenCalledWith('folder.delete', { folderId: 'g', unpack: true })
-    click(button('Close Group (3 Tabs)'))
+    click(button('Close Folder (3 Tabs)'))
     expect(onCloseGroup).toHaveBeenCalledTimes(1)
     expect(onCloseGroup.mock.calls[0][0].id).toBe('g')
-    click(button('Delete Group'))
+    click(button('Delete Folder'))
     expect(onDelete).toHaveBeenCalledTimes(1)
     expect(onDelete.mock.calls[0][0].id).toBe('g')
     // No press folded the group: the fold is the header's tap alone.

@@ -5,7 +5,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { ClosedEntrySummary, Folder, Space, Tab, UIState } from '@shared/types'
 import type { OverviewChromeCommand } from '@shared/overviewMenu'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
-import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import { BLANK_URL } from '@shared/url'
 
 /*
@@ -788,7 +787,7 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     document.querySelector<HTMLElement>('.zen-frame-dialogs')?.textContent ?? ''
   /** Open the group card's ⋯ sheet (`Group options`, the open card's header) and let it come up. */
   async function groupMenu(): Promise<void> {
-    act(() => byLabel('Group options').click())
+    act(() => byLabel('Folder options').click())
     await settle()
     await land()
   }
@@ -817,22 +816,22 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     })
   }
 
-  it('Close Group (N Tabs) asks nothing: the core’s folder.close at once, then the one toast, "<Name> tab group closed and saved" with Undo, which brings the tabs back into the group', async () => {
+  it('Close Folder (N Tabs) asks nothing: the core’s folder.close at once, then the one toast, "<Name> closed and saved" with Undo, which brings the tabs back into the group', async () => {
     show(grouped())
     await groupMenu()
     // The group's rows (§2): Rename, New Tab in Group, Ungroup, Close Group (N), Delete Group.
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
       'Rename',
-      'New Tab in Group',
-      'Ungroup',
-      'Close Group (2 Tabs)',
-      'Delete Group'
+      'New Tab in Folder',
+      'Unpack Folder',
+      'Close Folder (2 Tabs)',
+      'Delete Folder'
     ])
     // Delete Group, the one danger row, stands last after the one hairline (the cleanup spec §4).
     const seps = document.querySelectorAll('.zen-sheet .zen-sheet-sep')
     expect(seps).toHaveLength(1)
-    expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Delete Group')
-    await pick('Close Group (2 Tabs)')
+    expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Delete Folder')
+    await pick('Close Folder (2 Tabs)')
     // No prompt (§9.23: the ask is Delete's alone); the group stays, saved with the pages.
     expect(dialogTitle()).toBeUndefined()
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
@@ -841,7 +840,7 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     // "2 tabs closed" – with Undo.
     fileMembers('r')
     await settle()
-    expect(toasts()).toEqual([['Research tab group closed and saved', 'Undo', false]])
+    expect(toasts()).toEqual([['Research closed and saved', 'Undo', false]])
     // Undo restores newest first – the core puts each back into the group, whose record the
     // saved group kept, and the group re-opens – then the tab the user was on is activated.
     act(() => pickToastAction(liveToast().id))
@@ -852,19 +851,19 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
   })
 
   it('a group still wearing the default name closes to "Tab group closed and saved" – not called by it (the Lead’s addendum)', async () => {
-    show(grouped(research({ name: TOUCH_GROUP_DEFAULT_NAME }), 'n'))
+    show(grouped(research({ name: 'Group' }), 'n'))
     await groupMenu()
-    await pick('Close Group (2 Tabs)')
+    await pick('Close Folder (2 Tabs)')
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     fileMembers('n')
     await settle()
-    expect(toasts()).toEqual([['Tab group closed and saved', 'Undo', false]])
+    expect(toasts()).toEqual([['Folder closed and saved', 'Undo', false]])
   })
 
   it('Delete Group asks first – "Its N tabs close with it; Recently Closed keeps their pages." – and Cancel keeps the group', async () => {
     show(grouped())
     await groupMenu()
-    await pick('Delete Group')
+    await pick('Delete Folder')
     // The ⋯ sheet has gone and the question stands on the frame's dialog host (§9.23), in the
     // one source's words (`folderDeleteWords`): no promise of an Undo.
     expect(sheetRows()).toEqual([])
@@ -881,7 +880,7 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
   it('Delete runs the core’s folder.delete at once, and no toast follows the closes it files – the ask was the guard, there is no Undo after it', async () => {
     show(grouped(research(), 'd'))
     await groupMenu()
-    await pick('Delete Group')
+    await pick('Delete Folder')
     await confirmDelete()
     expect(dialogTitle()).toBeUndefined()
     // The record goes with its tabs (`unpack: false`): not `folder.close`, which would keep it
@@ -910,9 +909,9 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
       'Open (2 Tabs)',
       'Rename',
-      'Delete Group'
+      'Delete Folder'
     ])
-    await pick('Delete Group')
+    await pick('Delete Folder')
     expect(dialogTitle()).toBe('Delete Research?')
     expect(dialogText()).toContain('Its 2 saved pages are forgotten with it. There is no undo.')
     await confirmDelete()

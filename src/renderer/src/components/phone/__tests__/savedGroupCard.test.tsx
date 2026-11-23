@@ -67,7 +67,7 @@ describe('SavedGroupCard', () => {
     expect(shell.hasAttribute('data-saved')).toBe(true)
     const header = el.querySelector<HTMLElement>('[data-testid="saved-group-card"]')!
     expect(header.getAttribute('role')).toBe('button')
-    expect(header.getAttribute('aria-label')).toBe('Trip, tab group, 5 tabs, saved')
+    expect(header.getAttribute('aria-label')).toBe('Trip, folder, 5 tabs, saved')
     expect(el.querySelector('[data-testid="group-row-glyph"]')!.hasAttribute('data-saved')).toBe(
       true
     )

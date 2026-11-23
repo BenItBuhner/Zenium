@@ -4,7 +4,6 @@ import { Trash2 } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { folderDeleteWords } from '@renderer/lib/folderDelete'
-import { isTouchLayout, useViewport } from '@renderer/lib/formFactor'
 import { closeFolderDeleteConfirm, type UiState } from '@renderer/lib/ui'
 import { ConfirmDialog } from '../dialogs/ConfirmDialog'
 
@@ -70,9 +69,7 @@ function FolderDeletePrompt({
   saved: boolean
   keyboard: boolean
 }): JSX.Element {
-  // The host's noun for a group with no name (v2 §6): the touch layouts never say "folder".
-  const noun = isTouchLayout(useViewport().formFactor) ? 'group' : 'folder'
-  const words = folderDeleteWords(name, count, saved, noun)
+  const words = folderDeleteWords(name, count, saved)
   /** How the prompt was answered, for the return: only a keyboard's Cancel goes to the header. */
   const answer = useRef<'cancel' | 'delete' | null>(null)
   const cancel = (): void => {

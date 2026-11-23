@@ -324,7 +324,7 @@ export function educationalTipCardTitle(id: EducationalTipCardId): string {
     case 'default-browser':
       return 'Use Zenium by default'
     case 'tab-groups':
-      return 'Tidy up with tab groups'
+      return 'Tidy up with folders'
     case 'quick-delete':
       return 'Manage your browsing data'
   }
@@ -345,7 +345,7 @@ export function educationalTipCardDescription(id: EducationalTipCardId): string 
     case 'default-browser':
       return 'You can use Zenium any time you tap links in messages, documents and other apps'
     case 'tab-groups':
-      return 'Create tab groups that save and update across your devices when sync is on'
+      return 'Create folders that save and update across your devices when sync is on'
     case 'quick-delete':
       return 'You can delete some or all of your history, cookies, site data and more'
   }

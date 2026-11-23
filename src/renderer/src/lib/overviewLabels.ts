@@ -33,6 +33,6 @@ export function closeTabLabel(title: string): string {
  * element says whether it is open. A group with no name is "Tab group".
  */
 export function groupCardLabel(name: string, count: number): string {
-  const head = name.trim() ? `${name.trim()}, tab group` : 'Tab group'
+  const head = name.trim() ? `${name.trim()}, folder` : 'Folder'
   return `${head}, ${count} tab${count === 1 ? '' : 's'}`
 }

@@ -137,7 +137,7 @@ export function DeleteGroupSheet({
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const { folder, kind, count } = row
-  const words = folderDeleteWords(folder.name, count, kind === 'saved', 'group')
+  const words = folderDeleteWords(folder.name, count, kind === 'saved')
   return (
     <PhoneSheet
       name="overview-delete-group"

@@ -119,11 +119,11 @@ export function groupRowDescription(row: GroupRow, now = Date.now()): string {
 
 /**
  * What TalkBack hears of the row (the group card's own sentence, `groupCardLabel`, with the
- * state a card never has): "Trip, tab group, 5 tabs, saved"; an empty group reads "no tabs".
+ * state a card never has): "Trip, folder, 5 tabs, saved"; an empty folder reads "no tabs".
  */
 export function groupRowLabel(row: GroupRow): string {
   const name = row.folder.name.trim()
-  const head = name ? `${name}, tab group` : 'Tab group'
+  const head = name ? `${name}, folder` : 'Folder'
   if (row.kind === 'empty') return `${head}, no tabs`
   const tabs = `${row.count} tab${row.count === 1 ? '' : 's'}`
   return row.kind === 'saved' ? `${head}, ${tabs}, saved` : `${head}, ${tabs}`

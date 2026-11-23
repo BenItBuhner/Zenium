@@ -497,7 +497,7 @@ describe('entering the mode', () => {
     // The action strip, every action named and off: nothing is picked.
     expect(actions()).toEqual([
       ['close', 'Close 0 tabs', true],
-      ['group', 'Group 0 tabs', true],
+      ['group', 'Move 0 tabs to folder', true],
       ['bookmark', 'Bookmark 0 tabs', true],
       ['share', 'Share 0 tabs', true]
     ])
@@ -514,7 +514,7 @@ describe('entering the mode', () => {
     // rows (Share…, Bookmark Tab, TAB-28) sit between the group row and the closes.
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
       'Select Tabs',
-      'New Group',
+      'New Folder',
       'Share…',
       'Bookmark Tab',
       'Close Other Tabs (3)',
@@ -532,7 +532,7 @@ describe('entering the mode', () => {
     expect(card('b').hasAttribute('data-selected')).toBe(true)
     expect(actions()).toEqual([
       ['close', 'Close 1 tab', false],
-      ['group', 'Group 1 tab', false],
+      ['group', 'Move 1 tab to folder', false],
       ['bookmark', 'Bookmark 1 tab', false],
       ['share', 'Share 1 tab', false]
     ])
@@ -587,7 +587,7 @@ describe('entering the mode', () => {
     // toast will say.
     expect(actions()).toEqual([
       ['close', 'Close 5 tabs', false],
-      ['group', 'Group 4 tabs', false],
+      ['group', 'Move 4 tabs to folder', false],
       ['bookmark', 'Bookmark 4 tabs', false],
       ['share', 'Share 4 tabs', false]
     ])
@@ -642,7 +642,7 @@ describe('the action strip', () => {
     tapCard('p')
     expect(actions()).toEqual([
       ['close', 'Close 1 tab', false],
-      ['group', 'Group 0 tabs', true],
+      ['group', 'Move 0 tabs to folder', true],
       ['bookmark', 'Bookmark 1 tab', false],
       ['share', 'Share 1 tab', false]
     ])
@@ -650,7 +650,7 @@ describe('the action strip', () => {
     tapCard('blank')
     expect(actions()).toEqual([
       ['close', 'Close 1 tab', false],
-      ['group', 'Group 1 tab', false],
+      ['group', 'Move 1 tab to folder', false],
       ['bookmark', 'Bookmark 0 tabs', true],
       ['share', 'Share 0 tabs', true]
     ])
@@ -688,12 +688,12 @@ describe('the action strip', () => {
     tapCard('b')
     act(() => action('group').click())
     await land()
-    expect(sheetTitle()).toBe('Group 2 tabs')
+    expect(sheetTitle()).toBe('Move 2 tabs to folder')
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
-      'New group',
+      'New folder',
       'Add to Research (2)'
     ])
-    await pick('New group')
+    await pick('New folder')
     expect(checkboxes()).toEqual([])
     expect(of('folder.create')).toEqual([expect.objectContaining({ spaceId: SPACE, rename: true })])
     expect(of('tab.moveToFolder')).toEqual([
@@ -720,13 +720,13 @@ describe('the action strip', () => {
     tapCard('a')
     // Two picks, one groupable: the name and the picker's title say the one.
     expect(action('close').getAttribute('aria-label')).toBe('Close 2 tabs')
-    expect(action('group').getAttribute('aria-label')).toBe('Group 1 tab')
+    expect(action('group').getAttribute('aria-label')).toBe('Move 1 tab to folder')
     act(() => action('group').click())
     await land()
     // No group yet: the picker is "New group" alone, titled with the groupable count.
-    expect(sheetTitle()).toBe('Group 1 tab')
-    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual(['New group'])
-    await pick('New group')
+    expect(sheetTitle()).toBe('Move 1 tab to folder')
+    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual(['New folder'])
+    await pick('New folder')
     expect(of('tab.moveToFolder')).toEqual([{ tabId: 'a', folderId: NEW_GROUP }])
   })
 

@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import type { ClosedEntrySummary, Events, Folder, Space, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 
@@ -13,7 +12,7 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
  * the group's live members. Rendered for real in happy-dom through `TabletShell` – its
  * `MessageLayer` seating the toast slot in the frame dialog host's seat (`useFrameToastSeat`),
  * the children that carry none of it stubbed: the toast that follows the core's filing is the
- * frame seat's one card, "<Name> tab group closed and saved" with Undo on §9.33's Undo clock
+ * frame seat's one card, "<Name> closed and saved" with Undo on §9.33's Undo clock
  * (`TOAST_UNDO_MS`, the close family's one clock in lib/closeUndo.ts), drawn once in the
  * document (not in the sidebar's well, not in the message frame's banner stack); Undo restores
  * the entries newest first through `session.restoreClosed` – the core putting each back into the
@@ -313,7 +312,7 @@ afterEach(async () => {
 })
 
 describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)', () => {
-  it('folder.closeUndoable runs folder.close at once; the toast lands in the frame seat as the one card, "<Name> tab group closed and saved" with Undo on the close toast’s clock', async () => {
+  it('folder.closeUndoable runs folder.close at once; the toast lands in the frame seat as the one card, "<Name> closed and saved" with Undo on the close toast’s clock', async () => {
     mountTablet(tabletState())
     // The host's seat stands from the start; the layer draws nothing until a card is up.
     expect(seat()).not.toBeNull()
@@ -329,7 +328,7 @@ describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)'
     file(entry(tab('alpha'), NOW), entry(tab('beta'), NOW))
     await flush()
     const toast = uiStore.get().toasts[0]!
-    expect(toast.message).toBe('Research tab group closed and saved')
+    expect(toast.message).toBe('Research closed and saved')
     expect(toast.action?.label).toBe('Undo')
     expect(toast.seat).toBe('frame')
     // §9.33's Undo clock by the shared constant, not the action default by omission.
@@ -337,7 +336,7 @@ describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)'
     expect(TOAST_UNDO_MS).toBeGreaterThan(TOAST_ACTION_DURATION)
     // Drawn once, in the frame seat's slot: not in the sidebar's well, not in the message frame.
     expect(layerSlot()).not.toBeNull()
-    expect(card()?.textContent).toContain('Research tab group closed and saved')
+    expect(card()?.textContent).toContain('Research closed and saved')
     expect(seat()!.contains(card())).toBe(true)
     expect(undo()?.textContent).toBe('Undo')
     expect(drawings()).toBe(1)
@@ -354,12 +353,12 @@ describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)'
   })
 
   it('a group still wearing the default name is not called by it: "Tab group closed and saved" (the Lead’s addendum; the name read through the shared module)', async () => {
-    mountTablet(tabletState(TOUCH_GROUP_DEFAULT_NAME))
+    mountTablet(tabletState('Group'))
     act(() => fire('folder.closeUndoable', { folderId: GROUP }))
     file(entry(tab('alpha'), NOW), entry(tab('beta'), NOW))
     await flush()
-    expect(card()?.textContent).toContain('Tab group closed and saved')
-    expect(uiStore.get().toasts[0]?.message).toBe('Tab group closed and saved')
+    expect(card()?.textContent).toContain('Folder closed and saved')
+    expect(uiStore.get().toasts[0]?.message).toBe('Folder closed and saved')
     expect(drawings()).toBe(1)
   })
 

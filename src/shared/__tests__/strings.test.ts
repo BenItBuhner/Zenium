@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME, isDefaultGroupName } from '../groupNames'
-import { newFolderName } from '../formFactor'
+import { NEW_FOLDER_NAME, isDefaultGroupName } from '../groupNames'
 import {
   PROTECTED,
   S,
   face,
   fill,
-  nounFor,
   plural,
   sentence,
   tableEntries,
@@ -17,11 +15,7 @@ import { ACTIONS } from '../strings/actions'
 import { APP_MENU } from '../strings/appMenu'
 import { COPY_SHARE } from '../strings/copyShare'
 import {
-  DEFAULT_GROUP_NAME,
-  GROUP_NOUN,
-  LIVE_GROUP_NOUN,
   NEW_FOLDER_NAME as NOUNS_NEW_FOLDER_NAME,
-  TOUCH_GROUP_DEFAULT_NAME as NOUNS_TOUCH_GROUP_DEFAULT_NAME,
   isDefaultGroupName as nounsIsDefaultGroupName
 } from '../strings/nouns'
 
@@ -97,7 +91,6 @@ describe('sentence(): the derived sentence face (§9.1)', () => {
     expect(sentence('New Tab Page')).toBe('New Tab page')
     expect(sentence('Add to Home Screen')).toBe('Add to Home screen')
     expect(sentence('New Live Folder')).toBe('New Live Folder')
-    expect(sentence('Open Live Group')).toBe('Open Live Group')
     // The plain noun is a common one.
     expect(sentence('Add Tab to New Folder')).toBe('Add tab to new folder')
   })
@@ -198,31 +191,6 @@ describe('face(): the four faces of an entry', () => {
     expect(face(entry, 'menu')).toBe('Put Tabs to Sleep')
   })
 
-  it('the noun axis: {noun} filled with the side’s word, the desktop’s when no side is given', () => {
-    const entry: Entry = { menu: 'Add Tab to New {noun}', noun: GROUP_NOUN }
-    expect(face(entry, 'menu', { noun: 'folder' })).toBe('Add Tab to New Folder')
-    expect(face(entry, 'menu', { noun: 'group' })).toBe('Add Tab to New Group')
-    expect(face(entry, 'menu')).toBe('Add Tab to New Folder')
-    expect(face(entry, 'row', { noun: 'group' })).toBe('Add tab to new group')
-    // The live noun is a coined sense and keeps its capitals in the sentence face.
-    const live: Entry = { menu: 'New {noun}', noun: LIVE_GROUP_NOUN, ask: true }
-    expect(face(live, 'menu', { noun: 'group' })).toBe('New Live Group…')
-    expect(face(live, 'row', { noun: 'folder' })).toBe('New Live Folder…')
-    // Sides that share no words: the whole face is the side's.
-    const unpack: Entry = { menu: '{noun}', noun: { folder: 'Unpack Folder', group: 'Ungroup' } }
-    expect(face(unpack, 'menu', { noun: 'folder' })).toBe('Unpack Folder')
-    expect(face(unpack, 'menu', { noun: 'group' })).toBe('Ungroup')
-    expect(face(unpack, 'button', { noun: 'folder' })).toBe('Unpack folder')
-    // Count and noun together.
-    const counted: Entry = {
-      menu: 'Add Tabs to {noun}',
-      count: { one: 'Add Tab to {noun}', other: 'Add {n} Tabs to {noun}' },
-      noun: GROUP_NOUN
-    }
-    expect(face(counted, 'menu', { n: 1, noun: 'group' })).toBe('Add Tab to Group')
-    expect(face(counted, 'menu', { n: 5, noun: 'folder' })).toBe('Add 5 Tabs to Folder')
-  })
-
   it('the os axis (Q4): the platform’s own words; a string keeps the entry’s ask, an OsFace states its own', () => {
     const minimise: Entry = { menu: 'Minimise Window', os: { darwin: 'Minimize' } }
     expect(face(minimise, 'menu')).toBe('Minimise Window')
@@ -249,29 +217,11 @@ describe('face(): the four faces of an entry', () => {
   })
 })
 
-describe('nounFor(): the side of the noun axis by host', () => {
-  it('the touch hosts say Group, the desktop and a caller with no form factor say Folder', () => {
-    expect(nounFor('phone')).toBe('group')
-    expect(nounFor('tablet')).toBe('group')
-    expect(nounFor('desktop')).toBe('folder')
-    expect(nounFor(undefined)).toBe('folder')
-  })
-
-  it('agrees with newFolderName and the default names', () => {
-    for (const formFactor of ['phone', 'tablet', 'desktop'] as const)
-      expect(newFolderName(formFactor)).toBe(DEFAULT_GROUP_NAME[nounFor(formFactor)])
-    expect(newFolderName(undefined)).toBe(DEFAULT_GROUP_NAME.folder)
-  })
-})
-
 describe('nouns.ts: the words, re-exported where they were', () => {
-  it('groupNames.ts and formFactor.ts read the table’s nouns', () => {
-    expect(TOUCH_GROUP_DEFAULT_NAME).toBe(NOUNS_TOUCH_GROUP_DEFAULT_NAME)
+  it('groupNames.ts and formFactor.ts read the table’s word; every host says New Folder', () => {
     expect(NEW_FOLDER_NAME).toBe(NOUNS_NEW_FOLDER_NAME)
     expect(isDefaultGroupName).toBe(nounsIsDefaultGroupName)
-    expect(GROUP_NOUN).toEqual({ folder: 'Folder', group: 'Group' })
-    expect(LIVE_GROUP_NOUN).toEqual({ folder: 'Live Folder', group: 'Live Group' })
-    expect(DEFAULT_GROUP_NAME).toEqual({ folder: 'New Folder', group: 'Group' })
+    expect(NEW_FOLDER_NAME).toBe('New Folder')
   })
 })
 

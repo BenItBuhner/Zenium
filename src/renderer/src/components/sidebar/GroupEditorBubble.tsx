@@ -31,34 +31,16 @@ import { V2_GLYPH } from '../v2/controls'
 /** A form: a field, the swatches and rows with a leading glyph (§9.20). */
 const WIDTH = POPOVER_WIDTH.form
 
-/**
- * The bubble's words by the host (§6: the desktop says Folder, the touch hosts say Group;
- * TABLET-22): the tablet shows this desktop surface once after a group is made from its tab
- * menu, and names it as its menu and the phone's sheets do – "Edit group", "Close group", …
- * – while the desktop's set reads byte for byte as it always has. One block, the two sets side
- * by side, so the strings table takes them whole.
- */
+/** The bubble's words: Zen's Folder, on every host. */
 const WORDS = {
-  folder: {
-    title: 'Edit folder',
-    placeholder: 'Name this folder',
-    actions: 'Folder actions',
-    open: 'Open folder',
-    newTab: 'New tab in folder',
-    unpack: 'Unpack folder',
-    close: 'Close folder',
-    remove: 'Delete folder'
-  },
-  group: {
-    title: 'Edit group',
-    placeholder: 'Name this group',
-    actions: 'Group actions',
-    open: 'Open group',
-    newTab: 'New tab in group',
-    unpack: 'Unpack group',
-    close: 'Close group',
-    remove: 'Delete group'
-  }
+  title: 'Edit folder',
+  placeholder: 'Name this folder',
+  actions: 'Folder actions',
+  open: 'Open folder',
+  newTab: 'New tab in folder',
+  unpack: 'Unpack folder',
+  close: 'Close folder',
+  remove: 'Delete folder'
 } as const
 
 /** The header row of a folder in the sidebar, the bubble's anchor. */
@@ -136,10 +118,10 @@ function GroupEditorBubble({
   const colourId = useId()
   const [name, setName] = useState(folder.name)
   const [box, setBox] = useState<PopoverBox | null>(null)
-  // The host's noun and the Close row's route (TABLET-22): the tablet's layout says Group and
-  // closes with Undo; the desktop's says Folder and closes as before.
+  // The Close row's route (TABLET-22): the tablet's layout closes with Undo; the desktop's
+  // closes as before.
   const touch = touchLayout(useViewport().formFactor)
-  const words = touch ? WORDS.group : WORDS.folder
+  const words = WORDS
   /** Where the keyboard goes when the bubble leaves: the page, or nowhere (Escape, a chrome opener). */
   const focusOnClose = useRef<'page' | 'chrome'>(keyboard ? 'chrome' : 'page')
   /** The header row the bubble hangs from, for Escape (§9.22: focus returns to the anchor). */

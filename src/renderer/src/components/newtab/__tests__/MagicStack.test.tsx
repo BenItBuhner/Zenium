@@ -1611,13 +1611,13 @@ describe('the tip card (NTP-20)', () => {
     render(stack(tips({ customized: true, isDefault: true, tabs: 12 })))
     expect(shown()).toBe('tab-groups')
     expect(face()!.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
-      'Tidy up with tab groups'
+      'Tidy up with folders'
     )
     expect(face()!.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
-      'Create tab groups that save and update across your devices when sync is on'
+      'Create folders that save and update across your devices when sync is on'
     )
     expect(button()!.textContent).toBe('Try it now')
-    expect(button()!.getAttribute('aria-label')).toBe('Try it now: Tidy up with tab groups')
+    expect(button()!.getAttribute('aria-label')).toBe('Try it now: Tidy up with folders')
     // A group made: Quick Delete.
     act(() => root!.unmount())
     root = null

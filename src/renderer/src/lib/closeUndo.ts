@@ -145,15 +145,14 @@ export function closedMessage(entries: readonly ClosedEntrySummary[]): string {
 
 /**
  * The toast's text for a group's close (TAB-16, the Design Lead's option C; the phone and the
- * tablet alike): a group the user named is called by that name, "<Name> tab group closed and
- * saved"; a group still wearing a default name (`isDefaultGroupName`: no name, the touch hosts'
- * default, a legacy "New Folder" – the Lead's addendum) is not called by it, "Tab group closed
- * and saved". The name is read through the shared module and nowhere else.
+ * tablet alike): a folder the user named is called by that name, "<Name> closed and saved";
+ * a folder still wearing a default name (`isDefaultGroupName`) is not called by it, "Folder
+ * closed and saved". The name is read through the shared module and nowhere else.
  */
 export function groupClosedMessage(group: { name: string }): string {
   return isDefaultGroupName(group.name)
-    ? 'Tab group closed and saved'
-    : `${group.name.trim()} tab group closed and saved`
+    ? 'Folder closed and saved'
+    : `${group.name.trim()} closed and saved`
 }
 
 /** An undo over `invoke` and `on`; the app uses {@link closeUndo}, tests build their own. */
