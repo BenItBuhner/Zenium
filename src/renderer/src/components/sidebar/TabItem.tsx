@@ -6,13 +6,10 @@ import {
   Cable,
   Gamepad2,
   MonitorSmartphone,
-  Moon,
   PictureInPicture2,
   RectangleGoggles,
   RotateCcw,
   ScreenShare,
-  Snowflake,
-  Turtle,
   Usb,
   VenetianMask,
   Volume2,
@@ -32,7 +29,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
 import { ChromePortal } from '@renderer/lib/portals'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
-import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
+import { activeTab, containerOf, tabTitle } from '@renderer/lib/selectors'
 import { tabRowDescription, tabRowDescriptionId, tabRowStates } from '@renderer/lib/tabRowAria'
 import {
   browserStore,
@@ -412,11 +409,6 @@ export const TabItem = memo(function TabItem({
             )
           ) : (
             <>
-              {trailing && tab.discarded && !renaming && <SleepingButton tab={tab} />}
-              {trailing && tab.frozen && !renaming && <FrozenButton tab={tab} />}
-              {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
-                <ThrottledButton tab={tab} />
-              )}
               {alert && !renaming && !masked && <AlertIndicator alert={alert} />}
               {!alert && (tab.audible || tab.muted) && !renaming && !masked && (
                 <AudioButton tab={tab} />
@@ -541,9 +533,6 @@ function StripTrailing({
   let glyph: JSX.Element | null = null
   if (alert) glyph = <AlertIndicator alert={alert} />
   else if (tab.audible || tab.muted) glyph = <AudioButton tab={tab} />
-  else if (trailing && tab.discarded) glyph = <SleepingButton tab={tab} />
-  else if (trailing && tab.frozen) glyph = <FrozenButton tab={tab} />
-  else if (trailing && tab.cpuThrottle > 1) glyph = <ThrottledButton tab={tab} />
   return (
     <>
       {active && glyph && <span className="zen-tab-state">{glyph}</span>}
@@ -579,46 +568,6 @@ function ResetPinnedButton({ tab }: { tab: Tab }): JSX.Element {
       onClick={() => run('tab.resetPinned', { tabId: tab.id })}
     >
       <RotateCcw className={V2_TRAILING_GLYPH} />
-    </RowControl>
-  )
-}
-
-/** A sleeping (discarded) page's moon; the click wakes it. */
-function SleepingButton({ tab }: { tab: Tab }): JSX.Element {
-  return (
-    <RowControl
-      className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
-      title={tabTooltip(tab)}
-      aria-label="Sleeping – click to wake"
-      onClick={() => run('tab.activate', { tabId: tab.id })}
-    >
-      <Moon className={V2_TRAILING_GLYPH} />
-    </RowControl>
-  )
-}
-
-/** A page the resource governor froze; the click wakes it. */
-function FrozenButton({ tab }: { tab: Tab }): JSX.Element {
-  return (
-    <RowControl
-      className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
-      title="Frozen by the resource governor – click to wake"
-      onClick={() => run('tab.wake', { tabId: tab.id })}
-    >
-      <Snowflake className={V2_TRAILING_GLYPH} />
-    </RowControl>
-  )
-}
-
-/** A page the resource governor throttles; the click lifts it. */
-function ThrottledButton({ tab }: { tab: Tab }): JSX.Element {
-  return (
-    <RowControl
-      className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
-      title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
-      onClick={() => run('tab.wake', { tabId: tab.id })}
-    >
-      <Turtle className={V2_TRAILING_GLYPH} />
     </RowControl>
   )
 }

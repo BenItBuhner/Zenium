@@ -1,61 +1,21 @@
 import type { JSX } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Eye, Layers, PanelLeftClose, RefreshCw, Rss, Sparkles } from 'lucide-react'
+import { Check } from 'lucide-react'
 import type { ColorScheme, ImportSource, UIState } from '@shared/types'
 import { ONBOARDING_ESSENTIALS } from '@shared/defaults'
 import { THEME_PRESETS, resolveTheme } from '@shared/theme'
-import { formatBinding } from '@shared/shortcuts'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { browserSources, listNames, sourceGroups } from '@renderer/lib/importData'
 import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
 import { openImportSurface, openSettings } from '@renderer/lib/pages'
-import {
-  isTouchOnly,
-  tourFeatures,
-  tourSteps,
-  type TourFeature,
-  type TourStep
-} from '@renderer/lib/onboarding'
+import { tourSteps, type TourStep } from '@renderer/lib/onboarding'
 import { tourAsksSearchChoice } from '@renderer/lib/searchChoice'
 import { activeTab } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { PhoneOnboarding } from './PhoneOnboarding'
 import { SearchChoiceActions, SearchChoiceStep } from './SearchChoice'
-
-const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: string }> = {
-  spaces: {
-    icon: Layers,
-    title: 'Spaces',
-    text: 'Separate tabs by project. Each Space has its own colours, pinned tabs and container.'
-  },
-  compact: {
-    icon: PanelLeftClose,
-    title: 'Compact Mode',
-    text: 'Hide the sidebar and toolbar; they slide back in when you hover the edge.'
-  },
-  glance: {
-    icon: Eye,
-    title: 'Glance & Split View',
-    text: 'Alt+click a link to peek at it, or put up to four tabs side by side.'
-  },
-  boosts: {
-    icon: Sparkles,
-    title: 'Boosts',
-    text: 'Tint a site, swap its fonts, zap elements you never want to see, force dark mode.'
-  },
-  livefolders: {
-    icon: Rss,
-    title: 'Live Folders',
-    text: 'Folders that fill themselves with your GitHub pull requests, issues or a feed.'
-  },
-  sync: {
-    icon: RefreshCw,
-    title: 'Sync',
-    text: 'Keep Spaces, folders and pinned tabs identical on every computer, end-to-end encrypted.'
-  }
-}
 
 /**
  * Runs `then` once the tour's overlay has left: its exit is a pop (`MOTION_POP_MS`), and what
@@ -67,24 +27,16 @@ function afterExit(then: () => void): void {
 
 /**
  * The first run. Phones get a short full-screen flow of their own; everything else gets the
- * tour mirroring Zen 1.22's onboarding – look, search engine, Chrome's import offer when another
- * browser's profile is on this computer (ID-23), Essentials, a tour of Spaces / Boosts / Live
- * Folders, sync where the host has it and the key shortcuts where there is a keyboard to press
- * them on.
+ * tour mirroring Zen's onboarding – look, search engine, the import offer when another
+ * browser's profile is on this computer, Essentials, and sync where the host has it.
  */
 export function Onboarding({ state }: { state: UIState }): JSX.Element {
   const viewport = useViewport()
   if (viewport.formFactor === 'phone') return <PhoneOnboarding state={state} />
-  return <DesktopOnboarding state={state} touchOnly={isTouchOnly(viewport)} />
+  return <DesktopOnboarding state={state} />
 }
 
-function DesktopOnboarding({
-  state,
-  touchOnly
-}: {
-  state: UIState
-  touchOnly: boolean
-}): JSX.Element {
+function DesktopOnboarding({ state }: { state: UIState }): JSX.Element {
   const sync = state.capabilities.sync
   // Chrome's first-run offer: the browsers found on this computer, probed as the tour opens
   // (files alone are no offer). The step joins the tour once the probe answers.
@@ -100,11 +52,7 @@ function DesktopOnboarding({
   }, [])
   const browsers = useMemo(() => sourceGroups(found), [found])
   const importable = browsers.length > 0
-  const steps = useMemo(
-    () => tourSteps({ sync }, touchOnly, importable),
-    [sync, touchOnly, importable]
-  )
-  const features = useMemo(() => tourFeatures({ sync }, touchOnly), [sync, touchOnly])
+  const steps = useMemo(() => tourSteps({ sync }, importable), [sync, importable])
   const [step, setStep] = useState<TourStep>('welcome')
   /** The `ImportSource.id` picked on the import step; null is "Not now". */
   const [importFrom, setImportFrom] = useState<string | null>(null)
@@ -177,19 +125,6 @@ function DesktopOnboarding({
     } else if (wantsSync) afterExit(() => openSettings('sync'))
   }
 
-  const highlights = state.shortcuts.filter((s) =>
-    [
-      'zen-compact-mode-toggle',
-      'key_newNavigatorTab',
-      'zen-workspace-forward',
-      'zen-split-view-vertical',
-      'zen-toggle-pin-tab',
-      'focusURLBar',
-      'key_newNavigator',
-      'key_privatebrowsing'
-    ].includes(s.id)
-  )
-
   return (
     <div
       className="absolute inset-0 z-50 flex items-center justify-center"
@@ -214,9 +149,7 @@ function DesktopOnboarding({
           <div className="flex flex-col gap-4">
             <h1 className="text-2xl font-semibold tracking-tight">Welcome to Zenium</h1>
             <p className="text-[14px] leading-relaxed text-[var(--zen-muted)]">
-              A calmer way to browse, now running on Chromium. Vertical tabs, Spaces, Essentials,
-              Glance, Split View, Compact Mode, Boosts and Live Folders — synced across your devices
-              if you like. Let&apos;s set things up in a minute.
+              A calmer way to browse.
             </p>
           </div>
         )}
@@ -386,32 +319,6 @@ function DesktopOnboarding({
           </div>
         )}
 
-        {step === 'features' && (
-          <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-semibold">What makes Zenium, Zenium</h2>
-            <div className="grid grid-cols-2 gap-2">
-              {features
-                .map((id) => FEATURES[id])
-                .map((f) => (
-                  <div
-                    key={f.title}
-                    className="zen-squircle flex gap-3 rounded-xl border border-[var(--zen-border)] p-3"
-                  >
-                    <span className="zen-squircle flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--zen-element-bg)]">
-                      <f.icon className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[13px] font-medium">{f.title}</span>
-                      <span className="block text-[11.5px] leading-snug text-[var(--zen-muted)]">
-                        {f.text}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-            </div>
-          </div>
-        )}
-
         {step === 'sync' && (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-semibold">Sync your Spaces across devices</h2>
@@ -444,34 +351,6 @@ function DesktopOnboarding({
                 </button>
               ))}
             </div>
-          </div>
-        )}
-
-        {step === 'shortcuts' && (
-          <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-semibold">A few shortcuts to know</h2>
-            <div className="grid grid-cols-2 gap-2">
-              {highlights.map((s) => (
-                <div
-                  key={s.id}
-                  className="zen-squircle flex items-center justify-between rounded-xl border border-[var(--zen-border)] px-3 py-2 text-[13px]"
-                >
-                  <span>{s.label}</span>
-                  <kbd className="zen-kbd">{formatBinding(s.binding, state.platform)}</kbd>
-                </div>
-              ))}
-              <div className="zen-squircle flex items-center justify-between rounded-xl border border-[var(--zen-border)] px-3 py-2 text-[13px]">
-                <span>Glance a link</span>
-                <kbd className="zen-kbd">Alt + Click</kbd>
-              </div>
-              <div className="zen-squircle flex items-center justify-between rounded-xl border border-[var(--zen-border)] px-3 py-2 text-[13px]">
-                <span>Split with a tab</span>
-                <kbd className="zen-kbd">Alt + Click tab</kbd>
-              </div>
-            </div>
-            <p className="text-[12px] text-[var(--zen-muted)]">
-              All shortcuts can be changed in Settings → Keyboard Shortcuts.
-            </p>
           </div>
         )}
 

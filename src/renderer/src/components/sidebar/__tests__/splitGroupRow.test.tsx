@@ -205,7 +205,7 @@ describe('the split group row', () => {
   })
 
   it('keeps the favicon, title and close in a segment and drops the trailing slot', () => {
-    // A sleeping pane and a sleeping loose row: the row shows the Moon, the segment does not.
+    // A sleeping pane and a sleeping loose row: neither draws a glyph for it; both fade.
     panel(
       [tab('a', { discarded: true }), tab('b'), tab('c', { discarded: true })],
       [split('g1', ['a', 'b'])],
@@ -217,7 +217,8 @@ describe('the split group row', () => {
     expect(a!.querySelector('.zen-tab-close')).not.toBeNull()
     expect(a!.querySelector('.zen-tab-sleeping')).toBeNull()
     expect(a!.dataset.discarded).toBe('true')
-    expect(loose!.querySelector('.zen-tab-sleeping')).not.toBeNull()
+    expect(loose!.querySelector('.zen-tab-sleeping')).toBeNull()
+    expect(loose!.dataset.discarded).toBe('true')
     // The hooks the segment's container queries style: the title it drops under 56 px of room
     // and the favicon it centres in its place (the stylesheet tests below).
     expect(a!.querySelector('[data-testid="tab-title"]')?.classList.contains('zen-tab-title')).toBe(

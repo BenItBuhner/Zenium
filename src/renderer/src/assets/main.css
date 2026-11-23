@@ -1829,8 +1829,7 @@
    * (design-language-v2-draft §4), no desaturation; the row wakes the page on click.
    */
   .zen-tab[data-discarded='true'] .zen-tab-title,
-  .zen-tab[data-discarded='true'] .zen-tab-favicon,
-  .zen-tab[data-discarded='true'] .zen-tab-sleeping {
+  .zen-tab[data-discarded='true'] .zen-tab-favicon {
     opacity: 0.69;
   }
   /*
@@ -10160,9 +10159,6 @@
   border-radius: 12px;
   padding-right: 2px;
   font-size: 14px;
-}
-:root[data-form-factor='tablet'] .zen-tab .zen-tab-sleeping {
-  display: none;
 }
 :root[data-form-factor='tablet'] .zen-tab .zen-tab-close {
   width: 44px;

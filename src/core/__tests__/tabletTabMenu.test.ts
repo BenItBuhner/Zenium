@@ -256,14 +256,14 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(deepItem(h.shown(), 'Reopen Closed Tab').enabled).toBe(true)
   })
 
-  it("has Chrome's other strip rows too: Share, Duplicate, Pin, Mute site", () => {
+  it("has the strip's other rows too: Share, Duplicate, Pin – and no site mute or proxy", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const menu = labels(h.shown())
     expect(menu).toEqual(
-      expect.arrayContaining(['Share', 'Share > Share…', 'Duplicate Tab', 'Pin Tab', 'Mute Site'])
+      expect.arrayContaining(['Share', 'Share > Share…', 'Duplicate Tab', 'Pin Tab'])
     )
-    // In-app proxy is the desktop host's; Android's proxy is the network's.
+    expect(menu).not.toContain('Mute Site')
     expect(menu).not.toContain('Proxy')
   })
 

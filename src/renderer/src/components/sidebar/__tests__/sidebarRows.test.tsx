@@ -326,7 +326,7 @@ describe('the rows’ trailing glyphs (§9.3)', () => {
     trailing(document.querySelector('[data-tab-folder="f1"] svg.lucide-chevron-right'))
   })
 
-  it('a tab’s close, its audio button, a sleeping page’s moon and the alert indicators', () => {
+  it('a tab’s close, its audio button and the alert indicators; a sleeping or frozen row adds no glyph', () => {
     panel([
       tab('a'),
       tab('b', { audible: true }),
@@ -339,8 +339,8 @@ describe('the rows’ trailing glyphs (§9.3)', () => {
     for (const row of rows) trailing(row.querySelector('.zen-tab-close svg'))
     trailing(document.querySelector('[data-tab-id="b"] .zen-tab-audio svg'))
     trailing(document.querySelector('[data-tab-id="e"] .zen-tab-audio svg'))
-    trailing(document.querySelector('[data-tab-id="c"] .zen-tab-sleeping svg'))
-    trailing(document.querySelector('[data-tab-id="d"] svg.lucide-snowflake'))
+    expect(document.querySelector('[data-tab-id="c"] .zen-tab-sleeping')).toBeNull()
+    expect(document.querySelector('[data-tab-id="d"] svg.lucide-snowflake')).toBeNull()
     // Nothing in the strip's rows is left at 14.
     for (const svg of document.querySelectorAll('[data-testid="tab"] svg, [data-tab-folder] svg')) {
       expect(svg.getAttribute('class') ?? '').not.toMatch(/\bh-3\.5\b/)

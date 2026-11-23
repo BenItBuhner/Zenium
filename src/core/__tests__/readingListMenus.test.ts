@@ -247,19 +247,17 @@ describe('the star’s menu', () => {
     expect(f.browser.bookmarks.has(URL)).toBe(false)
   })
 
-  it('words both rows for the page (the lead’s C5 on #511) while the tab row and the app menu keep the tab’s', async () => {
+  it('words both rows for the page (the lead’s C5 on #511) while the app menu keeps the tab’s', async () => {
     const f = fixture()
     const tab = f.open(URL, 'Long Read')
     const readingRows = (): string[] =>
       labels(item(item(f.appMenu(), 'Bookmarks').submenu!, 'Reading List').submenu!)
-    // Unlisted: the star says "Add to Reading List"; the tab row and Reading List ▸ say "Tab".
+    // Unlisted: the star says "Add to Reading List"; Reading List ▸ says "Tab".
     expect(labels(await f.starMenu(tab))[1]).toBe('Add to Reading List')
-    expect(labels(f.tabMenu(tab))).toContain('Add Tab to Reading List')
     expect(readingRows()[0]).toBe('Add Tab to Reading List')
-    // Listed: the same three seats, the same one act, each in its subject's words.
+    // Listed: the same two seats, the same one act, each in its subject's words.
     item(await f.starMenu(tab), 'Add to Reading List').click!()
     expect(labels(await f.starMenu(tab))[1]).toBe('Remove from Reading List')
-    expect(labels(f.tabMenu(tab))).toContain('Remove Tab from Reading List')
     expect(readingRows()[0]).toBe('Remove Tab from Reading List')
     // No star row ever carries the tab's wording, and the link row keeps its own subject.
     for (const l of labels(await f.starMenu(tab))) expect(l).not.toMatch(/\bTab\b/)
@@ -297,29 +295,13 @@ describe('the star’s menu', () => {
 })
 
 describe('the tab’s menu', () => {
-  it('seats Add Tab to Reading List under the bookmark rows on the desktop and flips it to Remove', () => {
-    const f = fixture()
-    const tab = f.open(URL, 'Long Read')
-    let menu = f.tabMenu(tab)
-    const top = labels(menu)
-    expect(top.indexOf('Add Tab to Reading List')).toBe(top.indexOf('Bookmark All Tabs…') + 1)
-    expect(item(menu, 'Add Tab to Reading List').key).toBe('row.readingListAdd')
-    item(menu, 'Add Tab to Reading List').click!()
-    expect(f.browser.readingList.has(URL)).toBe(true)
-    menu = f.tabMenu(tab)
-    expect(labels(menu)).not.toContain('Add Tab to Reading List')
-    expect(item(menu, 'Remove Tab from Reading List').key).toBe('row.readingListRemove')
-    item(menu, 'Remove Tab from Reading List').click!()
-    expect(f.browser.readingList.has(URL)).toBe(false)
-  })
-
-  it('keeps the row on the tablet and leaves the phone’s menu without it', () => {
-    const tablet = fixture('tablet')
-    expect(labels(tablet.tabMenu(tablet.open(URL)))).toContain('Add Tab to Reading List')
-    const phone = fixture('phone')
-    const menu = labels(phone.tabMenu(phone.open(URL)))
-    expect(menu).not.toContain('Add Tab to Reading List')
-    expect(menu).not.toContain('Remove Tab from Reading List')
+  it('has no reading list row on any host: Zen’s tab menu keeps to the tab', () => {
+    for (const host of [undefined, 'tablet', 'phone'] as const) {
+      const f = host ? fixture(host) : fixture()
+      const menu = labels(f.tabMenu(f.open(URL)))
+      expect(menu).not.toContain('Add Tab to Reading List')
+      expect(menu).not.toContain('Remove Tab from Reading List')
+    }
   })
 })
 
@@ -393,8 +375,10 @@ describe('one feedback rule for one action', () => {
     expect(f.toasts()).toEqual(['Added to reading list', 'Added to reading list'])
     // A re-add of a listed page (marked unread again) reports the same; a link the list does
     // not hold reports nothing – there was nothing done.
-    item(f.tabMenu(tab), 'Remove Tab from Reading List').click!()
-    item(f.tabMenu(tab), 'Add Tab to Reading List').click!()
+    const readingList = (): MenuItemTemplate[] =>
+      item(item(f.appMenu(), 'Bookmarks').submenu!, 'Reading List').submenu!
+    item(readingList(), 'Remove Tab from Reading List').click!()
+    item(readingList(), 'Add Tab to Reading List').click!()
     f.browser.handleCommand(f.win, 'readingList.add', { tabId: null })
     expect(f.browser.addLinkToReadingList('file:///tmp/a.html', 'a', f.win)).toBeNull()
     expect(f.toasts().filter((t) => t === 'Added to reading list')).toHaveLength(4)

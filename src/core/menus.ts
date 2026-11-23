@@ -85,7 +85,6 @@ import { MANAGED_MENU_LABEL } from '../shared/managed'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
-import { profileLabel } from '../shared/appProxy'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
@@ -418,45 +417,6 @@ export class Menus {
     return this.browser.state.model.containers
       .filter((c) => c.id !== DEFAULT_CONTAINER_ID)
       .map((c) => ({ label: c.name, click: () => onPick(c.id) }))
-  }
-
-  /** Per-tab proxy override: follow the default, go direct, or pick a configured server. */
-  private tabProxySubmenu(tab: Tab, win: ZenWindow): MenuItemTemplate {
-    const proxy = this.browser.state.settings.proxy
-    const current = tab.proxyId ?? ''
-    const pick = (proxyId: string | null): void => {
-      this.browser.tabs.setProxy(tab.id, proxyId, win)
-    }
-    return {
-      label: 'Proxy',
-      submenu: [
-        {
-          label: 'Use default connection',
-          type: 'checkbox',
-          checked: current === '',
-          click: () => pick(null)
-        },
-        {
-          label: 'Direct connection',
-          type: 'checkbox',
-          checked: current === 'direct',
-          click: () => pick('direct')
-        },
-        {
-          label: 'System proxy',
-          type: 'checkbox',
-          checked: current === 'system',
-          click: () => pick('system')
-        },
-        ...(proxy.profiles.length > 0 ? [{ type: 'separator' as const }] : []),
-        ...proxy.profiles.map((profile) => ({
-          label: profileLabel(profile),
-          type: 'checkbox' as const,
-          checked: current === profile.id,
-          click: () => pick(profile.id)
-        }))
-      ]
-    }
   }
 
   private spaceSubmenu(exceptSpaceId: string | null, onPick: (spaceId: string) => void): Template {
@@ -2469,28 +2429,13 @@ export class Menus {
         ...key('page.toggleMute'),
         click: () => tabs.toggleMute(tabId)
       },
-      {
-        label: tabs.siteMuted(tab.url) ? 'Unmute Site' : 'Mute Site',
-        enabled: Boolean(domain),
-        click: () => tabs.toggleMuteSite(tabId)
-      },
-      // Unload and Freeze are the tab's state, as its mute is – Firefox's state group runs
-      // Reload, Mute, Unload, Duplicate, Pin – and stand between the mutes and Duplicate.
+      // Zen's Unload stands with the tab's state, as Firefox's group runs Reload, Mute, Unload,
+      // Duplicate, Pin. Site-wide mute and the governor's freeze are not Zen rows.
       {
         label: 'Unload Tab',
         enabled: !tab.discarded && active?.id !== tabId,
         click: () => tabs.discard(tabId)
       },
-      tab.frozen || tab.cpuThrottle > 1
-        ? {
-            label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
-            click: () => void this.browser.governor.wakeTab(tabId)
-          }
-        : {
-            label: 'Freeze Tab',
-            enabled: !tab.discarded && tabs.windowsShowing(tabId).length === 0,
-            click: () => void this.browser.governor.freezeTab(tabId)
-          },
       { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
       // Pin after Duplicate, as Firefox orders them; a pinned row's own rows stand with it.
       tab.essential
@@ -2634,15 +2579,6 @@ export class Menus {
         enabled: !tab.url.startsWith('zen://'),
         click: () => this.browser.toggleBookmark(tabId, win)
       },
-      {
-        label: 'Bookmark All Tabs…',
-        action: 'bookmark.allTabs',
-        click: () => this.browser.bookmarkTabs(win)
-      },
-      // Chrome's "Add tab to reading list" (tabs-36, W6-1), under the bookmark rows as Chrome
-      // seats it; a page already listed offers the way out instead. The sidebar layouts' alone
-      // until the phone has a list to read it from.
-      ...when(panes, this.readingListTabItem(tab, win)),
       { label: 'Move Tab', submenu: moveTab },
       // The split rows are the desktop's and the tablet's (the phone draws no panes). Add Tab
       // to Split View (context-menus-92, Vivaldi's row) is offered while a split is on screen
@@ -2674,7 +2610,6 @@ export class Menus {
           tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
         )
       },
-      ...when(this.browser.state.platform !== 'android', this.tabProxySubmenu(tab, win)),
       {
         label: 'Share',
         submenu: [

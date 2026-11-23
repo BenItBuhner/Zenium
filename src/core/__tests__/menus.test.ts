@@ -6581,15 +6581,13 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1). */
+    /** Zen's skeleton for a regular row: five groups, four separators, seventeen rows. */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
       'Reload Tab',
       'Mute Tab',
-      'Mute Site',
       'Unload Tab',
-      'Freeze Tab',
       'Duplicate Tab',
       'Pin Tab',
       'Add to Essentials',
@@ -6597,12 +6595,9 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Change Icon…',
       '-',
       'Bookmark Tab',
-      'Bookmark All Tabs…',
-      'Add Tab to Reading List',
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
-      'Proxy',
       'Share',
       '-',
       'Close Multiple Tabs',
@@ -6611,30 +6606,27 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reopen Closed Tab'
     ]
 
-    it('a regular row: twenty-two rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+    it('a regular row: seventeen rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      // Firefox's twenty, Chrome's Add tab to reading list, and the in-app Proxy submenu.
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(22)
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(17)
       expect(separators(shown)).toBe(4)
-      // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
-      // unload and the freeze are the tab's state, as its mute is, not its place.
+      // The state group in Firefox's order – Reload, Mute, Unload, Duplicate, Pin: the unload is
+      // the tab's state, as its mute is, not its place. No site mute, no freeze, no proxy.
       const top = topLabels(shown)
       expect(top.slice(top.indexOf('Reload Tab'), top.indexOf('Pin Tab') + 1)).toEqual([
         'Reload Tab',
         'Mute Tab',
-        'Mute Site',
         'Unload Tab',
-        'Freeze Tab',
         'Duplicate Tab',
         'Pin Tab'
       ])
+      for (const gone of ['Mute Site', 'Freeze Tab', 'Proxy', 'Bookmark All Tabs…'])
+        expect(top).not.toContain(gone)
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
-        'Bookmark All Tabs…',
-        'Add Tab to Reading List',
         'Move Tab'
       ])
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
@@ -6655,63 +6647,18 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Copy Link as Markdown',
         'Email Link…'
       ])
-      expect(topLabels(item(h, 'Proxy').submenu!)).toEqual([
-        'Use default connection',
-        'Direct connection',
-        'System proxy'
-      ])
     })
 
-    it('lists configured proxies in the Proxy submenu and writes the tab override', () => {
-      const h = pageHarness()
-      h.browser.handleCommand(h.win, 'settings.update', {
-        proxy: {
-          profiles: [
-            {
-              id: 'office',
-              name: 'Office',
-              kind: 'http',
-              host: 'proxy.office.test',
-              port: 8080,
-              username: '',
-              password: '',
-              pacUrl: '',
-              pacData: '',
-              bypassList: []
-            }
-          ],
-          defaultTarget: 'system',
-          routes: [],
-          agentGrants: []
-        }
-      })
-      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
-      expect(topLabels(item(h, 'Proxy').submenu!)).toEqual([
-        'Use default connection',
-        'Direct connection',
-        'System proxy',
-        '-',
-        'Office'
-      ])
-      item(h, 'Office').click!()
-      expect(h.browser.tabs.tab(h.tabId)?.proxyId).toBe('office')
-      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
-      item(h, 'Use default connection').click!()
-      expect(h.browser.tabs.tab(h.tabId)?.proxyId ?? null).toBeNull()
-    })
-
-    it('nothing the flat menu did is gone: every one of its rows is in the regrouped menu, at the top or in a submenu', () => {
+    it("every one of Zen's rows is in the regrouped menu, at the top or in a submenu", () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const all = allItems(h.shown())
         .map((i) => i.label)
         .filter((l): l is string => Boolean(l))
-      // The flat menu's rows for a regular tab (#263, before this regrouping).
       for (const label of [
         'New Tab Below',
         'Reload Tab',
         'Mute Tab',
-        'Mute Site',
         'Duplicate Tab',
         'Rename Tab…',
         'Change Icon…',
@@ -6724,14 +6671,11 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Move Tab to New Window',
         'Move Tab to Another Window',
         'Open in New Container Tab',
-        'Proxy',
         'Bookmark Tab',
-        'Bookmark All Tabs…',
         'Share',
         'Copy Link',
         'Copy Link as Markdown',
         'Email Link…',
-        'Freeze Tab',
         'Unload Tab',
         'Close Tabs Above',
         'Close Tabs Below',
