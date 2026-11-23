@@ -87,8 +87,7 @@ const SEARCH_LIMIT = 200
  * folders, then closes the panel. Deletes are undoable from their toast. The editor is the
  * `BookmarkEditSheet` that `TabDialogs` mounts in the frame's dialog host on a phone; Move to…
  * is the panel's own `BookmarkMoveSheet` in the same host; the row menus are the shared menu
- * sheet. Chrome's manager has no "Add to reading list" row (its reading list is a bookmark
- * folder reached by Move to…), so none is built here.
+ * sheet.
  *
  * The header's "Sort and view options" (HB-13; Chrome's `sort_submenu`) hangs Chrome's six
  * orders and two views as radio rows (`lib/bookmarkRowOptions.ts`). The order applies to a

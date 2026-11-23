@@ -309,15 +309,9 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
     // Under the two fields, above the Reading list row (HB-20) and the footer.
     const form = row.closest('form')!
     const kinds = [...form.children].map((el) =>
-      el === row
-        ? 'folder'
-        : el.matches('[data-testid="bookmark-reading-list"]')
-          ? 'reading-list'
-          : el.classList.contains('zen-sheet-footer')
-            ? 'footer'
-            : 'field'
+      el === row ? 'folder' : el.classList.contains('zen-sheet-footer') ? 'footer' : 'field'
     )
-    expect(kinds).toEqual(['field', 'field', 'folder', 'reading-list', 'footer'])
+    expect(kinds).toEqual(['field', 'field', 'folder', 'footer'])
 
     act(() => row.click())
     await settle()

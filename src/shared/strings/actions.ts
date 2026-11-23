@@ -193,8 +193,6 @@ export const ACTIONS = {
   'bookmark.sidebar': { menu: 'Show Bookmarks' },
   'bookmark.toggleBar': { menu: 'Show / Hide Bookmarks Bar' },
   'bookmark.library': { menu: 'Bookmark Manager' },
-  'readingList.add': { menu: 'Add to Reading List' },
-  'readingList.open': { menu: 'Show Reading List' },
   'history.sidebar': { menu: 'Show History', os: { darwin: 'Show Full History' } },
   'privacy.clearBrowsingData': { menu: 'Delete Browsing Data', ask: true },
   'downloads.open': { menu: 'Show Downloads', os: { darwin: 'Downloads' } },

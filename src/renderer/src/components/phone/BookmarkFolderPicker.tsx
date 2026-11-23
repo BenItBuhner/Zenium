@@ -15,7 +15,7 @@ import { PhoneSheet } from './PhoneSheet'
  * same folders at once. The ones the nodes cannot enter are already left out by `moveTargets`,
  * as Chrome leaves the moved ids out of its rows (Mediator l.182) with their subtree unreachable
  * by construction; Chrome's `isValidFolderForMovedBookmarks` (l.296-305) greys the special
- * folders instead – the root, managed and partner folders, the reading list – which
+ * folders instead – the root, managed and partner folders – which
  * `moveTargets` never lists.
  *
  * The indent is the eye's reading of the tree; assistive technology reads each row's name as

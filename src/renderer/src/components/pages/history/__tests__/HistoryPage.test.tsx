@@ -231,7 +231,6 @@ function sync(enabled: boolean, openTabs = true): SyncStatus {
       shortcuts: true,
       boosts: true,
       history: true,
-      readingList: true,
       mods: true,
       extensions: true
     },

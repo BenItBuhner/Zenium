@@ -551,8 +551,7 @@ export interface MediaContextFlags {
 
 /**
  * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
- * URL bar's field and pill, the reload button, the pill's star (its bookmark and reading list
- * rows, W6-1), and the desktop bar's other pinnable controls (`toolbar`, with the control in
+ * URL bar's field and pill, the reload button, the pill's star (its bookmark row, W6-1), and the desktop bar's other pinnable controls (`toolbar`, with the control in
  * `data-zen-menu-control`: Chrome's pinned toolbar button menu, context-menus-112).
  */
 export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star' | 'toolbar'
@@ -1662,8 +1661,6 @@ export type MenuSource =
   | 'bookmark'
   | 'history'
   | 'download'
-  /** A reading list row's menu (W6-1). */
-  | 'readingList'
   | 'urlbar'
   | 'translate'
 

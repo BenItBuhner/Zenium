@@ -6,7 +6,6 @@ import type {
   KeyBinding,
   Mod,
   PaymentCard,
-  ReadingListEntry,
   Settings,
   SyncScope
 } from '../../../shared/types'
@@ -218,49 +217,6 @@ describe('the moved engine on a fixed record set', () => {
     expect(local.size).toBe(Object.keys(goldenFixture.hashes).length)
   })
 
-  it('keeps the reading list out of a pre-move scope object, and its record type out of the pinned payload (services pass 11, ID-48)', () => {
-    // The golden scope predates `readingList` as it predates `passwords`: it says nothing for
-    // the type, so a device holding a reading list publishes no entry under it and the payload
-    // is the pinned bytes still. With the toggle on (this build's default) the same sources
-    // publish the entries – as `reading-list-entry` records – and nothing else changes.
-    expect(goldenFixture.scope).not.toHaveProperty('readingList')
-    expect(defaultScope().readingList).toBe(true)
-    const readingList: ReadingListEntry[] = [
-      {
-        id: 'rl_1',
-        url: 'https://later.example/',
-        title: 'Later',
-        addedAt: 100,
-        updatedAt: 100,
-        favicon: 'data:image/png;base64,AA=='
-      }
-    ]
-    const local = collectLocal({ ...sources, readingList }, goldenFixture.scope)
-    expect([...local.values()].some((r) => r.type === 'reading-list-entry')).toBe(false)
-    const diff = diffLocal({}, local, goldenFixture.now)
-    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenAsWritten().plaintext)
-
-    const withList = collectLocal(
-      { ...sources, readingList },
-      { ...goldenFixture.scope, readingList: true }
-    )
-    expect(withList.size).toBe(local.size + 1)
-    expect(withList.get('rl_1')).toEqual({
-      type: 'reading-list-entry',
-      data: {
-        id: 'rl_1',
-        url: 'https://later.example/',
-        title: 'Later',
-        addedAt: 100,
-        updatedAt: 100
-      }
-    })
-    withList.delete('rl_1')
-    expect(
-      JSON.stringify({ v: 1, records: diffLocal({}, withList, goldenFixture.now).records })
-    ).toBe(goldenAsWritten().plaintext)
-  })
-
   it('the favicon rule (services pass 11: an http(s) address may travel, a data: or host-local one never) changes no pinned byte: the fixtures name no icon', () => {
     // The pins stand under the rule because of what the fixtures hold, stated here so a change
     // of either is a deliberate one: the one bookmark has `favicon: null` (omitted from its
@@ -346,7 +302,7 @@ describe('the mod records on a fixed Mod list (services pass 15, ID-43)', () => 
   })
 
   it('keeps the Mods out of a pre-move scope object, and the type out of the pinned golden payload; with the toggle on the same sources publish them and nothing else changes', () => {
-    // The golden scope predates `mods` as it predates `readingList` and `passwords`: it says
+    // The golden scope predates `mods` as it predates `passwords`: it says
     // nothing for the type, so a device holding Mods publishes none under it and the payload is
     // the pinned bytes still.
     expect(goldenFixture.scope).not.toHaveProperty('mods')
@@ -407,7 +363,7 @@ describe('the mod records on a fixed Mod list (services pass 15, ID-43)', () => 
 
 /**
  * The `address` and `payment-method` records against the builds before them (services pass 16,
- * ID-45): their scope keys – `addresses`, `paymentMethods` – are what `readingList` and `mods`
+ * ID-45): their scope keys – `addresses`, `paymentMethods` – are what `mods`
  * were to the builds before those. The goldens' scope predates both keys, so a device holding
  * addresses and cards publishes neither type under it and the pinned bytes stand; each key on
  * its own publishes its type alone; and an older peer drops each type and its tombstones from
@@ -806,7 +762,7 @@ describe('the favicon rule, measured', () => {
  * and cipher intact and then falls out of every scope – `inScope` names no case for it, so the
  * round's filter drops it, a declined merge tombstones nothing for it, and it is never applied
  * nor written to the metadata (it wins again next round and is dropped again). That is what
- * `reading-list-entry` is to every build before this one, and what the next type will be to
+ * a newer type is to an older build, and what the next type will be to
  * this build: an old device on the folder keeps syncing everything it knows, with no error.
  */
 describe('the wire across builds: a record type the build does not know', () => {

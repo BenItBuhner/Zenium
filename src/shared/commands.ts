@@ -248,23 +248,6 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     keywords: ['bookmarks', 'bar', 'toolbar', 'favorites'],
     action: 'bookmark.toggleBar'
   },
-  // Chrome's reading list (bookmarks-33): "read later" and "save for later" name both rows. The
-  // sidebar layouts' – the `zen://reading-list` page is theirs; the phone has no form of the
-  // list yet, so neither row is offered there (as its menus leave the rows out).
-  {
-    id: 'reading-list-add',
-    label: S.menu('readingList.add'),
-    keywords: ['reading list', 'read later', 'save for later', 'unread'],
-    action: 'readingList.add',
-    layouts: SIDEBAR_LAYOUTS
-  },
-  {
-    id: 'reading-list',
-    label: S.menu('readingList.open'),
-    keywords: ['reading list', 'read later', 'saved pages', 'unread'],
-    action: 'readingList.open',
-    layouts: SIDEBAR_LAYOUTS
-  },
   {
     id: 'history',
     label: S.menu('history.sidebar'),

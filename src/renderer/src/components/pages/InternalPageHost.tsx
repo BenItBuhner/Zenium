@@ -9,7 +9,6 @@ import { DownloadsPage } from './downloads/DownloadsPage'
 import { HistoryPage } from './history/HistoryPage'
 import { LicencesPage } from './licences/LicencesPage'
 import { ManagementPage } from './management/ManagementPage'
-import { ReadingListPage } from './readingList/ReadingListPage'
 import { SettingsPage } from './settings/SettingsPage'
 import { TasksPage } from './tasks/TasksPage'
 
@@ -18,7 +17,7 @@ import { TasksPage } from './tasks/TasksPage'
  * `render: 'chrome'`) has no WebView, so the chrome draws the page itself where the page would
  * be – an opaque `--v2-page` surface filling the content frame edge to edge at the frame's own
  * radius (v2 §10.1), nothing behind it. One component per registered chrome page id – Settings,
- * History, the bookmarks manager, Downloads, the reading list, Licences, What's new, the two
+ * History, the bookmarks manager, Downloads, Licences, What's new, the two
  * legal pages, the task manager – each reading its section and query from `tab.url`; a document page renders
  * nothing here, its view shows it. `data-surface="page"`
  * puts the page family of tokens (§9.29) on the root, for every chip, badge and icon button
@@ -62,8 +61,6 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
       return <BookmarkManager state={state} tab={tab} />
     case 'downloads':
       return <DownloadsPage state={state} tab={tab} />
-    case 'reading-list':
-      return <ReadingListPage state={state} tab={tab} />
     case 'licences':
       return <LicencesPage state={state} tab={tab} />
     case 'whats-new':

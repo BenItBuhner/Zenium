@@ -298,7 +298,6 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     },
     downloads: [],
     bookmarks: [],
-    readingList: [],
     recentlyClosedCount: 0,
     media: [],
     findResult: null,
@@ -7843,18 +7842,17 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(invoke).toHaveBeenCalledWith('sync.setDeviceName', { name: 'Ben’s phone' })
   })
 
-  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Addresses, Payment methods, Reading list, Settings first, then Zenium’s own; each runs sync.setScope', () => {
+  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Addresses, Payment methods, Settings first, then Zenium’s own; each runs sync.setScope', () => {
     const model = section('sync', syncState(syncStatus()))
     const scope = model.groups.find((g) => g.id === 'sync-scope')
     expect(scope?.heading).toBe('What you sync')
-    expect(scope?.rows.map((r) => r.label).slice(0, 8)).toEqual([
+    expect(scope?.rows.map((r) => r.label).slice(0, 7)).toEqual([
       'Bookmarks',
       'History',
       'Open tabs',
       'Passwords',
       'Addresses',
       'Payment methods',
-      'Reading list',
       'Settings'
     ])
     // Every key of the engine's scope is a switch here, once – on a host that has what the key
@@ -7904,15 +7902,6 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(history.checked).toBe(true)
     history.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { history: false })
-    // The reading list is on by default too, as the bookmarks (services pass 11, ID-48); its
-    // row is the label and the switch alone, as Bookmarks' and History's (the lead's rule: a
-    // hint carries a fact the name cannot, never a restatement).
-    const readingList = row(model, 'sync-scope:readingList')
-    if (readingList.kind !== 'switch') throw new Error('not a switch')
-    expect(readingList.checked).toBe(true)
-    expect(readingList.description).toBeUndefined()
-    readingList.onChange(false)
-    expect(invoke).toHaveBeenCalledWith('sync.setScope', { readingList: false })
     // The Mods (services pass 15, ID-43): on by default as Chrome's Themes type is a toggle of
     // its own; the row is the label and the switch alone, seated last, after Boosts – the
     // chrome's CSS mods beside the per-site Boosts, Zenium's own types together.
@@ -7944,7 +7933,7 @@ describe('ID-08’s Sync category on a phone', () => {
       // The seat (the lead's ruling, round 4): the last of Chrome's types – right after
       // Settings, right before Spaces – not among Zenium's own after Mods, which stay last.
       const labels = scope?.rows.map((r) => r.label) ?? []
-      expect(labels.slice(7, 10)).toEqual(['Settings', 'Extensions', 'Spaces'])
+      expect(labels.slice(6, 9)).toEqual(['Settings', 'Extensions', 'Spaces'])
       expect(labels.slice(-2)).toEqual(['Boosts', 'Mods'])
       expect(labels.indexOf('Extensions')).toBe(labels.indexOf('Settings') + 1)
       expect(labels.indexOf('Spaces')).toBe(labels.indexOf('Extensions') + 1)

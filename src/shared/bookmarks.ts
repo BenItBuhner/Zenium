@@ -356,6 +356,59 @@ export function migrateLegacyBookmarks(
   return normalizeBookmarkNodes(nodes, now, targetRootId)
 }
 
+/**
+ * The reading list a profile kept before Zenium took Zen's shape (Zen has no reading list): its
+ * pages become a "Reading List" bookmarks folder at the end of `parentId`, oldest first, so
+ * nothing the user saved is lost. Returns the tree unchanged when the raw list holds no page.
+ * Pure: the caller persists the result and drops the old field.
+ */
+export function foldReadingListIntoBookmarks(
+  nodes: readonly BookmarkNode[],
+  raw: unknown,
+  parentId: string,
+  now: number
+): BookmarkNode[] {
+  if (!Array.isArray(raw)) return [...nodes]
+  const pages = raw
+    .filter(
+      (e): e is { id?: unknown; url: string; title?: unknown; addedAt?: unknown } =>
+        Boolean(e) && typeof e === 'object' && typeof (e as { url?: unknown }).url === 'string'
+    )
+    .filter((e) => e.url)
+    .sort((a, b) => finiteOr(a.addedAt, now) - finiteOr(b.addedAt, now))
+  if (pages.length === 0) return [...nodes]
+  const taken = new Set(nodes.map((n) => n.id))
+  let seq = 0
+  const freshId = (): string => {
+    let id: string
+    do id = `bm_rl_${now.toString(36)}_${seq++}`
+    while (taken.has(id))
+    taken.add(id)
+    return id
+  }
+  const folderId = freshId()
+  const siblings = nodes.filter((n) => n.parentId === parentId).length
+  const folder: BookmarkNode = {
+    id: folderId,
+    parentId,
+    index: siblings,
+    type: 'folder',
+    title: 'Reading List',
+    dateAdded: now,
+    dateGroupModified: now
+  }
+  const children = pages.map((e, index): BookmarkNode => ({
+    id: freshId(),
+    parentId: folderId,
+    index,
+    type: 'url',
+    title: typeof e.title === 'string' && e.title ? e.title : e.url,
+    url: e.url,
+    dateAdded: finiteOr(e.addedAt, now)
+  }))
+  return normalizeBookmarkNodes([...nodes, folder, ...children], now, parentId)
+}
+
 // ---------------------------------------------------------------------------
 // Presentation helpers
 // ---------------------------------------------------------------------------

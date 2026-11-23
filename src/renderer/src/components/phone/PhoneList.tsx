@@ -182,7 +182,7 @@ export function PhoneSearchField({
  * A group's heading (a day, a folder section): the shared `.zen-v2-heading` (15/600, 9.26, 9.34),
  * sentence case, with this list's beat – 20 above and 8 to its first row (9.27). A heading, not
  * a row: it is not a target and has none of a row's layout, so it is not a `data-static` row.
- * With `aside` (a count: the reading list's Unread heading, as the desktop page's §9.27 aside)
+ * With `aside` (a count, as the desktop page's §9.27 aside)
  * the heading shares its line with the small deemphasised figure at the gutter.
  */
 export function PhoneGroupHeading({

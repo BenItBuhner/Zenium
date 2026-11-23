@@ -116,7 +116,6 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
-  'Bookmarks > Reading List',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
@@ -2094,9 +2093,6 @@ describe('the app menu', () => {
       'Bookmarks > -',
       'Bookmarks > Import Bookmarks…',
       'Bookmarks > Export Bookmarks…',
-      // The phone's reading list (HB-20): the list as a library row after Bookmarks, the page's
-      // verb among the saves after Share… (before Add to Home Screen where the host has it).
-      'Reading List',
       'History',
       'Downloads',
       'Passwords',
@@ -2107,7 +2103,6 @@ describe('the app menu', () => {
       'Find in Page…',
       'Reader View',
       'Share…',
-      'Add to Reading List',
       'Print…',
       'Take Screenshot',
       'Capture Full Page',
@@ -3182,7 +3177,6 @@ describe('the page context menu', () => {
       'Save Link As…',
       'Copy Link Address',
       'Copy Link Text',
-      'Add Link to Reading List',
       '-',
       'Boosts',
       'Inspect Element'
@@ -5404,7 +5398,7 @@ describe('the chrome context menus', () => {
     it('on the star follows its own rows behind a hairline (Chrome seats an action’s children over its pin rows); without the control mark the star’s menu is as it was', async () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const plain = await show(h, chromeParams({ target: 'star', tabId: h.tabId }))
-      expect(plain).toEqual(['Bookmark This Page', 'Add to Reading List', '-', 'Show Reading List'])
+      expect(plain).toEqual(['Bookmark This Page'])
       const marked = await show(
         h,
         chromeParams({ target: 'star', tabId: h.tabId, control: 'star' })
@@ -5418,7 +5412,7 @@ describe('the chrome context menus', () => {
       const tablet = pageHarness({ ...DESKTOP, pageTabs: true }, { formFactor: 'tablet' })
       expect(
         await show(tablet, chromeParams({ target: 'star', tabId: tablet.tabId, control: 'star' }))
-      ).toEqual(['Bookmark This Page', 'Add to Reading List', '-', 'Show Reading List'])
+      ).toEqual(['Bookmark This Page'])
       await show(
         tablet,
         chromeParams({ target: 'toolbar', tabId: tablet.tabId, control: 'reader' })
@@ -6344,22 +6338,8 @@ describe('a menu asked for from the keyboard', () => {
       source: 'newtab',
       rect: { x: 0, y: 60, width: 240, height: 600 }
     })
-    h.browser.readingList.add('https://read.example/long', 'Long read')
-    const entry = h.browser.readingList.list()[0]!
-    h.browser.handleCommand(h.win, 'readingList.contextMenu', {
-      id: entry.id,
-      x: 900,
-      y: 300,
-      keyboard: true,
-      rect: { x: 880, y: 280, width: 20, height: 20 }
-    })
-    expect(h.where()).toMatchObject({
-      source: 'readingList',
-      keyboard: true,
-      rect: { x: 880, y: 280, width: 20, height: 20 }
-    })
     // Without a box, the point alone – a pointer's menu, or a phone's command.
-    h.browser.handleCommand(h.win, 'readingList.contextMenu', { id: entry.id, x: 900, y: 300 })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', { x: 900, y: 300 })
     expect(h.where()).toMatchObject({ x: 900, y: 300 })
     expect(h.where()).not.toHaveProperty('rect')
     expect(h.where()).not.toHaveProperty('keyboard')
