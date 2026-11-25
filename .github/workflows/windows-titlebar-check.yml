@@ -1,0 +1,59 @@
+name: Windows title bar check
+
+# Boots the unpacked Windows build and drives the real cursor and mouse (.github/smoke/
+# titlebar-check.mjs): the window buttons hidden at rest, sliding out at the top edge, and the
+# window's maximize, restore, drag, Win+Left snap, drag-to-top and close. Screenshots of every
+# step are uploaded as the run's artifact.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/main/platform/window.ts'
+      - 'src/main/platform/edgeReveal.ts'
+      - 'src/renderer/src/App.tsx'
+      - 'src/renderer/src/lib/caption.ts'
+      - 'src/renderer/src/components/WindowControls.tsx'
+      - 'src/renderer/src/components/sidebar/SidebarTop.tsx'
+      - '.github/smoke/titlebar-check.mjs'
+      - '.github/smoke/win-input.ps1'
+      - '.github/workflows/windows-titlebar-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-titlebar-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: windows title bar
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.23.4"
+          cache: npm
+      - run: npm ci
+      - run: npx electron-vite build
+      - name: Package the unpacked build
+        run: npx electron-builder --win dir --x64 --publish never
+      - name: Make sure the session shows a desktop
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .github\smoke\win-session.ps1 -Action dismiss-oobe
+      - name: Drive the title bar with the real mouse
+        timeout-minutes: 10
+        run: |
+          $exe = Get-ChildItem dist -Directory -Filter '*unpacked*' | ForEach-Object { Join-Path $_.FullName 'zenium.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1
+          node .github\smoke\titlebar-check.mjs --exe "$exe" --out titlebar-out
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-titlebar
+          path: titlebar-out
