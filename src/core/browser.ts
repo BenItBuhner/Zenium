@@ -4457,7 +4457,11 @@ export class Browser {
       'sync.tabsFromDevices': () => this.sync.tabsFromDevices(),
       'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 
-      'assistant.ask': ({ prompt, taskId }) => this.assistant.ask(prompt, taskId),
+      'assistant.ask': ({ prompt, taskId, open }, win) => {
+        const id = this.assistant.ask(prompt, taskId)
+        if (open) this.pages.open('ask', null, win, null, { query: { task: id } })
+        return id
+      },
       'assistant.stop': ({ taskId }) => this.assistant.stop(taskId),
       'assistant.remove': ({ taskId }) => this.assistant.remove(taskId),
       'assistant.setKey': ({ key }) => this.assistant.setKey(key),

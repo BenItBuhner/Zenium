@@ -5386,6 +5386,12 @@ export type SuggestionKind =
    * name, the subtitle its pages' hosts, `targetId` the folder – the pick is `folder.open`.
    */
   | 'folder'
+  /**
+   * Hand the typed text to the built-in agent (`zen://ask`, `core/assistant`): offered when the
+   * text reads as a question or a task and an API key is set; the pick is `assistant.ask` with
+   * `open`, landing on the task's page.
+   */
+  | 'ask'
 
 export interface Suggestion {
   id: string
@@ -7373,7 +7379,11 @@ export interface Commands {
   }
 
   /** Hand the built-in agent a task, or a follow-up on `taskId`; returns the task's id. */
-  'assistant.ask': { args: { prompt: string; taskId?: string }; result: string }
+  'assistant.ask': {
+    /** `open`: show the task on `zen://ask` in this window (the address bar's row). */
+    args: { prompt: string; taskId?: string; open?: boolean }
+    result: string
+  }
   'assistant.stop': { args: { taskId: string }; result: void }
   'assistant.remove': { args: { taskId: string }; result: void }
   /** Store the user's Anthropic API key in the secret store; an empty key removes it. */

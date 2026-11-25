@@ -37,6 +37,7 @@ interface Persisted {
   version: 1
   memory: string[]
   tasks: StoredTask[]
+  hasKey?: boolean
 }
 
 export interface AssistantHost {
@@ -89,13 +90,15 @@ export class AssistantService {
         ? data.memory.filter((f) => typeof f === 'string')
         : []
       this.tasks = Array.isArray(data.tasks) ? data.tasks.filter((t) => t && t.id && t.state) : []
+      this.hasKey = data.hasKey === true
     }
   }
 
-  /** Read whether a key is set, and pick up the tasks a quit left running. */
+  /**
+   * Pick up the tasks a quit left running. Whether a key is set comes from the JSON (`hasKey`),
+   * so starting the browser never reads the secret store; the key itself is read per task.
+   */
   async start(): Promise<void> {
-    this.hasKey = Boolean(await this.host.secrets?.get(API_KEY_SECRET))
-    this.host.changed()
     for (const t of this.tasks) if (t.status === 'running') void this.run(t)
   }
 
@@ -126,7 +129,7 @@ export class AssistantService {
     if (k) await secrets.set(API_KEY_SECRET, k)
     else await secrets.delete(API_KEY_SECRET)
     this.hasKey = Boolean(k)
-    this.host.changed()
+    this.save()
   }
 
   /** A new task, or a follow-up on `taskId`. Returns the task's id. */
@@ -203,7 +206,7 @@ export class AssistantService {
   }
 
   private save(): void {
-    this.store.write({ version: 1, memory: this.memory, tasks: this.tasks })
+    this.store.write({ version: 1, memory: this.memory, tasks: this.tasks, hasKey: this.hasKey })
     this.host.changed()
   }
 
@@ -215,6 +218,7 @@ export class AssistantService {
   private async run(task: StoredTask): Promise<void> {
     const key = await this.host.secrets?.get(API_KEY_SECRET)
     if (!key) {
+      this.hasKey = false
       this.finish(task, {
         status: 'failed',
         error: 'Add your Anthropic API key on this page to use the built-in agent.'
