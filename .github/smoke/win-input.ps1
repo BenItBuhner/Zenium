@@ -35,7 +35,7 @@ function MoveTo([int]$x, [int]$y) {
   [ZenInput]::mouse_event($MOVE -bor $ABSOLUTE, $ax, $ay, 0, [UIntPtr]::Zero)
 }
 function Glide([int]$fx, [int]$fy, [int]$tx, [int]$ty) {
-  $steps = 30
+  $steps = 40
   for ($i = 1; $i -le $steps; $i++) {
     MoveTo ([int]($fx + ($tx - $fx) * $i / $steps)) ([int]($fy + ($ty - $fy) * $i / $steps))
     Start-Sleep -Milliseconds 30
@@ -54,8 +54,14 @@ switch ($Action) {
     MoveTo $X $Y
     Start-Sleep -Milliseconds 200
     [ZenInput]::mouse_event($LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 200
-    Glide $X $Y $X2 $Y2
+    Start-Sleep -Milliseconds 250
+    # Past the drag threshold in two short nudges first, as a hand does, so Windows' move loop
+    # has started before the long glide.
+    MoveTo ($X + 4) ($Y + 3)
+    Start-Sleep -Milliseconds 250
+    MoveTo ($X + 12) ($Y + 8)
+    Start-Sleep -Milliseconds 250
+    Glide ($X + 12) ($Y + 8) $X2 $Y2
     Start-Sleep -Milliseconds 400
     [ZenInput]::mouse_event($LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
   }
