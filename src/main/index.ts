@@ -228,12 +228,14 @@ function main(): void {
           const agents = b.state.settings.agents
           const cookies =
             switches.allowCookieTransfer && !agents.cookieContainers.includes(DEFAULT_CONTAINER_ID)
-          if (!agents.enabled || cookies)
+          const port = switches.agentPort ?? agents.port
+          if (!agents.enabled || cookies || port !== agents.port)
             b.updateSettings(
               {
                 agents: {
                   ...agents,
                   enabled: true,
+                  port,
                   cookieContainers: cookies
                     ? [...agents.cookieContainers, DEFAULT_CONTAINER_ID]
                     : agents.cookieContainers

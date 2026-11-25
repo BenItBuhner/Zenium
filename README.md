@@ -233,6 +233,7 @@ nothing is drawn, the AI agents' server is turned on, and its endpoint and token
 ```bash
 zenium --server                # print the MCP endpoint and token, then keep running
 zenium --server --sign-in      # also link this machine to your Zenium account by a code
+zenium --server --agent-port=41800 --allow-cookie-transfer   # another port; agents may move sign-ins
 zenium --mcp                   # on the same machine: stdio for agents that launch a command
 ```
 

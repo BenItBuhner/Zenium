@@ -1680,13 +1680,12 @@ describe('SuggestionService: typo fixes and the agent row', () => {
     const rows = await suggestions.suggest('mycompnay.io', null, win)
     expect(rows[0]).toMatchObject({ kind: 'url', id: 'url' })
     expect(rows.find((r) => r.id === 'typo')).toMatchObject({
-      title: 'mycompany.io',
-      subtitle: 'Did you mean',
+      title: 'Did you mean mycompany.io?',
       url: 'https://mycompany.io/'
     })
     expect(
       (await suggestions.suggest('githb.com', null, win)).find((r) => r.id === 'typo')?.title
-    ).toBe('github.com')
+    ).toBe('Did you mean github.com?')
     expect((await suggestions.suggest('github.com', null, win)).some((r) => r.id === 'typo')).toBe(
       false
     )

@@ -20,7 +20,8 @@ describe('parseCliSwitches', () => {
       region: null,
       server: false,
       signIn: false,
-      allowCookieTransfer: false
+      allowCookieTransfer: false,
+      agentPort: null
     })
     expect(
       parseCliSwitches(['https://example.com', '--no-sandbox', '--disable-gpu', '-psn_0_1', '--'])
@@ -48,7 +49,8 @@ describe('parseCliSwitches', () => {
       region: 'de',
       server: true,
       signIn: true,
-      allowCookieTransfer: false
+      allowCookieTransfer: false,
+      agentPort: null
     })
   })
 
@@ -162,5 +164,13 @@ describe('windowLaunchState', () => {
       kiosk: false,
       maximize: false
     })
+  })
+})
+
+describe('--agent-port', () => {
+  it('takes a valid port and ignores anything else', () => {
+    expect(parseCliSwitches(['--server', '--agent-port=41800']).agentPort).toBe(41800)
+    expect(parseCliSwitches(['--agent-port=0']).agentPort).toBeNull()
+    expect(parseCliSwitches(['--agent-port=abc']).agentPort).toBeNull()
   })
 })

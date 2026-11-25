@@ -331,8 +331,8 @@ export class SuggestionService {
       rows.push({
         id: 'typo',
         kind: 'url',
-        title: fix,
-        subtitle: 'Did you mean',
+        title: `Did you mean ${fix}?`,
+        subtitle: '',
         url: fixUrl,
         favicon: this.browser.history.faviconFor(fixUrl),
         targetId: null,

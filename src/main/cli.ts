@@ -43,6 +43,8 @@ export interface CliSwitches {
   signIn: boolean
   /** `--allow-cookie-transfer`: with `--server`, let agents move sign-ins for "No Container". */
   allowCookieTransfer: boolean
+  /** `--agent-port=<n>`: with `--server`, the port the agents' MCP server listens on. */
+  agentPort: number | null
 }
 
 export const KIOSK_SWITCH = 'kiosk'
@@ -54,6 +56,7 @@ export const REGION_SWITCH = 'zen-region'
 export const SERVER_SWITCH = 'server'
 export const SIGN_IN_SWITCH = 'sign-in'
 export const ALLOW_COOKIE_TRANSFER_SWITCH = 'allow-cookie-transfer'
+export const AGENT_PORT_SWITCH = 'agent-port'
 /** The environment's spelling of `--zen-region` (the switch wins when both are set). */
 export const REGION_ENV = 'ZEN_REGION'
 
@@ -66,7 +69,8 @@ const NO_SWITCHES: CliSwitches = {
   region: null,
   server: false,
   signIn: false,
-  allowCookieTransfer: false
+  allowCookieTransfer: false,
+  agentPort: null
 }
 
 /**
@@ -109,6 +113,11 @@ export function parseCliSwitches(argv: readonly string[]): CliSwitches {
       case ALLOW_COOKIE_TRANSFER_SWITCH:
         switches.allowCookieTransfer = true
         break
+      case AGENT_PORT_SWITCH: {
+        const port = Number(value)
+        if (Number.isInteger(port) && port > 0 && port < 65536) switches.agentPort = port
+        break
+      }
     }
   }
   return switches
