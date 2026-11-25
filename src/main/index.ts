@@ -22,6 +22,7 @@ import {
   windowSwitchesOf
 } from './cli'
 import type { Browser } from '../core/browser'
+import { DEFAULT_CONTAINER_ID } from '../shared/types'
 import { spawnSync } from 'node:child_process'
 import {
   SERVER_PARENT_ENV,
@@ -224,9 +225,20 @@ function main(): void {
       {
         agentStatus: () => b.agents.serverStatus(),
         enableAgents: () => {
-          if (!b.state.settings.agents.enabled)
+          const agents = b.state.settings.agents
+          const cookies =
+            switches.allowCookieTransfer && !agents.cookieContainers.includes(DEFAULT_CONTAINER_ID)
+          if (!agents.enabled || cookies)
             b.updateSettings(
-              { agents: { ...b.state.settings.agents, enabled: true } },
+              {
+                agents: {
+                  ...agents,
+                  enabled: true,
+                  cookieContainers: cookies
+                    ? [...agents.cookieContainers, DEFAULT_CONTAINER_ID]
+                    : agents.cookieContainers
+                }
+              },
               b.ensureBrowserWindow()
             )
         },

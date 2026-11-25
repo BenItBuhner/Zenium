@@ -8,6 +8,9 @@ import type {
   Tab
 } from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
+import { DEFAULT_CONTAINER_ID, type Container } from '../../shared/types'
+import { normalizeSite } from '../../shared/portableCookie'
+import { deviceKey, isPublicKey, openBundle, sealBundle } from './cookieTransfer'
 import { agentTabProxyId, DEFAULT_APP_PROXY_SETTINGS } from '../../shared/appProxy'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
@@ -2999,6 +3002,115 @@ const zenDevices: AgentTool = {
   }
 }
 
+const COOKIE_ACTIONS = ['key', 'export', 'import'] as const
+
+/** The container an agent names (id or name, case aside), or the default one. */
+function cookieContainer(ctx: ToolContext, args: Record<string, unknown>): Container {
+  const want = (str(args, 'container') ?? DEFAULT_CONTAINER_ID).trim().toLowerCase()
+  const all = ctx.browser.state.model.containers
+  const found = all.find((c) => c.id.toLowerCase() === want || c.name.toLowerCase() === want)
+  if (!found)
+    throw new RpcError(
+      -32602,
+      `No container ${JSON.stringify(want)}. Containers: ${all.map((c) => `${c.id} ("${c.name}")`).join(', ')}`
+    )
+  return found
+}
+
+function cookieRefusal(ctx: ToolContext, c: Container): string | null {
+  if (ctx.agents.settings.cookieContainers.includes(c.id)) return null
+  return `The user has not let agents move sign-ins for the container "${c.name}". Ask them to turn it on in Settings → AI Agents → Sign-ins agents may move (on a server: zenium --server --allow-cookie-transfer).`
+}
+
+const zenCookies: AgentTool = {
+  definition: {
+    name: 'zen_cookies',
+    title: 'Move a sign-in between your browsers',
+    description:
+      'Move a site\'s sign-in (its cookies) from one of the user\'s browsers to another, end-to-end encrypted. 1) On the browser that NEEDS the sign-in: {"action":"key"} returns its device key. 2) On the browser that HAS it: {"action":"export","site":"github.com","to":"<that key>"} returns a sealed bundle only the receiving browser can open. 3) Back on the receiver: {"action":"import","bundle":"zck1…"} sets the cookies, then reload your tab. Bundles expire after 10 minutes. Only works for containers the user allowed (off by default); "container" picks one by id or name (default: "No Container"). Some sites tie a sign-in to one device and will not accept it elsewhere. Changed: new tool.',
+    inputSchema: schema(
+      {
+        action: { type: 'string', enum: [...COOKIE_ACTIONS] },
+        site: { type: 'string', description: 'export: the site, e.g. "github.com"' },
+        to: { type: 'string', description: "export: the receiving browser's device key" },
+        bundle: { type: 'string', description: 'import: the sealed bundle from export' },
+        container: {
+          type: 'string',
+          description: 'export / import: the container by id or name (default "No Container")'
+        }
+      },
+      ['action']
+    ),
+    annotations: { openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const action = (str(args, 'action') ?? '').toLowerCase().trim()
+    const secrets = ctx.browser.platform.secrets
+    const siteData = ctx.browser.platform.siteData
+    if (!secrets || !siteData?.exportCookies || !siteData.importCookies)
+      return text(
+        'This browser cannot move sign-ins (no secret store or cookie access on this platform).'
+      )
+    const key = await deviceKey(secrets)
+    const allowed = ctx.browser.state.model.containers
+      .filter((c) => ctx.agents.settings.cookieContainers.includes(c.id))
+      .map((c) => `"${c.name}"`)
+    if (action === 'key')
+      return text(
+        `This browser's device key: ${key.publicKey}\nContainers agents may move sign-ins for here: ${allowed.length ? allowed.join(', ') : 'none (the user has not turned it on)'}.`
+      )
+    if (action === 'export') {
+      const site = normalizeSite(need(args, 'site', 'e.g. "github.com"'))
+      if (!site) throw new RpcError(-32602, 'site must be a domain such as "github.com"')
+      const to = need(args, 'to', "the receiving browser's key from zen_cookies key")
+      if (!isPublicKey(to))
+        throw new RpcError(
+          -32602,
+          'to is not a device key: run {"action":"key"} on the receiving browser'
+        )
+      const c = cookieContainer(ctx, args)
+      const refused = cookieRefusal(ctx, c)
+      if (refused) return text(refused)
+      const cookies = await siteData.exportCookies(c.id, site)
+      if (!cookies.length)
+        return text(`No cookies for ${site} in "${c.name}": this browser is not signed in there.`)
+      const from = ctx.browser.sync.status().deviceName || 'Zenium'
+      const sealed = sealBundle({ site, createdAt: Date.now(), from, cookies }, to)
+      ctx.browser.toast(
+        `${ctx.session.name} copied your ${site} sign-in to another of your devices`
+      )
+      return text(
+        `Sealed ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} for ${site} to the receiving browser. Pass this to zen_cookies import there within 10 minutes:\n${sealed}`
+      )
+    }
+    if (action === 'import') {
+      const c = cookieContainer(ctx, args)
+      const refused = cookieRefusal(ctx, c)
+      if (refused) return text(refused)
+      const opened = openBundle(need(args, 'bundle', 'the "zck1…" text from export'), key)
+      if (!opened.ok)
+        return text(
+          opened.reason === 'expired'
+            ? 'That bundle has expired (10 minutes): export it again.'
+            : opened.reason === 'not-for-this-device'
+              ? 'That bundle was sealed to another browser\'s key: export again with this browser\'s key ({"action":"key"}).'
+              : 'That is not a sign-in bundle.'
+        )
+      const n = await siteData.importCookies(c.id, opened.bundle.cookies)
+      ctx.browser.toast(
+        `${ctx.session.name} brought your ${opened.bundle.site} sign-in from ${opened.bundle.from}`
+      )
+      return text(
+        `Set ${n} of ${opened.bundle.cookies.length} cookies for ${opened.bundle.site} in "${c.name}". Reload your tab on ${opened.bundle.site} to use the sign-in.`
+      )
+    }
+    throw new RpcError(
+      -32602,
+      `Unknown action ${JSON.stringify(action)} – use "key", "export" or "import"`
+    )
+  }
+}
+
 export const AGENT_TOOLS: AgentTool[] = [
   zenStatus,
   browserTabs,
@@ -3025,6 +3137,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   zenGroups,
   zenSession,
   zenDevices,
+  zenCookies,
   zenSpaces,
   zenMode,
   zenHistory

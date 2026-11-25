@@ -19,7 +19,8 @@ describe('parseCliSwitches', () => {
       profileDirectory: null,
       region: null,
       server: false,
-      signIn: false
+      signIn: false,
+      allowCookieTransfer: false
     })
     expect(
       parseCliSwitches(['https://example.com', '--no-sandbox', '--disable-gpu', '-psn_0_1', '--'])
@@ -46,7 +47,8 @@ describe('parseCliSwitches', () => {
       profileDirectory: 'Profile 2',
       region: 'de',
       server: true,
-      signIn: true
+      signIn: true,
+      allowCookieTransfer: false
     })
   })
 

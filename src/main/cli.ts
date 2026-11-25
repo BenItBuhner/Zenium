@@ -41,6 +41,8 @@ export interface CliSwitches {
   server: boolean
   /** `--sign-in`: with `--server`, link this machine to the Zenium account by a printed code. */
   signIn: boolean
+  /** `--allow-cookie-transfer`: with `--server`, let agents move sign-ins for "No Container". */
+  allowCookieTransfer: boolean
 }
 
 export const KIOSK_SWITCH = 'kiosk'
@@ -51,6 +53,7 @@ export const PROFILE_DIRECTORY_SWITCH = 'profile-directory'
 export const REGION_SWITCH = 'zen-region'
 export const SERVER_SWITCH = 'server'
 export const SIGN_IN_SWITCH = 'sign-in'
+export const ALLOW_COOKIE_TRANSFER_SWITCH = 'allow-cookie-transfer'
 /** The environment's spelling of `--zen-region` (the switch wins when both are set). */
 export const REGION_ENV = 'ZEN_REGION'
 
@@ -62,7 +65,8 @@ const NO_SWITCHES: CliSwitches = {
   profileDirectory: null,
   region: null,
   server: false,
-  signIn: false
+  signIn: false,
+  allowCookieTransfer: false
 }
 
 /**
@@ -101,6 +105,9 @@ export function parseCliSwitches(argv: readonly string[]): CliSwitches {
         break
       case SIGN_IN_SWITCH:
         switches.signIn = true
+        break
+      case ALLOW_COOKIE_TRANSFER_SWITCH:
+        switches.allowCookieTransfer = true
         break
     }
   }

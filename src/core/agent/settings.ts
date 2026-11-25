@@ -26,6 +26,9 @@ export function sanitizeAgentSettings(
       : [],
     defaultMode: mode,
     allowScripts: typeof r.allowScripts === 'boolean' ? r.allowScripts : d.allowScripts,
-    showCursor: typeof r.showCursor === 'boolean' ? r.showCursor : d.showCursor
+    showCursor: typeof r.showCursor === 'boolean' ? r.showCursor : d.showCursor,
+    cookieContainers: Array.isArray(r.cookieContainers)
+      ? [...new Set(r.cookieContainers.filter((c) => typeof c === 'string' && c))].slice(0, 100)
+      : []
   }
 }

@@ -4088,6 +4088,11 @@ export interface AgentSettings {
   allowScripts: boolean
   /** Draw the agent's cursor and name tag in the pages it drives. */
   showCursor: boolean
+  /**
+   * Containers whose sign-ins (cookies) agents may move between this browser and another of
+   * yours, sealed to the other device's key (`zen_cookies`). Empty – none – by default.
+   */
+  cookieContainers: string[]
 }
 
 /** One connected agent (an MCP session). */

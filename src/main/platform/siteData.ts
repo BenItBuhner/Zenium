@@ -3,6 +3,7 @@ import type { SiteCookie } from '../../shared/siteInfo'
 import { cookieVerdict, type SiteDataPolicy } from '../../shared/siteData'
 import type { SiteDataHost, SiteDataOriginReading, SiteStorageReading } from '../../core/platform'
 import type { SessionManager } from './sessions'
+import { cookieOfSite, type PortableCookie } from '../../shared/portableCookie'
 
 /**
  * Cookies and storage per site on Electron: every container is a session partition, and
@@ -16,6 +17,50 @@ export class ElectronSiteData implements SiteDataHost {
   async cookies(containerId: string, url: string): Promise<SiteCookie[]> {
     const list = await this.sessions.get(containerId).cookies.get({ url })
     return list.map(cookieFromElectron)
+  }
+
+  async exportCookies(containerId: string, site: string): Promise<PortableCookie[]> {
+    const all = await this.sessions.get(containerId).cookies.get({})
+    return all
+      .filter((c) => c.domain && cookieOfSite({ domain: c.domain }, site))
+      .map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain ?? '',
+        path: c.path ?? '/',
+        secure: c.secure ?? false,
+        httpOnly: c.httpOnly ?? false,
+        sameSite: c.sameSite,
+        expirationDate: c.session ? undefined : c.expirationDate,
+        hostOnly: c.hostOnly
+      }))
+  }
+
+  async importCookies(containerId: string, cookies: PortableCookie[]): Promise<number> {
+    const store = this.sessions.get(containerId).cookies
+    let set = 0
+    for (const c of cookies) {
+      const host = c.domain.replace(/^\./, '')
+      try {
+        await store.set({
+          url: `${c.secure ? 'https' : 'http'}://${host}${c.path || '/'}`,
+          name: c.name,
+          value: c.value,
+          // A host-only cookie is set without a domain, or Chromium would widen it.
+          domain: c.hostOnly ? undefined : c.domain,
+          path: c.path || '/',
+          secure: c.secure,
+          httpOnly: c.httpOnly,
+          sameSite: c.sameSite,
+          expirationDate: c.expirationDate
+        })
+        set++
+      } catch {
+        /* a cookie the engine refuses (a __Host- prefix rule, an expired date) is skipped */
+      }
+    }
+    await store.flushStore().catch(() => undefined)
+    return set
   }
 
   async storage(): Promise<SiteStorageReading> {
