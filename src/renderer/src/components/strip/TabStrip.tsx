@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ChevronDown, VenetianMask } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
+import { CAPTION_BUTTONS_WIDTH, ownCaption } from '@renderer/lib/caption'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore, listMotions } from '@renderer/lib/drag'
@@ -114,6 +115,8 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
   const isMac = state.platform === 'darwin'
   const isPrivate = isPrivateWindow(state)
   const overlay = useCaptionOverlay()
+  // The chrome's own caption buttons stand at the strip's trailing end, as the OS's did.
+  const captionRoom = ownCaption(state) ? CAPTION_BUTTONS_WIDTH : overlay.width
 
   // ---- the widths (lib/tabStripLayout.ts) ----
   // The room the regular tabs have is what the region shows plus whatever the drag spring holds
@@ -471,7 +474,7 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
         />
         <div
           className={cn('zen-no-drag flex shrink-0 items-end gap-1 pb-[2px]')}
-          style={{ paddingRight: overlay.width > 0 ? overlay.width : 8 }}
+          style={{ paddingRight: captionRoom > 0 ? captionRoom : 8 }}
           data-strip-controls
         >
           {trailing}

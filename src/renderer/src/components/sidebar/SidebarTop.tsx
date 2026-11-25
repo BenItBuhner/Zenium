@@ -38,7 +38,7 @@ import {
   X
 } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
-import { nativeCaption, ownCaption } from '@renderer/lib/caption'
+import { captionOverSidebar, nativeCaption, ownCaption } from '@renderer/lib/caption'
 import type { SearchEngine, Tab, UIState } from '@shared/types'
 import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import { defaultSearchEngineOf } from '@shared/search'
@@ -165,10 +165,10 @@ export function SidebarTop({ state, tab, compact, showToolbar }: Props): JSX.Ele
   const isMac = state.platform === 'darwin'
   const fullscreen = state.window.fullscreen
   // Linux: Zen draws the window buttons at the top of the sidebar. macOS uses the native
-  // traffic lights, which need left padding instead. A Windows browser window keeps its buttons
-  // hidden until the cursor touches the top edge (`ownCaption`, `CaptionReveal`), so the
-  // sidebar starts at the top with no title row. Mobile hosts have none of these.
-  const overlay = nativeCaption(state) && !fullscreen
+  // traffic lights, which need left padding instead. A Windows browser window's buttons sit in
+  // the toolbar row or wait at the top edge (`ownCaption`), so the sidebar starts at the top
+  // with no title row, unless they stand over it (`captionOverSidebar`). Mobile hosts have none.
+  const overlay = (nativeCaption(state) || captionOverSidebar(state)) && !fullscreen
   const showControls =
     state.capabilities.windowControls && !overlay && !ownCaption(state) && !isMac && !fullscreen
   const reserveTitleRow = showControls || isMac || overlay

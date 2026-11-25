@@ -325,7 +325,11 @@ export class ElectronWindow implements WindowHost {
       if (process.platform === 'linux') return
 
       const action =
-        command === 'browser-backward' ? 'nav.back' : command === 'browser-forward' ? 'nav.forward' : null
+        command === 'browser-backward'
+          ? 'nav.back'
+          : command === 'browser-forward'
+            ? 'nav.forward'
+            : null
       if (!action) return
 
       browser.actions.run(action, { sourceTabId: null, win: zen })
@@ -788,10 +792,12 @@ export class ElectronWindow implements WindowHost {
     const toolbarHidden =
       hasTopToolbar(state.settings.toolbarLayout) &&
       (fullscreen || (zen.compactEnabled && cm.hideToolbar))
-    // The layouts with a top row (the toolbar, the horizontal strip) carry the window buttons in
-    // it; the others keep them hidden until the cursor touches the top edge.
+    // While a top row shows (the toolbar, the horizontal strip) the window buttons stand in its
+    // corner; otherwise they wait, hidden, until the cursor touches the top edge.
     const captionHidden =
-      this.revealsCaption && !fullscreen && !hasTopToolbar(state.settings.toolbarLayout)
+      this.revealsCaption &&
+      !fullscreen &&
+      !(hasTopToolbar(state.settings.toolbarLayout) && !toolbarHidden)
     if (zen.htmlFullscreenTabId || (!sidebarHidden && !toolbarHidden && !captionHidden)) {
       this.sidebarEdge.reset()
       this.toolbarEdge.reset()
@@ -837,7 +843,9 @@ export class ElectronWindow implements WindowHost {
       this.toolbarEdge.reset()
     }
     if (captionHidden) {
-      const zone: EdgeZone = { edge: 'top', reveal: TOOLBAR_REVEAL_ZONE, keep: CAPTION_KEEP_ZONE }
+      // Out with a hidden toolbar, they stay as long as it does.
+      const keep = toolbarHidden ? TOOLBAR_KEEP_ZONE : CAPTION_KEEP_ZONE
+      const zone: EdgeZone = { edge: 'top', reveal: TOOLBAR_REVEAL_ZONE, keep }
       const send = this.captionEdge.sample(edgeState(cursor, bounds, zone), zen.captionRevealed)
       if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'caption' })
     } else {

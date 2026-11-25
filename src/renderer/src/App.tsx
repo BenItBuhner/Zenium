@@ -23,7 +23,7 @@ import {
   useBrowser
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { ownCaption } from '@renderer/lib/caption'
+import { CAPTION_BUTTONS_WIDTH, ownCaption } from '@renderer/lib/caption'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useGlobalKeys } from '@renderer/hooks/useGlobalKeys'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
@@ -50,7 +50,7 @@ import { TabHoverCard } from './components/TabHoverCard'
 import { Tooltip } from './components/Tooltip'
 import { TabletShell } from './components/tablet/TabletShell'
 import { Toolbar } from './components/Toolbar'
-import { WindowControls } from './components/WindowControls'
+import { CaptionButtons } from './components/WindowControls'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
 const REVEAL_ZONE = 14
@@ -182,10 +182,17 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // clear of them, and the content column starts below them when they land on it. The strip
   // holds the band while it is up, keeping their footprint clear at its trailing end itself.
   const overlay = useCaptionOverlay()
+  // A Windows browser window draws its own buttons where the OS's stood (`CaptionButtons`):
+  // pinned in the top corner while a top row shows, and otherwise hidden with no band kept for
+  // them, coming out at the top edge (`CaptionReveal`).
+  const captionOwn = ownCaption(state) && !popupChrome
+  const captionPinned = captionOwn && !fullscreen && (showToolbar || topChrome)
+  const captionWidth = captionOwn ? CAPTION_BUTTONS_WIDTH : overlay.width
   const captionBand =
     !topChrome &&
+    (!captionOwn || captionPinned) &&
     captionBandInMain({
-      overlayWidth: overlay.width,
+      overlayWidth: captionWidth,
       sidebarSide,
       sidebarWidth: sidebarHidden
         ? null
@@ -193,7 +200,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           ? settings.sidebarWidth
           : COLLAPSED_WIDTH
     })
-  const captionInset = captionBand ? overlay.width : 0
+  const captionInset = captionBand ? captionWidth : 0
   const macPopupInset = popupChrome && state.platform === 'darwin' ? 72 : 0
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
@@ -279,13 +286,13 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         }}
       >
         {/* A Windows browser window's top gutter drags the window, as the caption band did. */}
-        {ownCaption(state) && !popupChrome && !showToolbar && (
+        {captionOwn && !showToolbar && (
           <div
             className="zen-drag absolute inset-x-0 top-0"
             style={{ height: 'var(--zen-padding)' }}
           />
         )}
-        {captionBand && !showToolbar && (
+        {captionBand && !captionOwn && !showToolbar && (
           <div
             className="zen-drag shrink-0"
             style={{ height: overlay.height, minHeight: 'env(titlebar-area-height, 0px)' }}
@@ -306,8 +313,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
               tab={tab}
               trailingInset={captionInset}
               leadingInset={macPopupInset}
-              // A Windows browser window carries its own buttons at the toolbar row's end.
-              showWindowControls={popupChrome || ownCaption(state)}
+              showWindowControls={popupChrome}
             />
           )
         )}
@@ -387,16 +393,18 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         <CompactToolbar
           state={state}
           showBar={barWanted}
-          trailingInset={captionInset}
+          trailingInset={captionOwn ? CAPTION_BUTTONS_WIDTH : captionInset}
           fullscreen={fullscreen}
           horizontal={horizontal}
         />
       )}
-      {/* A Windows browser window without a top row: its buttons wait at the top edge. */}
-      {ownCaption(state) &&
-        !popupChrome &&
-        !fullscreen &&
-        !hasTopToolbar(settings.toolbarLayout) && <CaptionReveal tabId={tab?.id ?? null} />}
+      {captionPinned && (
+        <div className="absolute right-0 top-0 z-30">
+          <CaptionButtons />
+        </div>
+      )}
+      {/* With no top row showing, the buttons wait at the top edge. */}
+      {captionOwn && !fullscreen && !captionPinned && <CaptionReveal tabId={tab?.id ?? null} />}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
@@ -543,7 +551,6 @@ function CompactToolbar({
               tab={tab}
               floating
               trailing={fullscreen && <ExitFullscreenButton state={state} />}
-              showWindowControls={ownCaption(state)}
             >
               {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
             </Toolbar>
@@ -555,10 +562,10 @@ function CompactToolbar({
 }
 
 /**
- * A Windows browser window's minimise / maximise / close in the layouts with no top row (`Only
- * sidebar`, `Collapsed sidebar`): no band is kept for them, so the sidebar and the page run to
- * the top. The cursor on the top edge slides them down at the trailing corner over a picture of
- * the page (main's `caption` reveal: the edge stays a drag region, so nothing here catches the
+ * A Windows browser window's minimise / maximise / close while no top row shows (the sidebar
+ * layouts, or a toolbar compact mode hides): no band is kept for them, so the sidebar and the
+ * page run to the top. The cursor on the top edge slides them down into the corner the OS's
+ * buttons stood in, looking as those did (`CaptionButtons`), over a picture of the page (main's `caption` reveal: the edge stays a drag region, so nothing here catches the
  * pointer until the buttons are out), and they slide back 300 ms after the cursor leaves – the
  * hidden toolbar's motion (`SlideDown`). The OS draws none here, since it will not hide its own
  * (`ownCaption`).
@@ -634,15 +641,11 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
     []
   )
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col items-end pt-1.5"
-      data-testid="caption-reveal"
-    >
+    <div className="pointer-events-none absolute right-0 top-0 z-40" data-testid="caption-reveal">
       {open && (
-        <SlideDown closing={closing} onClosed={closed}>
+        <SlideDown closing={closing} onClosed={closed} flush>
           <div
-            className="zen-panel pointer-events-auto flex h-10 items-center px-1"
-            data-surface="window"
+            className="pointer-events-auto"
             onPointerEnter={show}
             onPointerLeave={hide}
             // Bubbling, so the button's own click has run: the store's update re-renders at
@@ -653,7 +656,7 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
               closed()
             }}
           >
-            <WindowControls />
+            <CaptionButtons solid />
           </div>
         </SlideDown>
       )}
@@ -697,10 +700,13 @@ function slidePose(p: number): string {
 function SlideDown({
   closing,
   onClosed,
+  flush = false,
   children
 }: {
   closing: boolean
   onClosed: () => void
+  /** Flush with the window's edge (the caption buttons), not inset by the window's gutter. */
+  flush?: boolean
   children: ReactNode
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -734,7 +740,7 @@ function SlideDown({
   return (
     <div
       ref={ref}
-      className="zen-toolbar-reveal px-2"
+      className={cn('zen-toolbar-reveal', !flush && 'px-2')}
       data-closing={closing || undefined}
       data-testid="toolbar-reveal"
     >

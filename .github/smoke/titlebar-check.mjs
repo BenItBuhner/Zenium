@@ -10,6 +10,7 @@
 //   drag       pressing the top gutter and moving drags the window
 //   snap       Win+Left snaps the window to the left half
 //   drag-top   dragging the gutter to the screen's top edge (Windows' snap / maximise on drop)
+//   toolbar-layout  with the toolbar row showing, the buttons stand in its corner, no reveal
 //   close      the panel's Close closes the window
 //
 // usage: node titlebar-check.mjs --exe <zenium.exe> --out <dir>
@@ -186,7 +187,9 @@ await win(
 await sleep(1500)
 const panel = () =>
   page.evaluate(() => {
-    const el = document.querySelector('[data-testid="caption-reveal"] .zen-panel')
+    const el = document.querySelector(
+      '[data-testid="caption-reveal"] [data-testid="caption-buttons"]'
+    )
     if (!el) return null
     const r = el.getBoundingClientRect()
     const btn = (label) => {
@@ -197,6 +200,7 @@ const panel = () =>
     }
     return {
       rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+      innerWidth: window.innerWidth,
       minimize: btn('Minimize'),
       maximize: btn('Maximize'),
       restore: btn('Restore'),
@@ -260,6 +264,15 @@ await step('reveal', true, async () => {
   shot('02-top-edge-top-right', topRightCrop(i))
   if (!p?.maximize || !p.close || !p.minimize)
     throw new Error(`no panel with three buttons: ${JSON.stringify(p)}`)
+  // Where the OS's buttons stood: flush in the top trailing corner, 3 x 46 by 38.
+  const r = p.rect
+  if (Math.abs(r.x + r.width - p.innerWidth) > 1 || Math.abs(r.y) > 1)
+    throw new Error(`the buttons are not in the corner: ${JSON.stringify(r)}`)
+  if (Math.round(r.width) !== 138 || Math.round(r.height) !== 38)
+    throw new Error(`the buttons are not Windows' size: ${JSON.stringify(r)}`)
+  input('move', toScreen(i.content, p.close))
+  await sleep(400)
+  shot('02-close-hover-top-right', topRightCrop(i))
   return p
 })
 
@@ -406,6 +419,45 @@ await step('drag-top', true, async () => {
   if (!after.maximized)
     throw new Error(`not maximised after the drop: ${JSON.stringify(after.bounds)}`)
   return { maximized: true }
+})
+
+await step('toolbar-layout', true, async () => {
+  await win(
+    `w.unmaximize(); w.setBounds({ x: 40, y: 40, width: 900, height: 600 }); w.focus(); return true`
+  )
+  const before = await page.evaluate(() =>
+    document.querySelector('[data-testid="chrome-root"]')?.getAttribute('data-layout')
+  )
+  await page.evaluate(() => window.zen.invoke('settings.update', { toolbarLayout: 'multiple' }))
+  await sleep(1500)
+  const i = await info()
+  input('click', centre(i))
+  input('move', centre(i))
+  await sleep(800)
+  const got = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="caption-buttons"]')
+    const bar = document.querySelector('[data-testid="toolbar"]')
+    const r = el?.getBoundingClientRect()
+    const b = bar?.getBoundingClientRect()
+    return {
+      inReveal: Boolean(el?.closest('[data-testid="caption-reveal"]')),
+      rect: r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null,
+      toolbar: b ? { x: b.x, y: b.y, width: b.width, height: b.height } : null,
+      innerWidth: window.innerWidth
+    }
+  })
+  shot('10-toolbar-layout')
+  shot('10-toolbar-layout-top-right', topRightCrop(i))
+  await page.evaluate(
+    (layout) => window.zen.invoke('settings.update', { toolbarLayout: layout }),
+    before ?? 'single'
+  )
+  await sleep(1200)
+  if (!got.rect || got.inReveal)
+    throw new Error(`no buttons standing in the toolbar: ${JSON.stringify(got)}`)
+  if (Math.abs(got.rect.x + got.rect.width - got.innerWidth) > 1 || Math.abs(got.rect.y) > 1)
+    throw new Error(`the buttons are not in the corner: ${JSON.stringify(got)}`)
+  return got
 })
 
 await step('close', true, async () => {
