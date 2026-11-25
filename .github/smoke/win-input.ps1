@@ -19,25 +19,34 @@ public static class ZenInput {
 }
 '@
 [ZenInput]::SetProcessDPIAware() | Out-Null
-$LEFTDOWN = 0x02; $LEFTUP = 0x04; $KEYUP = 0x02
+$LEFTDOWN = 0x02; $LEFTUP = 0x04; $KEYUP = 0x02; $MOVE = 0x01; $ABSOLUTE = 0x8000
+Add-Type -AssemblyName System.Windows.Forms
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+# A real mouse move through the input queue (mouse_event, absolute 0..65535), which is what
+# Windows' window-move loop follows; SetCursorPos alone only repositions the pointer.
+function MoveTo([int]$x, [int]$y) {
+  $ax = [uint32][math]::Round($x * 65535 / ($screen.Width - 1))
+  $ay = [uint32][math]::Round($y * 65535 / ($screen.Height - 1))
+  [ZenInput]::mouse_event($MOVE -bor $ABSOLUTE, $ax, $ay, 0, [UIntPtr]::Zero)
+}
 function Glide([int]$fx, [int]$fy, [int]$tx, [int]$ty) {
-  $steps = 20
+  $steps = 30
   for ($i = 1; $i -le $steps; $i++) {
-    [ZenInput]::SetCursorPos([int]($fx + ($tx - $fx) * $i / $steps), [int]($fy + ($ty - $fy) * $i / $steps)) | Out-Null
-    Start-Sleep -Milliseconds 25
+    MoveTo ([int]($fx + ($tx - $fx) * $i / $steps)) ([int]($fy + ($ty - $fy) * $i / $steps))
+    Start-Sleep -Milliseconds 30
   }
 }
 switch ($Action) {
-  'move' { [ZenInput]::SetCursorPos($X, $Y) | Out-Null }
+  'move' { MoveTo $X $Y }
   'click' {
-    [ZenInput]::SetCursorPos($X, $Y) | Out-Null
+    MoveTo $X $Y
     Start-Sleep -Milliseconds 150
     [ZenInput]::mouse_event($LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 60
     [ZenInput]::mouse_event($LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
   }
   'drag' {
-    [ZenInput]::SetCursorPos($X, $Y) | Out-Null
+    MoveTo $X $Y
     Start-Sleep -Milliseconds 200
     [ZenInput]::mouse_event($LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200

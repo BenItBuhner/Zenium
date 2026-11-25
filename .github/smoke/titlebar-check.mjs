@@ -143,7 +143,7 @@ log('display', JSON.stringify(display))
 
 // A known place, away from the screen's edges, with the window in front.
 await win(
-  `w.unmaximize(); w.setBounds({ x: 60, y: 60, width: 1100, height: 680 }); w.focus(); return true`
+  `w.unmaximize(); w.setBounds({ x: 40, y: 40, width: 900, height: 600 }); w.focus(); return true`
 )
 await sleep(1500)
 const panel = () =>
@@ -253,7 +253,7 @@ await step('maximize', true, async () => {
 })
 
 await step('drag', true, async () => {
-  await win(`w.setBounds({ x: 60, y: 60, width: 1100, height: 680 }); return true`)
+  await win(`w.setBounds({ x: 40, y: 40, width: 900, height: 600 }); return true`)
   await sleep(600)
   const i = await info()
   const pad = await page.evaluate(
@@ -288,7 +288,7 @@ await step('drag', true, async () => {
 })
 
 await step('snap', true, async () => {
-  await win(`w.setBounds({ x: 160, y: 120, width: 900, height: 600 }); w.focus(); return true`)
+  await win(`w.setBounds({ x: 120, y: 100, width: 760, height: 520 }); w.focus(); return true`)
   await sleep(600)
   const i = await info()
   input('click', centre(i))
@@ -297,7 +297,14 @@ await step('snap', true, async () => {
   const wa = display.workArea
   const snapped = await waitFor(async () => {
     const b = (await info())?.bounds
-    return b && Math.abs(b.x - wa.x) <= 12 && Math.abs(b.width - wa.width / 2) <= 24 ? b : null
+    // The left half, or the window's 640 minimum where half the screen is narrower than it.
+    const half = Math.max(wa.width / 2, 640)
+    return b &&
+      Math.abs(b.x - wa.x) <= 12 &&
+      Math.abs(b.width - half) <= 24 &&
+      b.height >= wa.height - 24
+      ? b
+      : null
   }, 4000)
   await sleep(500)
   shot('07-snap-left')
@@ -309,7 +316,7 @@ await step('snap', true, async () => {
 
 await step('drag-top', false, async () => {
   await win(
-    `w.unmaximize(); w.setBounds({ x: 160, y: 200, width: 900, height: 560 }); w.focus(); return true`
+    `w.unmaximize(); w.setBounds({ x: 120, y: 160, width: 760, height: 480 }); w.focus(); return true`
   )
   await sleep(800)
   const i = await info()
@@ -325,7 +332,7 @@ await step('drag-top', false, async () => {
 
 await step('close', true, async () => {
   await win(
-    `w.unmaximize(); w.setBounds({ x: 60, y: 60, width: 1100, height: 680 }); w.focus(); return true`
+    `w.unmaximize(); w.setBounds({ x: 40, y: 40, width: 900, height: 600 }); w.focus(); return true`
   ).catch(() => null)
   await sleep(800)
   const { i, p } = await reveal()
