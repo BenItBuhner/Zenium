@@ -95,6 +95,12 @@ const home = { x: wa.x + Math.round((wa.width - W) / 2), y: wa.y + 24, width: W,
 const place = () => win(`w.unmaximize(); w.setBounds(a); w.focus(); return true`, home)
 await place()
 await sleep(4000)
+// The default-browser banner across the top of the page: closed with its own X, off camera.
+{
+  const i = await info()
+  input('click', { X: px(i.content.x + i.content.width - 27), Y: px(i.content.y + 28) })
+  await sleep(1200)
+}
 
 const panel = () =>
   page.evaluate(() => {
@@ -120,7 +126,7 @@ const middle = (i) => ({ X: px(i.content.x + i.content.width * 0.6), Y: px(i.con
 const video = path.join(outDir, 'titlebar.mp4')
 const ff = spawn(
   args.ffmpeg ?? 'ffmpeg',
-  ['-y', '-f', 'gdigrab', '-framerate', '30', '-draw_mouse', '1', '-i', 'desktop',
+  ['-y', '-loglevel', 'error', '-f', 'gdigrab', '-framerate', '30', '-draw_mouse', '1', '-i', 'desktop',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', video],
   { stdio: ['pipe', 'inherit', 'inherit'] }
 )
@@ -188,7 +194,7 @@ try {
   await sleep(800)
   const dragBy = async (dx, dy) => {
     const before = await info()
-    const x = px(before.content.x + before.content.width * 0.55)
+    const x = px(before.content.x + before.content.width * 0.38)
     const y = px(before.content.y + 5)
     input('glide', { X: x, Y: y + 50 })
     await sleep(300)
