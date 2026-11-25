@@ -5253,6 +5253,8 @@ export interface UIState {
   /** Named agents that are not connected but still hold their tab groups. */
   awayAgents: AwayAgentInfo[]
   agentServer: AgentServerStatus
+  /** The built-in agent (`zen://ask`, `core/assistant`); absent on hosts that do not run it. */
+  assistant?: AssistantStatus
   /** The `zenium-browser` Agent Skill's install state per harness (`capabilities.agentSkills`). */
   agentSkills: AgentSkillStatus
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
@@ -7370,6 +7372,14 @@ export interface Commands {
     result: void
   }
 
+  /** Hand the built-in agent a task, or a follow-up on `taskId`; returns the task's id. */
+  'assistant.ask': { args: { prompt: string; taskId?: string }; result: string }
+  'assistant.stop': { args: { taskId: string }; result: void }
+  'assistant.remove': { args: { taskId: string }; result: void }
+  /** Store the user's Anthropic API key in the secret store; an empty key removes it. */
+  'assistant.setKey': { args: { key: string }; result: void }
+  'assistant.forgetFact': { args: { index: number }; result: void }
+  'assistant.clearMemory': { args: void; result: void }
   /** End an agent's session and release its tabs. */
   'agent.disconnect': { args: { id: string }; result: void }
   /**
@@ -8358,4 +8368,27 @@ export interface TabSearchCandidate {
   loading: boolean
   discarded: boolean
   lastActiveAt: number
+}
+
+/** One task of the built-in agent, as `zen://ask` shows it. */
+export interface AssistantTaskInfo {
+  id: string
+  title: string
+  status: 'running' | 'done' | 'failed' | 'stopped'
+  answer: string
+  error: string
+  createdAt: number
+  updatedAt: number
+  /** The user's words and the agent's answers, oldest first, without the tool calls between. */
+  conversation: { role: 'user' | 'assistant'; text: string }[]
+}
+
+export interface AssistantStatus {
+  /** Whether this device can hold an API key at all. */
+  available: boolean
+  hasKey: boolean
+  /** Facts the user agreed the agent may keep, oldest first. */
+  memory: string[]
+  /** Newest first. */
+  tasks: AssistantTaskInfo[]
 }

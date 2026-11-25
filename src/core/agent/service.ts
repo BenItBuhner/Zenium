@@ -706,6 +706,11 @@ export class AgentService implements SessionStore, McpHandlers {
   // State for the UI
   // ---------------------------------------------------------------------------
 
+  /** The connection token, for the built-in agent's in-process client (`core/assistant`). */
+  connectionToken(): string {
+    return this.token
+  }
+
   serverStatus(): AgentServerStatus {
     return this.status
   }

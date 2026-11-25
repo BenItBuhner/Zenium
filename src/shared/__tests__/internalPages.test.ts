@@ -42,7 +42,8 @@ describe('the page registry', () => {
       'pdf',
       'tasks',
       'version',
-      'game'
+      'game',
+      'ask'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Apps (the installed web
