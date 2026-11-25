@@ -645,7 +645,9 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
             data-surface="window"
             onPointerEnter={show}
             onPointerLeave={hide}
-            onClickCapture={() => {
+            // Bubbling, so the button's own click has run: the store's update re-renders at
+            // once and would take the button away before a capture-phase close let it fire.
+            onClick={() => {
               if (timer.current) clearTimeout(timer.current)
               timer.current = null
               closed()
