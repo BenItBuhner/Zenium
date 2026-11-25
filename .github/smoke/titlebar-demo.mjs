@@ -49,6 +49,7 @@ fs.writeFileSync(
     version: 2,
     settings: {
       onboardingDone: true,
+      defaultBrowserPromo: { sessions: 0, promptedAt: null, dismissals: 0, done: true, bannerAt: null },
       updates: { autoCheck: false, autoDownload: false, channel: 'stable' }
     }
   })
@@ -83,14 +84,14 @@ const px = (v) => Math.round(v * scale)
 log('display', JSON.stringify(display))
 
 // A couple of real pages so the window looks lived in.
-for (const url of ['https://en.wikipedia.org/wiki/Web_browser', 'https://example.com']) {
+for (const url of ['https://example.com', 'https://en.wikipedia.org/wiki/Web_browser']) {
   await page.evaluate((u) => window.zen.invoke('tab.create', { url: u }), url).catch((e) => log(e))
-  await sleep(500)
+  await sleep(800)
 }
 const wa = display.workArea
-const W = Math.min(980, wa.width - 80)
-const H = Math.min(660, wa.height - 80)
-const home = { x: wa.x + Math.round((wa.width - W) / 2), y: wa.y + 40, width: W, height: H }
+const W = Math.min(1200, wa.width - 48)
+const H = Math.min(800, wa.height - 48)
+const home = { x: wa.x + Math.round((wa.width - W) / 2), y: wa.y + 24, width: W, height: H }
 const place = () => win(`w.unmaximize(); w.setBounds(a); w.focus(); return true`, home)
 await place()
 await sleep(4000)
@@ -185,10 +186,14 @@ try {
   i = await info()
   const gx = px(i.content.x + i.content.width * 0.55)
   const gy = px(i.content.y + 5)
-  input('glide', { X: gx, Y: gy + 40 })
-  input('drag', { X: gx, Y: gy, X2: gx - px(120), Y2: gy + px(60) })
-  await sleep(1200)
-  input('drag', { X: gx - px(108), Y: gy + px(56), X2: gx - px(8), Y2: gy + px(6) })
+  input('glide', { X: gx, Y: gy + 60 })
+  await sleep(400)
+  input('drag', { X: gx, Y: gy, X2: gx - px(90), Y2: gy + px(40) })
+  await sleep(2000)
+  i = await info()
+  const hx = px(i.content.x + i.content.width * 0.55)
+  const hy = px(i.content.y + 5)
+  input('drag', { X: hx, Y: hy, X2: hx + px(90), Y2: hy - px(40) })
   await sleep(1500)
 
   mark('With the toolbar row turned on, the buttons sit in its corner instead')
@@ -214,5 +219,6 @@ try {
   ff.stdin.write('q')
   await new Promise((r) => ff.on('exit', r))
   fs.writeFileSync(path.join(outDir, 'steps.json'), JSON.stringify({ display, steps }, null, 2))
-  await app.close().catch(() => null)
+  await Promise.race([app.close().catch(() => null), sleep(5000)])
+  process.exit(process.exitCode ?? 0)
 }
