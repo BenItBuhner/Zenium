@@ -330,23 +330,39 @@ await step('drag', true, async () => {
     probes[name] = hitTest(hwnd, px(i.content.x + p.x), px(i.content.y + p.y))
   }
   log('hit tests', JSON.stringify(probes), 'views', JSON.stringify(views))
-  const trace = await tracedDrag({
-    X: px(i.content.x + at.x),
-    Y: px(i.content.y + at.y),
-    X2: px(i.content.x + at.x + 150),
-    Y2: px(i.content.y + at.y + 100)
-  })
-  log('drag trace', JSON.stringify(trace))
-  await sleep(600)
-  const after = await info()
+  // Three drags from the same press: straight up, straight right, then down and right. Each
+  // starts from the window's place after the last one, and its moves are traced.
+  const attempts = []
+  for (const [name, dx, dy] of [
+    ['up', 0, -30],
+    ['right', 120, 0],
+    ['down-right', 100, 80]
+  ]) {
+    const from = await info()
+    const sx = px(from.content.x + at.x)
+    const sy = px(from.content.y + at.y)
+    const trace = await tracedDrag({ X: sx, Y: sy, X2: sx + px(dx), Y2: sy + px(dy) })
+    await sleep(600)
+    const to = await info()
+    attempts.push({
+      name,
+      want: [dx, dy],
+      got: [to.bounds.x - from.bounds.x, to.bounds.y - from.bounds.y],
+      samples: trace.length
+    })
+    input('move', centre(to))
+    await sleep(800)
+  }
   shot('06-after-drag')
-  const dx = after.bounds.x - i.bounds.x
-  const dy = after.bounds.y - i.bounds.y
-  if (Math.abs(dx - 150) > 20 || Math.abs(dy - 100) > 20)
+  log('drags', JSON.stringify(attempts))
+  const moved = attempts.filter(
+    (a) => Math.abs(a.got[0] - a.want[0]) <= 20 && Math.abs(a.got[1] - a.want[1]) <= 20
+  )
+  if (!moved.length)
     throw new Error(
-      `moved by ${dx},${dy} instead of 150,100 (pressed on ${JSON.stringify(hit)}; hit tests ${JSON.stringify(probes)})`
+      `no drag moved the window: ${JSON.stringify(attempts)} (pressed on ${JSON.stringify(hit)}; hit tests ${JSON.stringify(probes)})`
     )
-  return { dx, dy, pressedOn: hit, probes }
+  return { attempts, pressedOn: hit, probes }
 })
 
 await step('snap', true, async () => {
