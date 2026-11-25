@@ -909,7 +909,7 @@ const zenStatus: AgentTool = {
   }
 }
 
-const SESSION_ACTIONS = ['start', 'resume', 'status', 'end', 'rename'] as const
+const SESSION_ACTIONS = ['start', 'resume', 'status', 'end', 'rename', 'list', 'mode'] as const
 type SessionAction = (typeof SESSION_ACTIONS)[number]
 const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
   start: 'start',
@@ -935,7 +935,33 @@ const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
   finish: 'end',
   rename: 'rename',
   name: 'rename',
-  setname: 'rename'
+  setname: 'rename',
+  list: 'list',
+  ls: 'list',
+  sessions: 'list',
+  all: 'list',
+  mode: 'mode',
+  setmode: 'mode'
+}
+
+/** "3 min ago", "2 h ago", "4 d ago": how long since something was last seen. */
+function ago(ms: number, now = Date.now()): string {
+  const min = Math.max(0, Math.round((now - ms) / 60_000))
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} d ago`
+}
+
+export function listSessions(ctx: ToolContext): string {
+  const all = ctx.agents.durableSessions()
+  if (!all.length) return 'No sessions in this browser yet.'
+  const mine = ctx.agents.claimOf(ctx.session)?.name
+  const lines = all.map(
+    (x) =>
+      `- ${JSON.stringify(x.name)}${x.name === mine ? ' (you)' : ''}: ${x.live ? 'connected' : 'paused'}, ${x.mode}, ${x.tabs} tab${x.tabs === 1 ? '' : 's'} in ${x.groups} group${x.groups === 1 ? '' : 's'}, last active ${ago(x.lastSeenAt)}`
+  )
+  return `Sessions in this browser, most recent first:\n${lines.join('\n')}\n\nA paused session is picked up again with zen_session {"action":"resume","key":"…"}, or by starting under exactly its name with the connection token.`
 }
 
 const zenSession: AgentTool = {
@@ -943,7 +969,7 @@ const zenSession: AgentTool = {
     name: 'zen_session',
     title: 'Your session',
     description:
-      'Your session in this browser. Call {"action":"start","name":"…"} first: name yourself after the task you are doing (e.g. "Invoice reconciliation", "PR 741 review") – generic names such as "Agent", "Claude" or "Cursor" are refused, and nothing but zen_status works until you have started. A started session is durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections, and no other agent can adopt them, until you end it; the answer gives your session key. "resume" {key}: carry your session over to this connection after a reconnect that lost it (the key from start or zen_status); without the key, start again under exactly the same name and you get the same session back. "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt. "rename" {name}: change your name (the same rules as start).',
+      'Your session in this browser. Call {"action":"start","name":"…"} first: name yourself after the task you are doing (e.g. "Invoice reconciliation", "PR 741 review") – generic names such as "Agent", "Claude" or "Cursor" are refused, and nothing but zen_status works until you have started. A started session is durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections, and no other agent can adopt them, until you end it; the answer gives your session key. "resume" {key}: carry your session over to this connection after a reconnect that lost it (the key from start or zen_status); without the key, start again under exactly the same name and you get the same session back. "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt. "rename" {name}: change your name (the same rules as start). "list": every session in this browser, connected or paused, with its tabs – to find one to pick up. "mode" {mode, takeScreen}: the same as zen_mode. Changed: list and mode are new; zen_mode stays as an alias.',
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...SESSION_ACTIONS] },
@@ -953,6 +979,15 @@ const zenSession: AgentTool = {
             'start, rename: a specific, descriptive name for what you are doing (6–48 characters)'
         },
         key: { type: 'string', description: 'resume: your session key ("zk_…")' },
+        mode: {
+          type: 'string',
+          enum: ['foreground', 'background'],
+          description: 'mode: foreground or background (see zen_mode)'
+        },
+        takeScreen: {
+          type: 'boolean',
+          description: 'mode: with foreground, bring your tab in front of the user (see zen_mode)'
+        },
         closeTabs: {
           type: 'boolean',
           description:
@@ -973,6 +1008,8 @@ const zenSession: AgentTool = {
       )
     const s = ctx.session
     if (action === 'status') return text(statusText(ctx))
+    if (action === 'list') return text(listSessions(ctx))
+    if (action === 'mode') return zenMode.run(ctx, args)
     if (action === 'start') {
       const { claim, resumed } = ctx.agents.startClaim(s, str(args, 'name') ?? '')
       if (resumed)
@@ -2934,6 +2971,34 @@ const zenHistory: AgentTool = {
   }
 }
 
+const zenDevices: AgentTool = {
+  definition: {
+    name: 'zen_devices',
+    title: 'Your devices',
+    description:
+      'The browsers on this Zenium account: this one and the other devices the account or the sync folder knows, with when each was last seen. Every tool acts on this browser; reaching another device takes the hosted relay, and the answer says when it is not connected. Changed: new tool.',
+    inputSchema: schema({}),
+    annotations: { readOnlyHint: true, openWorldHint: false }
+  },
+  async run(ctx) {
+    const status = ctx.browser.sync.status()
+    const lines = [
+      `- ${JSON.stringify(status.deviceName || 'This browser')} (this browser, online)`
+    ]
+    for (const d of status.devices)
+      if (d.id !== status.deviceId)
+        lines.push(
+          `- ${JSON.stringify(d.name)}${d.kind ? ` (${d.kind})` : ''}: last seen ${ago(d.lastSeen)}`
+        )
+    const account = status.account
+      ? `Signed in as ${status.account.email}.`
+      : 'Not signed in to a Zenium account.'
+    return text(
+      `${account}\n${lines.join('\n')}\n\nOther devices can be driven once the hosted relay is connected; until then, connect to each browser's own MCP server.`
+    )
+  }
+}
+
 export const AGENT_TOOLS: AgentTool[] = [
   zenStatus,
   browserTabs,
@@ -2959,6 +3024,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserFileUpload,
   zenGroups,
   zenSession,
+  zenDevices,
   zenSpaces,
   zenMode,
   zenHistory
