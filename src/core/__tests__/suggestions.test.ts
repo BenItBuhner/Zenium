@@ -1692,12 +1692,12 @@ describe('SuggestionService: typo fixes and the agent row', () => {
     )
   })
 
-  it('offers "Ask Zenium" for a question only once a key is set, and never in private', async () => {
+  it('offers "Ask Zenium" for a question only once a model service is set up, and never in private', async () => {
     const { suggestions, win } = setup()
     const browser = (suggestions as unknown as { browser: { assistant?: unknown } }).browser
     const q = 'what is the tallest building in oslo'
     expect((await suggestions.suggest(q, null, win)).some((r) => r.kind === 'ask')).toBe(false)
-    browser.assistant = { status: () => ({ hasKey: true }) }
+    browser.assistant = { status: () => ({ provider: {} }) }
     const rows = await suggestions.suggest(q, null, win)
     expect(rows[0].kind).toBe('search')
     expect(rows.find((r) => r.kind === 'ask')).toMatchObject({ title: q, subtitle: 'Ask Zenium' })
@@ -1706,7 +1706,7 @@ describe('SuggestionService: typo fixes and the agent row', () => {
     )
     const priv = setup('private')
     ;(priv.suggestions as unknown as { browser: { assistant?: unknown } }).browser.assistant = {
-      status: () => ({ hasKey: true })
+      status: () => ({ provider: {} })
     }
     expect((await priv.suggestions.suggest(q, null, priv.win)).some((r) => r.kind === 'ask')).toBe(
       false

@@ -1,23 +1,26 @@
 /**
- * The built-in agent's loop: Claude, the browser's own MCP tools, and one local tool
- * (`remember`). It runs one step at a time and hands its state back after each one, so the
- * caller can save it and pick the task up again after a restart – or, once the hosted relay is
- * deployed, on the server, where the same loop drives the user's browsers through it.
+ * The built-in agent's loop: a model the user chose (`providers.ts`), the browser's own MCP
+ * tools, and one local tool (`remember`). It runs one step at a time and hands its state back
+ * after each one, so the caller can save it and pick the task up again after a restart – or,
+ * once the hosted relay is deployed, on the server, where the same loop drives the user's
+ * browsers through it.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import type { McpClient, McpToolResult } from './mcpClient'
+import {
+  ProviderError,
+  type ModelClient,
+  type ToolOutput,
+  type ToolSpec,
+  type Turn
+} from './providers'
 
-export const ASSISTANT_MODEL = 'claude-opus-5-5'
 /** Tool calls one task may make before it stops and says so. */
 export const MAX_STEPS = 50
 export const MAX_MEMORY_FACTS = 50
 export const MAX_FACT_CHARS = 200
 
-type MessageParam = Anthropic.Beta.BetaMessageParam
-type ContentBlock = Anthropic.Beta.BetaContentBlock
-
 export interface LoopState {
-  messages: MessageParam[]
+  turns: Turn[]
   steps: number
 }
 
@@ -25,20 +28,19 @@ export type StepOutcome =
   { kind: 'continue' } | { kind: 'done'; answer: string } | { kind: 'failed'; error: string }
 
 export interface LoopDeps {
-  anthropic: Anthropic
+  model: ModelClient
   mcp: McpClient
   /** The facts the user agreed the agent may keep, oldest first. */
   memory: () => string[]
   remember: (fact: string) => string
   /** The user's search engine, so answers come from what they would see. */
   searchEngine: string
-  now?: () => Date
 }
 
-const REMEMBER_TOOL: Anthropic.Beta.BetaTool = {
+const REMEMBER_TOOL: ToolSpec = {
   name: 'remember',
   description: `Save one short fact about the user for later conversations (at most ${MAX_FACT_CHARS} characters, ${MAX_MEMORY_FACTS} facts in all; the oldest goes when full). Only call this after the user said yes to keeping it.`,
-  input_schema: {
+  parameters: {
     type: 'object',
     properties: { fact: { type: 'string' } },
     required: ['fact']
@@ -59,31 +61,14 @@ export function systemPrompt(deps: Pick<LoopDeps, 'memory' | 'searchEngine'>): s
     .join('\n\n')
 }
 
-function toolResultContent(
-  result: McpToolResult
-): Anthropic.Beta.BetaToolResultBlockParam['content'] {
-  const out: Exclude<Anthropic.Beta.BetaToolResultBlockParam['content'], string | undefined> = []
-  for (const c of result.content ?? []) {
-    if (c.type === 'text' && c.text) out.push({ type: 'text', text: c.text })
-    else if (c.type === 'image' && c.data && c.mimeType)
-      out.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: c.mimeType as 'image/png' | 'image/jpeg',
-          data: c.data
-        }
-      })
-  }
-  return out.length ? out : [{ type: 'text', text: '(no output)' }]
-}
-
-function textOf(content: ContentBlock[]): string {
-  return content
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n')
-    .trim()
+function outputOf(result: McpToolResult): ToolOutput[] {
+  return (result.content ?? []).flatMap((c): ToolOutput[] =>
+    c.type === 'text' && c.text
+      ? [{ type: 'text' as const, text: c.text }]
+      : c.type === 'image' && c.data
+        ? [{ type: 'image' as const, data: c.data, mimeType: c.mimeType }]
+        : []
+  )
 }
 
 /**
@@ -93,7 +78,7 @@ function textOf(content: ContentBlock[]): string {
 export async function step(
   state: LoopState,
   deps: LoopDeps,
-  tools: Anthropic.Beta.BetaTool[],
+  tools: ToolSpec[],
   signal?: AbortSignal
 ): Promise<StepOutcome> {
   if (state.steps >= MAX_STEPS)
@@ -101,77 +86,61 @@ export async function step(
       kind: 'done',
       answer: `I stopped after ${MAX_STEPS} steps without finishing. Tell me to continue, or narrow the task.`
     }
-  let response: Anthropic.Beta.BetaMessage
+  let reply
   try {
-    response = await deps.anthropic.beta.messages.create(
-      {
-        model: ASSISTANT_MODEL,
-        max_tokens: 16000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
-        output_config: { effort: 'medium' },
-        cache_control: { type: 'ephemeral' },
-        system: systemPrompt(deps),
-        tools: [...tools, REMEMBER_TOOL],
-        messages: state.messages
-      },
-      { signal }
+    reply = await deps.model.turn(
+      systemPrompt(deps),
+      [...tools, REMEMBER_TOOL],
+      state.turns,
+      signal
     )
   } catch (error) {
-    if (error instanceof Anthropic.AuthenticationError)
-      return { kind: 'failed', error: 'The API key was refused. Check it in Settings → Agent.' }
-    if (error instanceof Anthropic.RateLimitError)
-      return { kind: 'failed', error: 'The API is rate limiting this key. Try again in a minute.' }
-    if (error instanceof Anthropic.APIError)
-      return { kind: 'failed', error: `The model could not answer (HTTP ${error.status}).` }
+    if (error instanceof ProviderError) return { kind: 'failed', error: error.message }
     return { kind: 'failed', error: error instanceof Error ? error.message : String(error) }
   }
-  state.messages.push({ role: 'assistant', content: response.content })
-  if (response.stop_reason === 'refusal')
-    return { kind: 'done', answer: textOf(response.content) || 'I can’t help with that one.' }
-  const calls = response.content.filter(
-    (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use'
-  )
-  if (response.stop_reason !== 'tool_use' || calls.length === 0)
-    return { kind: 'done', answer: textOf(response.content) }
-  const results: Anthropic.Beta.BetaToolResultBlockParam[] = []
-  for (const call of calls) {
+  state.turns.push({ role: 'assistant', text: reply.text, calls: reply.calls })
+  if (reply.refused) return { kind: 'done', answer: reply.text || 'I can’t help with that one.' }
+  if (reply.calls.length === 0) return { kind: 'done', answer: reply.text }
+  const results: Extract<Turn, { role: 'tool' }>['results'] = []
+  for (const call of reply.calls) {
     state.steps++
-    const input = (call.input ?? {}) as Record<string, unknown>
     try {
       if (call.name === 'remember') {
-        const fact = typeof input.fact === 'string' ? input.fact : ''
-        results.push({ type: 'tool_result', tool_use_id: call.id, content: deps.remember(fact) })
+        const fact = typeof call.input.fact === 'string' ? call.input.fact : ''
+        results.push({
+          id: call.id,
+          name: call.name,
+          content: [{ type: 'text', text: deps.remember(fact) }]
+        })
         continue
       }
-      const result = await deps.mcp.callTool(call.name, input)
+      const result = await deps.mcp.callTool(call.name, call.input)
       results.push({
-        type: 'tool_result',
-        tool_use_id: call.id,
-        content: toolResultContent(result),
-        is_error: result.isError || undefined
+        id: call.id,
+        name: call.name,
+        content: outputOf(result),
+        isError: result.isError || undefined
       })
     } catch (error) {
       results.push({
-        type: 'tool_result',
-        tool_use_id: call.id,
-        content: error instanceof Error ? error.message : String(error),
-        is_error: true
+        id: call.id,
+        name: call.name,
+        content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+        isError: true
       })
     }
   }
-  // Every result of the turn in one user message.
-  state.messages.push({ role: 'user', content: results })
+  state.turns.push({ role: 'tool', results })
   return { kind: 'continue' }
 }
 
-/** The browser's MCP tools as the Messages API takes them. */
-export async function loadTools(mcp: McpClient): Promise<Anthropic.Beta.BetaTool[]> {
+/** The browser's MCP tools as the model adapters take them. */
+export async function loadTools(mcp: McpClient): Promise<ToolSpec[]> {
   const tools = await mcp.listTools()
   return tools.map((t) => ({
     name: t.name,
     description: t.description ?? t.name,
-    input_schema: { type: 'object', ...t.inputSchema } as Anthropic.Beta.BetaTool.InputSchema
+    parameters: { type: 'object', ...t.inputSchema }
   }))
 }
 
@@ -187,26 +156,13 @@ export function addFact(facts: string[], fact: string): { facts: string[]; messa
 
 /**
  * Add the user's follow-up to a conversation, keeping it valid: a model turn whose tool calls
- * never got their results (the task was stopped in the middle) is dropped, and a follow-up right
- * after tool results joins that same user turn.
+ * never got their results (the task was stopped in the middle) loses those calls.
  */
 export function appendUser(state: LoopState, text: string): void {
-  const last = state.messages.at(-1)
-  if (
-    last?.role === 'assistant' &&
-    Array.isArray(last.content) &&
-    last.content.some((b) => b.type === 'tool_use')
-  ) {
-    state.messages.pop()
-    return appendUser(state, text)
+  const last = state.turns.at(-1)
+  if (last?.role === 'assistant' && last.calls.length) {
+    last.calls = []
+    if (!last.text) state.turns.pop()
   }
-  if (last?.role === 'user') {
-    const blocks =
-      typeof last.content === 'string'
-        ? [{ type: 'text' as const, text: last.content }]
-        : last.content
-    last.content = [...blocks, { type: 'text', text }]
-    return
-  }
-  state.messages.push({ role: 'user', content: text })
+  state.turns.push({ role: 'user', text })
 }

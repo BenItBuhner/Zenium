@@ -1,21 +1,28 @@
 /**
- * The built-in agent (`zen://ask`): tasks the user hands Zenium in plain words, run by Claude on
- * the user's own Anthropic API key through the browser's own MCP tools (`McpClient` +
- * `inProcess`), so it follows exactly the rules an outside agent does – its own named session,
- * its own tabs, the approval prompts, the cookie switches.
+ * The built-in agent (`zen://ask`): tasks the user hands Zenium in plain words, run by a model
+ * service the user sets up – any endpoint speaking the Anthropic Messages API or the OpenAI
+ * Responses API, with its address, key and model (`providers.ts`) – through the browser's own
+ * MCP tools (`McpClient` + `inProcess`), so it follows exactly the rules an outside agent does:
+ * its own named session, its own tabs, the approval prompts, the cookie switches.
  *
  * Each task's conversation is saved after every step (`assistant.json`), so a task the browser
  * quit in the middle of carries on at the next start. The key lives in the secret store, never
  * in the JSON. Memory is a short list of facts the user agreed to keep, shown and editable on
  * the page, at most `MAX_MEMORY_FACTS` of `MAX_FACT_CHARS` characters.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import type { AssistantStatus, AssistantTaskInfo } from '../../shared/types'
 import { JsonStore } from '../store/JsonStore'
 import type { SecretStore, StoreIO } from '../platform'
 import type { AgentHttpRequest, AgentHttpResponse } from '../agent/http'
 import { McpClient, inProcess } from './mcpClient'
 import { addFact, appendUser, loadTools, step, type LoopState } from './loop'
+import {
+  DEFAULT_BASE_URLS,
+  modelClient,
+  type ModelClient,
+  type ProviderConfig,
+  type ProviderKind
+} from './providers'
 
 export const API_KEY_SECRET = 'assistant.apiKey'
 export const ASSISTANT_FILE = 'assistant.json'
@@ -34,10 +41,11 @@ interface StoredTask {
 }
 
 interface Persisted {
-  version: 1
+  version: 1 | 2
   memory: string[]
   tasks: StoredTask[]
   hasKey?: boolean
+  provider?: ProviderConfig | null
 }
 
 export interface AssistantHost {
@@ -49,7 +57,7 @@ export interface AssistantHost {
   /** Something on the page changed. */
   changed: () => void
   /** Swappable for tests. */
-  makeClient?: (apiKey: string) => Anthropic
+  makeClient?: (config: ProviderConfig, apiKey: string) => ModelClient
 }
 
 function titleOf(prompt: string): string {
@@ -60,16 +68,10 @@ function titleOf(prompt: string): string {
 /** What the page shows of a task: the user's words and the model's answers, no tool traffic. */
 export function conversationOf(state: LoopState): AssistantTaskInfo['conversation'] {
   const out: AssistantTaskInfo['conversation'] = []
-  for (const m of state.messages) {
-    if (m.role !== 'user' && m.role !== 'assistant') continue
-    const blocks =
-      typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : (m.content ?? [])
-    if (m.role === 'assistant' && blocks.some((b) => b.type === 'tool_use')) continue
-    const text = blocks
-      .flatMap((b) => (b.type === 'text' && 'text' in b ? [b.text] : []))
-      .join('\n')
-      .trim()
-    if (text) out.push({ role: m.role, text })
+  for (const t of state.turns) {
+    if (t.role === 'user') out.push({ role: 'user', text: t.text })
+    else if (t.role === 'assistant' && !t.calls.length && t.text)
+      out.push({ role: 'assistant', text: t.text })
   }
   return out
 }
@@ -79,18 +81,25 @@ export class AssistantService {
   private memory: string[] = []
   private tasks: StoredTask[] = []
   private hasKey = false
+  private provider: ProviderConfig | null = null
   private readonly running = new Map<string, AbortController>()
   private mcp: McpClient | null = null
 
   constructor(private readonly host: AssistantHost) {
     this.store = new JsonStore<Persisted>(host.io, ASSISTANT_FILE, 300)
     const data = this.store.readSync()
-    if (data?.version === 1) {
+    // Version 1 kept Anthropic-only conversations: its memory carries over, its tasks do not.
+    if (data?.version === 1 || data?.version === 2) {
       this.memory = Array.isArray(data.memory)
         ? data.memory.filter((f) => typeof f === 'string')
         : []
-      this.tasks = Array.isArray(data.tasks) ? data.tasks.filter((t) => t && t.id && t.state) : []
-      this.hasKey = data.hasKey === true
+      if (data.version === 2) {
+        this.tasks = Array.isArray(data.tasks)
+          ? data.tasks.filter((t) => t && t.id && Array.isArray(t.state?.turns))
+          : []
+        this.hasKey = data.hasKey === true
+        this.provider = sanitizeProvider(data.provider)
+      }
     }
   }
 
@@ -106,6 +115,7 @@ export class AssistantService {
     return {
       available: Boolean(this.host.secrets),
       hasKey: this.hasKey,
+      provider: this.provider,
       memory: [...this.memory],
       tasks: this.tasks
         .map((t) => ({
@@ -122,13 +132,29 @@ export class AssistantService {
     }
   }
 
-  async setKey(key: string): Promise<void> {
+  /**
+   * Set up the model service: which API it speaks, its address and model, and – when `key` is
+   * given – its key (an empty key removes it). `null` forgets the service and its key.
+   */
+  async setProvider(config: ProviderConfig | null, key?: string): Promise<void> {
     const secrets = this.host.secrets
     if (!secrets) throw new Error('This device has no secret store for an API key')
-    const k = key.trim()
-    if (k) await secrets.set(API_KEY_SECRET, k)
-    else await secrets.delete(API_KEY_SECRET)
-    this.hasKey = Boolean(k)
+    if (!config) {
+      await secrets.delete(API_KEY_SECRET)
+      this.provider = null
+      this.hasKey = false
+      this.save()
+      return
+    }
+    const clean = sanitizeProvider(config)
+    if (!clean) throw new Error('Name the API, its address and a model')
+    this.provider = clean
+    if (key !== undefined) {
+      const k = key.trim()
+      if (k) await secrets.set(API_KEY_SECRET, k)
+      else await secrets.delete(API_KEY_SECRET)
+      this.hasKey = Boolean(k)
+    }
     this.save()
   }
 
@@ -152,7 +178,7 @@ export class AssistantService {
         error: '',
         createdAt: now,
         updatedAt: now,
-        state: { messages: [{ role: 'user', content: text }], steps: 0 }
+        state: { turns: [{ role: 'user', text }], steps: 0 }
       }
       this.tasks.push(task)
       this.trim()
@@ -206,7 +232,13 @@ export class AssistantService {
   }
 
   private save(): void {
-    this.store.write({ version: 1, memory: this.memory, tasks: this.tasks, hasKey: this.hasKey })
+    this.store.write({
+      version: 2,
+      memory: this.memory,
+      tasks: this.tasks,
+      hasKey: this.hasKey,
+      provider: this.provider
+    })
     this.host.changed()
   }
 
@@ -216,24 +248,25 @@ export class AssistantService {
   }
 
   private async run(task: StoredTask): Promise<void> {
-    const key = await this.host.secrets?.get(API_KEY_SECRET)
-    if (!key) {
-      this.hasKey = false
+    const provider = this.provider
+    if (!provider) {
       this.finish(task, {
         status: 'failed',
-        error: 'Add your Anthropic API key on this page to use the built-in agent.'
+        error: 'Set up a model service on this page to use the built-in agent.'
       })
       return
     }
+    // A local server may need no key; any other service refuses the call and says so.
+    const key = (await this.host.secrets?.get(API_KEY_SECRET)) ?? ''
     const controller = new AbortController()
     this.running.set(task.id, controller)
     // One MCP connection for every task: the browser sees one agent, "Zenium agent".
     const mcp = (this.mcp ??= new McpClient(inProcess(this.host.handleHttp, this.host.agentToken)))
-    const anthropic = this.host.makeClient?.(key) ?? new Anthropic({ apiKey: key })
+    const model = this.host.makeClient?.(provider, key) ?? modelClient(provider, key)
     try {
       const tools = await loadTools(mcp)
       const deps = {
-        anthropic,
+        model,
         mcp,
         searchEngine: this.host.searchEngine(),
         memory: () => this.memory,
@@ -266,4 +299,23 @@ export class AssistantService {
       if (this.running.get(task.id) === controller) this.running.delete(task.id)
     }
   }
+}
+
+/** A provider setting as stored or sent: a known API, an http(s) address, a model name. */
+export function sanitizeProvider(value: unknown): ProviderConfig | null {
+  if (!value || typeof value !== 'object') return null
+  const v = value as Partial<ProviderConfig>
+  const kind: ProviderKind | null = v.kind === 'anthropic' || v.kind === 'openai' ? v.kind : null
+  if (!kind) return null
+  const model = typeof v.model === 'string' ? v.model.trim().slice(0, 200) : ''
+  if (!model) return null
+  let baseUrl = typeof v.baseUrl === 'string' && v.baseUrl.trim() ? v.baseUrl.trim() : ''
+  if (!baseUrl) baseUrl = DEFAULT_BASE_URLS[kind]
+  try {
+    const u = new URL(baseUrl)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+  } catch {
+    return null
+  }
+  return { kind, baseUrl: baseUrl.replace(/\/+$/, ''), model }
 }

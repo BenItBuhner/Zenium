@@ -88,7 +88,7 @@ export const RELEVANCE = {
   history: 880,
   /** "Did you mean github.com?" (`shared/typoFix.ts`): under what was typed, never the default. */
   typoFix: 1295,
-  /** "Ask Zenium" for text that reads as a question: right under the verbatim rows. */
+  /** "Ask Zenium" for text that reads as a question, once a model service is set up. */
   ask: 1245
 } as const
 
@@ -342,7 +342,12 @@ export class SuggestionService {
     }
 
     // A question or a task: hand it to the built-in agent, when it has a key.
-    if (!keyword && !isPrivate && this.browser.assistant?.status().hasKey && looksLikeAsk(query)) {
+    if (
+      !keyword &&
+      !isPrivate &&
+      this.browser.assistant?.status().provider &&
+      looksLikeAsk(query)
+    ) {
       rows.push({
         id: 'ask',
         kind: 'ask',

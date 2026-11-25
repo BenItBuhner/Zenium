@@ -5388,7 +5388,7 @@ export type SuggestionKind =
   | 'folder'
   /**
    * Hand the typed text to the built-in agent (`zen://ask`, `core/assistant`): offered when the
-   * text reads as a question or a task and an API key is set; the pick is `assistant.ask` with
+   * text reads as a question or a task and a model service is set up; the pick is `assistant.ask` with
    * `open`, landing on the task's page.
    */
   | 'ask'
@@ -7386,8 +7386,15 @@ export interface Commands {
   }
   'assistant.stop': { args: { taskId: string }; result: void }
   'assistant.remove': { args: { taskId: string }; result: void }
-  /** Store the user's Anthropic API key in the secret store; an empty key removes it. */
-  'assistant.setKey': { args: { key: string }; result: void }
+  /**
+   * Set up the built-in agent's model service (any Anthropic Messages or OpenAI Responses
+   * endpoint): `key`, when given, goes to the secret store (empty removes it); `provider: null`
+   * forgets the service and its key.
+   */
+  'assistant.setProvider': {
+    args: { provider: AssistantProvider | null; key?: string }
+    result: void
+  }
   'assistant.forgetFact': { args: { index: number }; result: void }
   'assistant.clearMemory': { args: void; result: void }
   /** End an agent's session and release its tabs. */
@@ -8393,10 +8400,19 @@ export interface AssistantTaskInfo {
   conversation: { role: 'user' | 'assistant'; text: string }[]
 }
 
+/** The model service the built-in agent talks to; the key is kept apart, in the secret store. */
+export interface AssistantProvider {
+  /** Which API the service speaks: Anthropic's Messages API or OpenAI's Responses API. */
+  kind: 'anthropic' | 'openai'
+  baseUrl: string
+  model: string
+}
+
 export interface AssistantStatus {
   /** Whether this device can hold an API key at all. */
   available: boolean
   hasKey: boolean
+  provider: AssistantProvider | null
   /** Facts the user agreed the agent may keep, oldest first. */
   memory: string[]
   /** Newest first. */

@@ -4464,7 +4464,7 @@ export class Browser {
       },
       'assistant.stop': ({ taskId }) => this.assistant.stop(taskId),
       'assistant.remove': ({ taskId }) => this.assistant.remove(taskId),
-      'assistant.setKey': ({ key }) => this.assistant.setKey(key),
+      'assistant.setProvider': ({ provider, key }) => this.assistant.setProvider(provider, key),
       'assistant.forgetFact': ({ index }) => this.assistant.forgetFact(index),
       'assistant.clearMemory': () => this.assistant.clearMemory(),
       'agent.disconnect': ({ id }) => this.agents.disconnect(id),

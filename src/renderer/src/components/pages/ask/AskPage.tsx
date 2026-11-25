@@ -1,16 +1,28 @@
 import type { FormEvent, JSX } from 'react'
 import { useState } from 'react'
 import { parseInternalPageUrl } from '@shared/internalPages'
-import type { AssistantStatus, AssistantTaskInfo, Tab, UIState } from '@shared/types'
+import type {
+  AssistantProvider,
+  AssistantStatus,
+  AssistantTaskInfo,
+  Tab,
+  UIState
+} from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { PageColumn, PageEmpty, PageGroup, PageTitleBlock } from '../PageFrame'
 
-const EMPTY: AssistantStatus = { available: false, hasKey: false, memory: [], tasks: [] }
+const EMPTY: AssistantStatus = {
+  available: false,
+  hasKey: false,
+  provider: null,
+  memory: [],
+  tasks: []
+}
 
 /**
  * Ask Zenium (`zen://ask?task=<id>`, `core/assistant`): one task at a time – the question, the
  * answer, a field for the follow-up – with the earlier tasks under it, then what the agent
- * remembers and the API key. The address bar's "Ask Zenium" row lands here with `task` set.
+ * remembers and the model service it runs on. The address bar's "Ask Zenium" row lands here with `task` set.
  */
 export function AskPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const status = state.assistant ?? EMPTY
@@ -29,7 +41,7 @@ export function AskPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Eleme
       header={
         <PageTitleBlock
           title="Ask Zenium"
-          description="An agent that works in tabs of its own, with your search engine, on your Anthropic API key. It asks before it sends, buys, posts or deletes anything."
+          description="An agent that works in tabs of its own, with your search engine, on the model service you choose. It asks before it sends, buys, posts or deletes anything."
           actions={
             task && (
               <button type="button" className="zen-v2-button" onClick={() => setSelected(null)}>
@@ -40,8 +52,8 @@ export function AskPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Eleme
         />
       }
     >
-      {!status.hasKey ? (
-        <KeyForm available={status.available} />
+      {!status.provider ? (
+        <ServiceForm status={status} />
       ) : (
         <>
           {task ? <TaskView task={task} /> : <Composer onAsked={setSelected} />}
@@ -64,18 +76,7 @@ export function AskPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Eleme
             </PageGroup>
           )}
           <Memory memory={status.memory} />
-          <PageGroup heading="API key" headingId="zen-ask-key">
-            <div className="zen-ask-row">
-              <span>Saved on this device</span>
-              <button
-                type="button"
-                className="zen-v2-button"
-                onClick={() => run('assistant.setKey', { key: '' })}
-              >
-                Remove
-              </button>
-            </div>
-          </PageGroup>
+          <ServiceSummary status={status} />
         </>
       )}
     </PageColumn>
@@ -180,29 +181,149 @@ function Memory({ memory }: { memory: string[] }): JSX.Element {
   )
 }
 
-function KeyForm({ available }: { available: boolean }): JSX.Element {
+const KINDS: { id: AssistantProvider['kind']; label: string; baseUrl: string }[] = [
+  {
+    id: 'openai',
+    label: 'OpenAI-compatible (Responses API)',
+    baseUrl: 'https://api.openai.com/v1'
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic-compatible (Messages API)',
+    baseUrl: 'https://api.anthropic.com'
+  }
+]
+
+/** The service in use, with Change (the form again, filled in) and Remove. */
+function ServiceSummary({ status }: { status: AssistantStatus }): JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const p = status.provider
+  if (!p) return <></>
+  return (
+    <PageGroup heading="Model service" headingId="zen-ask-service">
+      {editing ? (
+        <ServiceForm status={status} onDone={() => setEditing(false)} />
+      ) : (
+        <div className="zen-ask-row">
+          <span>
+            {p.model} at {p.baseUrl}
+            {status.hasKey ? '' : ' (no key)'}
+          </span>
+          <span className="zen-ask-actions">
+            <button type="button" className="zen-v2-button" onClick={() => setEditing(true)}>
+              Change
+            </button>
+            <button
+              type="button"
+              className="zen-v2-button"
+              onClick={() => run('assistant.setProvider', { provider: null })}
+            >
+              Remove
+            </button>
+          </span>
+        </div>
+      )}
+    </PageGroup>
+  )
+}
+
+/**
+ * Which API the service speaks, its address, the model and the key. The key field left empty
+ * keeps the saved key when one is set (a local server may need none at all).
+ */
+function ServiceForm({
+  status,
+  onDone
+}: {
+  status: AssistantStatus
+  onDone?: () => void
+}): JSX.Element {
+  const current = status.provider
+  const [kind, setKind] = useState<AssistantProvider['kind']>(current?.kind ?? 'openai')
+  const [baseUrl, setBaseUrl] = useState(current?.baseUrl ?? KINDS[0].baseUrl)
+  const [model, setModel] = useState(current?.model ?? '')
   const [key, setKey] = useState('')
-  if (!available) return <PageEmpty>This device cannot store an API key</PageEmpty>
+  if (!status.available) return <PageEmpty>This device cannot store an API key</PageEmpty>
+  const pickKind = (next: AssistantProvider['kind']): void => {
+    // The address follows the API while it is still another API's default.
+    if (KINDS.some((k) => k.baseUrl === baseUrl) || !baseUrl.trim())
+      setBaseUrl(KINDS.find((k) => k.id === next)!.baseUrl)
+    setKind(next)
+  }
   return (
     <form
-      className="zen-ask-composer"
+      className="zen-ask-service"
+      data-testid="ask-service-form"
       onSubmit={(e) => {
         e.preventDefault()
-        if (key.trim()) run('assistant.setKey', { key })
+        if (!model.trim()) return
+        void cmd('assistant.setProvider', {
+          provider: { kind, baseUrl, model },
+          ...(key.trim() || !status.hasKey ? { key } : {})
+        }).then(() => onDone?.())
       }}
     >
-      <input
-        className="zen-v2-field"
-        type="password"
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        placeholder="Anthropic API key (sk-ant-…)"
-        aria-label="Anthropic API key"
-        autoComplete="off"
-      />
-      <button type="submit" className="zen-v2-button" data-primary="" disabled={!key.trim()}>
-        Save key
-      </button>
+      <p className="zen-ask-muted">
+        Any service that speaks the OpenAI Responses API or the Anthropic Messages API: a hosted
+        one, or a model running on your own machine.
+      </p>
+      <label>
+        <span>API</span>
+        <select
+          className="zen-v2-field"
+          value={kind}
+          onChange={(e) => pickKind(e.target.value as AssistantProvider['kind'])}
+        >
+          {KINDS.map((k) => (
+            <option key={k.id} value={k.id}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>Address</span>
+        <input
+          className="zen-v2-field"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="https://…"
+          autoComplete="off"
+        />
+      </label>
+      <label>
+        <span>Model</span>
+        <input
+          className="zen-v2-field"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder="The model's name at that service"
+          autoComplete="off"
+        />
+      </label>
+      <label>
+        <span>Key</span>
+        <input
+          className="zen-v2-field"
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder={
+            status.hasKey ? 'Saved; type a new one to replace it' : 'Leave empty if none is needed'
+          }
+          autoComplete="off"
+        />
+      </label>
+      <div className="zen-ask-actions">
+        {onDone && (
+          <button type="button" className="zen-v2-button" onClick={onDone}>
+            Cancel
+          </button>
+        )}
+        <button type="submit" className="zen-v2-button" data-primary="" disabled={!model.trim()}>
+          Save
+        </button>
+      </div>
     </form>
   )
 }
