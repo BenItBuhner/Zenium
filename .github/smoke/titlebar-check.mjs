@@ -80,7 +80,9 @@ async function step(name, required, fn) {
     log('FAIL', name, e?.message ?? e)
     try {
       shot(`fail-${name}`)
-    } catch {}
+    } catch {
+      // The step's own error is the one worth reporting.
+    }
   }
 }
 
@@ -112,7 +114,6 @@ const win = (fn, arg) =>
     ({ BrowserWindow }, [src, a]) => {
       const w = BrowserWindow.getAllWindows().find((x) => !x.getParentWindow() && x.isVisible())
       if (!w) return null
-      // eslint-disable-next-line no-new-func
       return new Function('w', 'a', 'BrowserWindow', src)(w, a, BrowserWindow)
     },
     [fn, arg]
