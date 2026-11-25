@@ -2,10 +2,11 @@
 # through user32, so the main process's cursor polling and Windows' own hit testing see them
 # exactly as they would see a person's mouse. Coordinates are screen pixels.
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('move', 'click', 'drag', 'snap-left', 'shot')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('move', 'click', 'drag', 'snap-left', 'shot', 'hittest')][string]$Action,
   [int]$X = 0, [int]$Y = 0, [int]$X2 = 0, [int]$Y2 = 0,
   [int]$W = 0, [int]$H = 0,
-  [string]$Path = ''
+  [string]$Path = '',
+  [long]$Hwnd = 0
 )
 $ErrorActionPreference = 'Stop'
 Add-Type @'
@@ -16,6 +17,10 @@ public static class ZenInput {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint f);
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
 }
 '@
 [ZenInput]::SetProcessDPIAware() | Out-Null
@@ -53,6 +58,15 @@ switch ($Action) {
     Glide $X $Y $X2 $Y2
     Start-Sleep -Milliseconds 400
     [ZenInput]::mouse_event($LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+  }
+  'hittest' {
+    # What Windows' own hit test answers at a screen point: 2 caption (drags), 1 client, 12 top
+    # border; and which top-level window is under it.
+    $lp = [IntPtr](($Y -shl 16) -bor ($X -band 0xFFFF))
+    $code = [ZenInput]::SendMessage([IntPtr]$Hwnd, 0x84, [IntPtr]::Zero, $lp)
+    $pt = New-Object ZenInput+POINT; $pt.X = $X; $pt.Y = $Y
+    $top = [ZenInput]::GetAncestor([ZenInput]::WindowFromPoint($pt), 2)
+    Write-Output ("{0} {1}" -f $code.ToInt64(), ($top.ToInt64() -eq $Hwnd))
   }
   'snap-left' {
     # Win+Left: Windows' own snap of the foreground window to the left half.

@@ -609,6 +609,19 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
   useEffect(() => {
     run('compact.setRevealed', { revealed: open, edge: 'caption' })
   }, [open])
+  // The window's size changing under the panel (Maximize, Restore, a snap) leaves the page's
+  // picture at the old size: the panel goes at once and the live page comes back. A press on
+  // one of its buttons has done what the panel was out for, so it goes the same way.
+  useEffect(() => {
+    if (!open) return undefined
+    const drop = (): void => {
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = null
+      closed()
+    }
+    window.addEventListener('resize', drop)
+    return () => window.removeEventListener('resize', drop)
+  }, [open, closed])
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current)
@@ -622,7 +635,7 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
   )
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col items-end"
+      className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col items-end pt-1.5"
       data-testid="caption-reveal"
     >
       {open && (
@@ -632,6 +645,11 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
             data-surface="window"
             onPointerEnter={show}
             onPointerLeave={hide}
+            onClickCapture={() => {
+              if (timer.current) clearTimeout(timer.current)
+              timer.current = null
+              closed()
+            }}
           >
             <WindowControls />
           </div>

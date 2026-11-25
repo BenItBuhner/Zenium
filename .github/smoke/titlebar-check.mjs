@@ -32,6 +32,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const results = []
 const log = (...m) => console.log('[titlebar]', ...m)
 
+function hitTest(hwnd, x, y) {
+  const argv = [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    path.join(here, 'win-input.ps1')
+  ]
+  argv.push('-Action', 'hittest', '-Hwnd', String(hwnd), '-X', String(x), '-Y', String(y))
+  const [code, ours] = execFileSync('powershell.exe', argv, { encoding: 'utf8' }).trim().split(' ')
+  return { code: Number(code), ours: ours === 'True' }
+}
+
 function input(action, params = {}) {
   const argv = [
     '-NoProfile',
@@ -271,6 +284,22 @@ await step('drag', true, async () => {
         }
       : null
   }, at)
+  // Windows' own answer at the gutter, the sidebar's top and the bookmarks bar (2 = drags).
+  const hwnd = await win(
+    `const b = w.getNativeWindowHandle(); return String(b.length >= 8 ? b.readBigUInt64LE(0) : b.readUInt32LE(0))`
+  )
+  const views = await win(
+    `return w.contentView.children.map((v) => ({ b: v.getBounds(), visible: v.getVisible ? v.getVisible() : null }))`
+  )
+  const probes = {}
+  for (const [name, p] of Object.entries({
+    gutter: at,
+    sidebarTop: { x: 120, y: 4 },
+    bar: { x: 400, y: 22 }
+  })) {
+    probes[name] = hitTest(hwnd, px(i.content.x + p.x), px(i.content.y + p.y))
+  }
+  log('hit tests', JSON.stringify(probes), 'views', JSON.stringify(views))
   input('drag', {
     X: px(i.content.x + at.x),
     Y: px(i.content.y + at.y),
@@ -283,8 +312,10 @@ await step('drag', true, async () => {
   const dx = after.bounds.x - i.bounds.x
   const dy = after.bounds.y - i.bounds.y
   if (Math.abs(dx - 150) > 20 || Math.abs(dy - 100) > 20)
-    throw new Error(`moved by ${dx},${dy} instead of 150,100 (pressed on ${JSON.stringify(hit)})`)
-  return { dx, dy, pressedOn: hit }
+    throw new Error(
+      `moved by ${dx},${dy} instead of 150,100 (pressed on ${JSON.stringify(hit)}; hit tests ${JSON.stringify(probes)})`
+    )
+  return { dx, dy, pressedOn: hit, probes }
 })
 
 await step('snap', true, async () => {
