@@ -2,7 +2,7 @@
 # through user32, so the main process's cursor polling and Windows' own hit testing see them
 # exactly as they would see a person's mouse. Coordinates are screen pixels.
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('move', 'click', 'drag', 'snap-left', 'shot', 'hittest')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('move', 'glide', 'click', 'drag', 'snap-left', 'shot', 'hittest')][string]$Action,
   [int]$X = 0, [int]$Y = 0, [int]$X2 = 0, [int]$Y2 = 0,
   [int]$W = 0, [int]$H = 0,
   [string]$Path = '',
@@ -43,6 +43,11 @@ function Glide([int]$fx, [int]$fy, [int]$tx, [int]$ty) {
 }
 switch ($Action) {
   'move' { MoveTo $X $Y }
+  'glide' {
+    # A slow, visible move from wherever the cursor is (the demo recording).
+    $c = [System.Windows.Forms.Cursor]::Position
+    Glide $c.X $c.Y $X $Y
+  }
   'click' {
     MoveTo $X $Y
     Start-Sleep -Milliseconds 150
