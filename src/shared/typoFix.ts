@@ -115,7 +115,8 @@ export function looksLikeAsk(input: string): boolean {
   if (/\?\s*$/.test(t)) return true
   const words = t.split(/\s+/)
   if (words.length < 4) return false
-  return /^(what|why|how|when|where|who|which|is|are|can|could|should|does|do|find|compare|summari[sz]e|explain|help|plan|book|research|tell|show|write)\b/i.test(
+  // Question words with or without the apostrophe people skip ("whats", "hows", "wheres").
+  return /^(?:(?:what|why|how|when|where|who|which)(?:['’]?(?:s|re|d|ll))?|is|are|can|could|would|should|does|do|did|find|compare|summari[sz]e|explain|help|plan|book|research|tell|show|write|give|recommend|suggest)\b/i.test(
     t
   )
 }
