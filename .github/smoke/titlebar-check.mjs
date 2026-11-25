@@ -266,8 +266,13 @@ await step('maximize', true, async () => {
 })
 
 await step('drag', true, async () => {
-  await win(`w.setBounds({ x: 40, y: 40, width: 900, height: 600 }); return true`)
-  await sleep(600)
+  await win(
+    `w.unmaximize(); w.setBounds({ x: 40, y: 40, width: 900, height: 600 }); w.focus(); return true`
+  )
+  await sleep(800)
+  // The cursor away from the top edge and the window in front, as before any drag by hand.
+  input('click', centre(await info()))
+  await sleep(1000)
   const i = await info()
   const pad = await page.evaluate(
     () =>
@@ -345,7 +350,7 @@ await step('snap', true, async () => {
   return { snapped }
 })
 
-await step('drag-top', false, async () => {
+await step('drag-top', true, async () => {
   await win(
     `w.unmaximize(); w.setBounds({ x: 120, y: 160, width: 760, height: 480 }); w.focus(); return true`
   )
