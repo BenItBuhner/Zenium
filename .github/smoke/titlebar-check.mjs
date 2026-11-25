@@ -14,7 +14,7 @@
 //
 // usage: node titlebar-check.mjs --exe <zenium.exe> --out <dir>
 import { _electron as electron } from 'playwright'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -31,6 +31,31 @@ fs.mkdirSync(outDir, { recursive: true })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const results = []
 const log = (...m) => console.log('[titlebar]', ...m)
+
+/** A drag run in the background while the window's bounds are sampled every 80 ms. */
+async function tracedDrag(params) {
+  const argv = [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    path.join(here, 'win-input.ps1')
+  ]
+  argv.push('-Action', 'drag')
+  for (const [k, v] of Object.entries(params)) argv.push(`-${k}`, String(v))
+  const child = spawn('powershell.exe', argv, { stdio: 'inherit' })
+  const done = new Promise((r) => child.on('exit', r))
+  const trace = []
+  let finished = false
+  void done.then(() => (finished = true))
+  while (!finished) {
+    const b = (await info())?.bounds
+    if (b && (!trace.length || trace.at(-1).x !== b.x || trace.at(-1).y !== b.y))
+      trace.push({ t: Date.now(), ...b })
+    await sleep(80)
+  }
+  return trace
+}
 
 function hitTest(hwnd, x, y) {
   const argv = [
@@ -305,12 +330,13 @@ await step('drag', true, async () => {
     probes[name] = hitTest(hwnd, px(i.content.x + p.x), px(i.content.y + p.y))
   }
   log('hit tests', JSON.stringify(probes), 'views', JSON.stringify(views))
-  input('drag', {
+  const trace = await tracedDrag({
     X: px(i.content.x + at.x),
     Y: px(i.content.y + at.y),
     X2: px(i.content.x + at.x + 150),
     Y2: px(i.content.y + at.y + 100)
   })
+  log('drag trace', JSON.stringify(trace))
   await sleep(600)
   const after = await info()
   shot('06-after-drag')
