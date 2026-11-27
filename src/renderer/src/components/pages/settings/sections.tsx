@@ -16,6 +16,7 @@ import type {
   GlanceTrigger,
   GovernorActionKind,
   GpuMode,
+  SiteIsolation,
   HomepageMode,
   ImportSource,
   InactiveTabsArchiveDays,
@@ -3129,11 +3130,24 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           max: 64,
           onCommit: (v) => setP({ rendererProcessLimit: v })
         }),
+        choice<SiteIsolation>({
+          id: 'site-isolation',
+          label: 'Site isolation',
+          value: r.process.siteIsolation,
+          sheetDescription:
+            'Relaxed lets a page’s frames from other sites share its process, as Chrome on Android does: fewer processes and less memory, but weaker protection between sites.',
+          keywords: ['spectre', 'process per site', 'memory'],
+          options: [
+            { value: 'full', label: 'Full – every site in its own process' },
+            { value: 'relaxed', label: 'Relaxed – less memory' }
+          ],
+          onChange: (v) => setP({ siteIsolation: v })
+        }),
         numberRow({
           id: 'renderer-heap',
           label: 'JavaScript heap cap per page',
           description:
-            'A page that grows past its V8 heap cap is unloaded instead of bloating. 0 = default.',
+            'A page that grows past its V8 heap cap is unloaded instead of bloating. 0 = default; at least 512 MB, because the cap also binds the browser’s own process.',
           value: r.process.rendererHeapMb,
           min: 0,
           max: 16384,
