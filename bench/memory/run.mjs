@@ -3,6 +3,7 @@
 //
 //   node bench/memory/run.mjs --browser zenium --preset 200 [--cap 512] [--label name]
 //        [--zenium-state '{"settings":{...}}'] [--args "--flag --flag2"] [--out dir]
+//        [--switch-latency]   (also time every switch of the active phase; see README.md)
 //
 // Phases: open N tabs from sites.txt in the background (one every OPEN_GAP_MS), let them settle,
 // then cycle through M "active" tabs (spread evenly over the list) — switch to it, scroll it a
@@ -19,7 +20,26 @@ const PRESETS = {
   10: { tabs: 10, active: 2 },
   50: { tabs: 50, active: 5 },
   100: { tabs: 100, active: 10 },
-  200: { tabs: 200, active: 20 }
+  200: { tabs: 200, active: 20 },
+  // Concurrency: every tab is active and must stay loaded (no tab-sleeping in any browser);
+  // the headline number is memory per live tab.
+  live24: { tabs: 24, active: 24, live: true },
+  live48: { tabs: 48, active: 48, live: true }
+}
+
+/** Zenium's settings for a live preset: no page unloaded for any reason within the run. */
+const LIVE_ZENIUM_STATE = {
+  settings: {
+    unloadEnabled: false,
+    resources: { maxLoadedTabs: 0, memoryMb: 0, memoryPercent: 100 }
+  }
+}
+
+function deepMerge(base, over) {
+  if (!over || typeof over !== 'object' || Array.isArray(over)) return over ?? base
+  const out = { ...(base ?? {}) }
+  for (const [k, v] of Object.entries(over)) out[k] = deepMerge(base?.[k], v)
+  return out
 }
 const OPEN_GAP_MS = 300
 const QUICK = process.env.BENCH_QUICK === '1' // smoke-testing the harness only
@@ -31,6 +51,7 @@ const MIN_ACTIVE_MS = QUICK ? 15_000 : 90_000
 const STEADY_WINDOW_MS = 60_000
 const RESTORE_SAMPLES = QUICK ? 2 : 5
 const RESTORE_TIMEOUT_MS = 30_000
+const SWITCH_TIMEOUT_MS = 10_000
 const SAMPLE_EVERY_MS = 1_000
 
 const here = new URL('.', import.meta.url).pathname
@@ -97,7 +118,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2))
   const kind = args.browser ?? 'zenium'
   const preset = PRESETS[args.preset ?? '50']
-  if (!preset) throw new Error('--preset must be 50, 100 or 200')
+  if (!preset) throw new Error(`--preset must be one of ${Object.keys(PRESETS).join(', ')}`)
   const capMb = args.cap ? Number(args.cap) : null
   const label = args.label ?? kind
   const outDir = args.out ?? join(here, 'results')
@@ -129,9 +150,12 @@ async function main() {
       : args.args
         ? args.args.split(' ').filter(Boolean)
         : [],
-    zeniumState: args['zenium-state'] ? JSON.parse(args['zenium-state']) : {},
+    zeniumState: deepMerge(
+      preset.live ? LIVE_ZENIUM_STATE : {},
+      args['zenium-state'] ? JSON.parse(args['zenium-state']) : {}
+    ),
     env: args.env ? Object.fromEntries(args.env.split(',').map((kv) => kv.split('='))) : {},
-    memorySaver: args['no-memory-saver'] ? false : true,
+    memorySaver: args['no-memory-saver'] || preset.live ? false : true,
     log: (t) => logLines.push(t)
   })
 
@@ -147,6 +171,7 @@ async function main() {
     phases: {},
     samples: [],
     restores: [],
+    switches: [],
     errors: [],
     browserExited: null
   }
@@ -222,13 +247,27 @@ async function main() {
       const dwellEnd = Date.now() + DWELL_MS
       if (tab) {
         try {
-          await browser.activate(tab)
+          if (args['switch-latency']) {
+            // How long each switch takes to show the tab (its document painted), and on
+            // Zenium how long until its restore picture is on screen, when it shows one.
+            const since = Date.now()
+            const picture = browser.watchPicture ? await browser.watchPicture(tab) : null
+            await browser.activate(tab)
+            const painted = await browser
+              .waitPainted(tab, since, SWITCH_TIMEOUT_MS)
+              .catch(() => null)
+            const ms = painted ? Date.now() - since : null
+            const pictureMs = picture ? await picture().catch(() => null) : null
+            result.switches.push({ ms, reloaded: painted?.reloaded ?? null, pictureMs })
+          } else {
+            await browser.activate(tab)
+          }
           for (let i = 0; i < SCROLLS_PER_DWELL && Date.now() < dwellEnd; i++) {
             await sleep(DWELL_MS / (SCROLLS_PER_DWELL + 1))
             await browser.scroll(tab, i === SCROLLS_PER_DWELL - 1 ? -800 : 400)
           }
         } catch (e) {
-          note('active', e)
+          note(`active ${tab.url}`, e)
         }
       }
       const rest = dwellEnd - Date.now()
@@ -236,6 +275,13 @@ async function main() {
     }
     mark('active')
     if (browser.rootPid) result.breakdown = breakdown([browser.rootPid])
+    // Zenium says which of the run's tabs are loaded and which frozen.
+    if (kind === 'zenium') {
+      const opened = new Set(tabs.filter(Boolean).map((t) => t.tabId))
+      const states = (await browser.state().catch(() => [])).filter((t) => opened.has(t.id))
+      result.liveTabs = states.filter((t) => !t.discarded).length
+      result.frozenTabs = states.filter((t) => !t.discarded && t.frozen).length
+    }
     if (args['inspect-main'] && browser.mainMemory)
       result.mainMemory = await browser
         .mainMemory(Number(args['inspect-main']), args['heap-snapshot'])
@@ -291,6 +337,18 @@ async function main() {
     restoreMedianMs: median(ok.map((r) => r.ms)),
     restoreReloaded: ok.filter((r) => r.reloaded).length,
     restoreFailed: result.restores.length - ok.length,
+    ...(args['switch-latency'] ? switchSummary(result.switches) : {}),
+    ...(preset.live
+      ? {
+          liveTabs: result.liveTabs ?? null,
+          frozenTabs: result.frozenTabs ?? null,
+          // Every tab of a live preset is loaded (Zenium says so; the others sleep none).
+          perLiveTabMb:
+            steady.length > 0
+              ? Math.round(median(steady.map((x) => x.pssMb)) / (result.liveTabs ?? preset.tabs))
+              : null
+        }
+      : {}),
     errors: result.errors.length,
     oomKills: result.oomKills ?? 0,
     crashed: Boolean(result.browserExited)
@@ -299,6 +357,19 @@ async function main() {
   writeFileSync(file, JSON.stringify(result, null, 1))
   if (args.log) writeFileSync(file.replace(/\.json$/, '.log'), logLines.join(''))
   console.log(JSON.stringify({ file, ...result.summary }))
+}
+
+/** Switches in the active phase (`--switch-latency`): to a woken tab, and with a picture. */
+function switchSummary(switches) {
+  const woken = switches.filter((x) => x.reloaded && x.ms !== null)
+  const pictured = switches.filter((x) => x.pictureMs !== null)
+  return {
+    switches: switches.length,
+    switchWoken: woken.length,
+    switchWokenMedianMs: median(woken.map((x) => x.ms)),
+    switchPictured: pictured.length,
+    switchPictureMedianMs: median(pictured.map((x) => x.pictureMs))
+  }
 }
 
 main().catch((e) => {

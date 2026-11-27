@@ -311,6 +311,33 @@ class Zenium {
     await this.invoke('tab.activate', { tabId: tab.tabId })
   }
 
+  /**
+   * Arm a watch, in the chrome, for the restore picture of `tab` (a waking tab's picture of the
+   * page it showed when it was last left): resolves with the ms from now until the picture is
+   * decoded and two frames have run, or null when none shows within `timeoutMs`.
+   */
+  async watchPicture(tab, timeoutMs = 3_000) {
+    const key = `__zbenchPicture_${tab.tabId.replace(/[^\w]/g, '_')}`
+    await this.cdp.evaluate(
+      this.shell,
+      `(() => {
+        const t0 = performance.now()
+        window[${JSON.stringify(key)}] = new Promise((resolve) => {
+          const tick = () => {
+            const img = document.querySelector('img[data-restore-picture=${JSON.stringify(tab.tabId)}]')
+            if (img && img.complete && img.naturalWidth > 0)
+              return requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0)))
+            if (performance.now() - t0 > ${timeoutMs}) return resolve(null)
+            requestAnimationFrame(tick)
+          }
+          tick()
+        })
+        return true
+      })()`
+    )
+    return () => this.cdp.evaluate(this.shell, `window[${JSON.stringify(key)}]`, timeoutMs + 5_000)
+  }
+
   async scroll(tab, deltaY) {
     const id = await this.target(tab)
     if (!id) return
