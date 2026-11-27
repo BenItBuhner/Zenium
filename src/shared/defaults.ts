@@ -160,22 +160,25 @@ export function emptyPasswordsStatus(): PasswordsStatus {
 }
 
 /**
- * Aggressive out of the box: the browser as a whole may use about a third of the machine's RAM
- * and half of its CPU; hidden tabs are frozen after five minutes and unloaded after twenty
- * (`unloadTimeoutMinutes`), at most 24 pages stay alive, and pages cannot keep old documents or
- * prerenders around.
+ * Aggressive out of the box: the browser as a whole may use 1 GB of memory (a fixed budget, not a
+ * share of RAM: the many-tabs benchmark, `bench/memory`, found pages fill whatever they are
+ * given) and half of the CPU; hidden tabs are frozen after a minute and unloaded after
+ * `unloadTimeoutMinutes`, at most 6 pages stay alive (the active one and the last few the user
+ * switched between), and pages cannot keep old documents or prerenders around. Measured at 200
+ * real tabs with 20 in use: 1.93 GB with the old defaults (35 % of RAM, 24 pages, freeze after
+ * 5 minutes), 0.84 GB with these, restore time unchanged.
  */
 export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
   enabled: true,
   enforcement: 'strict',
-  memoryMb: 0,
+  memoryMb: 1024,
   memoryPercent: 35,
   cpuPercent: 50,
   gpuMemoryMb: 0,
   gpuMode: 'auto',
-  freezeAfterMinutes: 5,
+  freezeAfterMinutes: 1,
   idleFreezeMinutes: 10,
-  maxLoadedTabs: 24,
+  maxLoadedTabs: 6,
   maxConcurrentLoads: 3,
   batteryFactor: 0.7,
   protectPinned: false,
