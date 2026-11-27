@@ -240,6 +240,33 @@ class Zenium {
     )
   }
 
+  /**
+   * The main process's own JS memory (`process.memoryUsage()`, MB) over its inspector, and a
+   * heap snapshot written to `snapshotPath` when given. Needs `--inspect=<port>` at launch.
+   */
+  async mainMemory(inspectPort, snapshotPath) {
+    const list = await (await fetch(`http://127.0.0.1:${inspectPort}/json/list`)).json()
+    const c = await CdpClient.connect(list[0].webSocketDebuggerUrl)
+    try {
+      const usage = await c.send('Runtime.evaluate', {
+        expression:
+          'Object.fromEntries(Object.entries(process.memoryUsage()).map(([k, v]) => [k, Math.round(v / 1048576)]))',
+        returnByValue: true
+      })
+      if (snapshotPath) {
+        const chunks = []
+        c.on((m) => {
+          if (m.method === 'HeapProfiler.addHeapSnapshotChunk') chunks.push(m.params.chunk)
+        })
+        await c.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false }, undefined, 180_000)
+        writeFileSync(snapshotPath, chunks.join(''))
+      }
+      return usage.result.value
+    } finally {
+      c.close()
+    }
+  }
+
   invoke(name, args) {
     return this.cdp.evaluate(
       this.shell,

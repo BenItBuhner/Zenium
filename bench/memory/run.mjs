@@ -236,6 +236,10 @@ async function main() {
     }
     mark('active')
     if (browser.rootPid) result.breakdown = breakdown([browser.rootPid])
+    if (args['inspect-main'] && browser.mainMemory)
+      result.mainMemory = await browser
+        .mainMemory(Number(args['inspect-main']), args['heap-snapshot'])
+        .catch((e) => String(e.message))
     result.activeSwitches = k
 
     // 3. restore latency of background tabs
