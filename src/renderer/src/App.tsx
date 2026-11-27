@@ -1,9 +1,10 @@
 import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Minimize } from 'lucide-react'
-import type { Events, Rect, UIState } from '@shared/types'
+import type { Events, Rect, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
+import { CAPTION_HEIGHT } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { forcesRail, hasTopToolbar, isHorizontalTabs } from '@shared/toolbarLayout'
@@ -187,6 +188,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // them, coming out at the top edge (`CaptionReveal`).
   const captionOwn = ownCaption(state) && !popupChrome
   const captionPinned = captionOwn && !fullscreen && (showToolbar || topChrome)
+  // With no top row showing, nothing stands across the top at all: the bookmarks bar and the
+  // buttons come out together, as one row, when the cursor touches the top edge.
+  const captionReveals = captionOwn && !fullscreen && !captionPinned
   const captionWidth = captionOwn ? CAPTION_BUTTONS_WIDTH : overlay.width
   const captionBand =
     !topChrome &&
@@ -292,6 +296,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             style={{ height: 'var(--zen-padding)' }}
           />
         )}
+        {captionReveals && (
+          <CaptionReveal state={state} tab={tab} showBar={showBar && !topChrome} />
+        )}
         {captionBand && !captionOwn && !showToolbar && (
           <div
             className="zen-drag shrink-0"
@@ -317,7 +324,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             />
           )
         )}
-        {showBar && !topChrome && <BookmarksBar state={state} tab={tab} />}
+        {showBar && !topChrome && !captionReveals && <BookmarksBar state={state} tab={tab} />}
         <main className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
           {/*
@@ -403,8 +410,6 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           <CaptionButtons />
         </div>
       )}
-      {/* With no top row showing, the buttons wait at the top edge. */}
-      {captionOwn && !fullscreen && !captionPinned && <CaptionReveal tabId={tab?.id ?? null} />}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
@@ -562,15 +567,25 @@ function CompactToolbar({
 }
 
 /**
- * A Windows browser window's minimise / maximise / close while no top row shows (the sidebar
- * layouts, or a toolbar compact mode hides): no band is kept for them, so the sidebar and the
- * page run to the top. The cursor on the top edge slides them down into the corner the OS's
- * buttons stood in, looking as those did (`CaptionButtons`), over a picture of the page (main's `caption` reveal: the edge stays a drag region, so nothing here catches the
- * pointer until the buttons are out), and they slide back 300 ms after the cursor leaves – the
- * hidden toolbar's motion (`SlideDown`). The OS draws none here, since it will not hide its own
- * (`ownCaption`).
+ * A Windows browser window's top row while no toolbar row shows (the sidebar layouts, or a
+ * toolbar compact mode hides): nothing is kept across the top, so the sidebar and the page run
+ * to it. The cursor on the very top edge slides one row down over the content column: the
+ * bookmarks bar (when the window shows one) with the minimise / maximise / close buttons in the
+ * corner the OS's stood in, looking as those did (`CaptionButtons`), over a picture of the page
+ * (main's `caption` reveal: the edge stays a drag region, so nothing here catches the pointer
+ * until the row is out). It slides back 300 ms after the cursor leaves, unless something it
+ * opened is up – the hidden toolbar's motion (`SlideDown`).
  */
-function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
+function CaptionReveal({
+  state,
+  tab,
+  showBar
+}: {
+  state: UIState
+  tab: Tab | null
+  showBar: boolean
+}): JSX.Element {
+  const tabId = tab?.id ?? null
   const open = uiStore.use((s) => s.captionHover)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const revealing = useRef(false)
@@ -592,7 +607,10 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       timer.current = null
-      if (!uiStore.get().captionHover || closingRef.current) return
+      // The row stays while something it opened is up (a bookmark folder's menu, an overlay).
+      const ui = uiStore.get()
+      if (ui.overlay !== 'none' || ui.urlbar.open || ui.menu || ui.zoomBubble) return
+      if (!ui.captionHover || closingRef.current) return
       closingRef.current = true
       setClosing(true)
     }, 300)
@@ -641,22 +659,32 @@ function CaptionReveal({ tabId }: { tabId: string | null }): JSX.Element {
     []
   )
   return (
-    <div className="pointer-events-none absolute right-0 top-0 z-40" data-testid="caption-reveal">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-40" data-testid="caption-reveal">
       {open && (
         <SlideDown closing={closing} onClosed={closed} flush>
           <div
-            className="pointer-events-auto"
+            className="pointer-events-auto flex items-center"
+            style={{ height: CAPTION_HEIGHT, background: 'var(--zen-bg-solid)' }}
+            data-surface="window"
             onPointerEnter={show}
             onPointerLeave={hide}
-            // Bubbling, so the button's own click has run: the store's update re-renders at
-            // once and would take the button away before a capture-phase close let it fire.
-            onClick={() => {
-              if (timer.current) clearTimeout(timer.current)
-              timer.current = null
-              closed()
-            }}
           >
-            <CaptionButtons solid />
+            {showBar ? (
+              <BookmarksBar state={state} tab={tab} className="min-w-0 flex-1 pb-0" />
+            ) : (
+              <div className="zen-drag h-full flex-1" />
+            )}
+            <div
+              // Bubbling, so the button's own click has run: the store's update re-renders at
+              // once and would take the button away before a capture-phase close let it fire.
+              onClick={() => {
+                if (timer.current) clearTimeout(timer.current)
+                timer.current = null
+                closed()
+              }}
+            >
+              <CaptionButtons />
+            </div>
           </div>
         </SlideDown>
       )}

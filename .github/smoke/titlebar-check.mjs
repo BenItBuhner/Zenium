@@ -3,8 +3,8 @@
 // cursor for the top-edge reveal, and Windows' own hit testing decides what a drag on the top
 // gutter does, so neither can be faked from inside the page. Each step screenshots the desktop.
 //
-//   rest       no Window Controls Overlay, no window buttons drawn, nothing kept across the top
-//   reveal     the cursor on the top edge slides the minimise / maximise / close panel down
+//   rest       no Window Controls Overlay, no buttons, no bookmarks bar: the page starts at the top
+//   reveal     the cursor on the top edge slides the bookmarks bar and the window buttons down
 //   leave      the cursor going away puts it back
 //   maximize   the panel's Maximize maximises; revealed again at the screen's top, Restore restores
 //   drag       pressing the top gutter and moving drags the window
@@ -245,6 +245,8 @@ await step('rest', true, async () => {
       '[aria-label="Minimize"],[aria-label="Maximize"],[aria-label="Close"]'
     ).length,
     revealMounted: Boolean(document.querySelector('[data-testid="caption-reveal"]')),
+    bookmarksBars: document.querySelectorAll('.zen-bm-bar').length,
+    pageTop: document.querySelector('main')?.getBoundingClientRect().top ?? null,
     sidebarTop:
       document.querySelector('aside, [data-testid="sidebar"]')?.getBoundingClientRect().top ?? null,
     layout: document.querySelector('[data-testid="chrome-root"]')?.getAttribute('data-layout')
@@ -255,6 +257,9 @@ await step('rest', true, async () => {
   if (dom.windowButtons !== 0)
     throw new Error(`${dom.windowButtons} window buttons showing at rest`)
   if (!dom.revealMounted) throw new Error('the caption reveal is not mounted')
+  if (dom.bookmarksBars !== 0) throw new Error('the bookmarks bar still stands across the top')
+  if (dom.pageTop === null || dom.pageTop > 12)
+    throw new Error(`the page does not start at the top: ${dom.pageTop}`)
   return { ...dom, window: i }
 })
 
@@ -264,6 +269,10 @@ await step('reveal', true, async () => {
   shot('02-top-edge-top-right', topRightCrop(i))
   if (!p?.maximize || !p.close || !p.minimize)
     throw new Error(`no panel with three buttons: ${JSON.stringify(p)}`)
+  const barOut = await page.evaluate(() =>
+    Boolean(document.querySelector('[data-testid="caption-reveal"] .zen-bm-bar'))
+  )
+  if (!barOut) throw new Error('the bookmarks bar did not come out with the buttons')
   // Where the OS's buttons stood: flush in the top trailing corner, 3 x 46 by 38.
   const r = p.rect
   if (Math.abs(r.x + r.width - p.innerWidth) > 1 || Math.abs(r.y) > 1)
