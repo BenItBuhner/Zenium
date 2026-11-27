@@ -4192,6 +4192,9 @@ export type ResourceEnforcement = 'balanced' | 'strict' | 'extreme'
  */
 export type GpuMode = 'auto' | 'low' | 'off'
 
+/** `ResourceProcessProfile.siteIsolation`. */
+export type SiteIsolation = 'full' | 'relaxed'
+
 /** Chromium / V8 switches applied at startup; changing them needs a relaunch. */
 export interface ResourceProcessProfile {
   /** Maximum number of renderer processes Chromium may keep alive (0 = Chromium default). */
@@ -4215,6 +4218,13 @@ export interface ResourceProcessProfile {
   rasterThreads: number
   /** V8: favour a small memory footprint over peak speed. */
   v8OptimizeForSize: boolean
+  /**
+   * Site isolation: `full` (Chromium's default, every site in its own renderer process, the
+   * Spectre-class defence) or `relaxed` (`--disable-site-isolation-trials`: cross-site frames
+   * share their page's process, as on Chrome for Android – fewer processes and less memory,
+   * weaker protection between sites).
+   */
+  siteIsolation: SiteIsolation
 }
 
 export interface ResourceSettings {

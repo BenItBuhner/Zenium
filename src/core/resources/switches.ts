@@ -21,6 +21,15 @@ export interface StartupProfile {
 
 export const MAX_RENDERER_PROCESS_LIMIT = 64
 export const MAX_RENDERER_HEAP_MB = 16384
+/**
+ * The smallest heap cap the setting takes (a smaller non-zero value is raised to it).
+ * `--js-flags` is not the renderers' alone: Electron's main process reads it too, and the main
+ * process – the browser's whole core, the filter engine, the Safe Browsing tables – needs a few
+ * hundred MB of heap at startup and during a list update. At 128 MB its V8 ran out of memory and
+ * the whole browser went down (measured, Nov 2026); 512 MB leaves it its headroom while still
+ * bounding a runaway page.
+ */
+export const MIN_RENDERER_HEAP_MB = 512
 export const MAX_RASTER_THREADS = 8
 
 /**
@@ -45,12 +54,11 @@ export function deriveStartupProfile(settings: ResourceSettings): StartupProfile
     })
   }
   if (p.rendererHeapMb > 0) {
-    jsFlags.push(
-      `--max-old-space-size=${Math.min(MAX_RENDERER_HEAP_MB, Math.round(p.rendererHeapMb))}`
-    )
+    jsFlags.push(`--max-old-space-size=${clampHeapMb(p.rendererHeapMb)}`)
   }
   if (p.v8OptimizeForSize) jsFlags.push('--optimize-for-size')
   if (p.lowEndDeviceMode) switches.push({ name: 'enable-low-end-device-mode' })
+  if (p.siteIsolation === 'relaxed') switches.push({ name: 'disable-site-isolation-trials' })
   // Electron already disables the spare renderer; listing it keeps the intent explicit.
   if (p.disableSpareRenderer) disabledFeatures.push('SpareRendererForSitePerProcess')
   if (p.disableBackForwardCache) disabledFeatures.push('BackForwardCache')
@@ -206,15 +214,24 @@ export function sanitizeResourceSettings(raw: unknown): ResourceSettings {
         0,
         MAX_RENDERER_PROCESS_LIMIT
       ),
-      rendererHeapMb: int(p.rendererHeapMb, d.process.rendererHeapMb, 0, MAX_RENDERER_HEAP_MB),
+      rendererHeapMb: (() => {
+        const mb = int(p.rendererHeapMb, d.process.rendererHeapMb, 0, MAX_RENDERER_HEAP_MB)
+        return mb > 0 ? clampHeapMb(mb) : 0
+      })(),
       lowEndDeviceMode: bool(p.lowEndDeviceMode, d.process.lowEndDeviceMode),
       disableSpareRenderer: bool(p.disableSpareRenderer, d.process.disableSpareRenderer),
       disableBackForwardCache: bool(p.disableBackForwardCache, d.process.disableBackForwardCache),
       disablePrerender: bool(p.disablePrerender, d.process.disablePrerender),
       rasterThreads: int(p.rasterThreads, d.process.rasterThreads, 0, MAX_RASTER_THREADS),
-      v8OptimizeForSize: bool(p.v8OptimizeForSize, d.process.v8OptimizeForSize)
+      v8OptimizeForSize: bool(p.v8OptimizeForSize, d.process.v8OptimizeForSize),
+      siteIsolation: oneOf(p.siteIsolation, ['full', 'relaxed'], d.process.siteIsolation)
     }
   }
+}
+
+/** A non-zero heap cap within [MIN_RENDERER_HEAP_MB, MAX_RENDERER_HEAP_MB]. */
+function clampHeapMb(mb: number): number {
+  return Math.min(MAX_RENDERER_HEAP_MB, Math.max(MIN_RENDERER_HEAP_MB, Math.round(mb)))
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

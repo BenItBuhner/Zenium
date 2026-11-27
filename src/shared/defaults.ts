@@ -189,7 +189,8 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
     disableBackForwardCache: true,
     disablePrerender: true,
     rasterThreads: 0,
-    v8OptimizeForSize: false
+    v8OptimizeForSize: false,
+    siteIsolation: 'full'
   }
 }
 
