@@ -22,17 +22,26 @@ Results: [RESULTS.md](RESULTS.md).
 
 Presets: `--preset 50` (50 tabs, 5 active), `100` (100 / 10), `200` (200 / 20).
 
+**Live presets** (`--preset live24`, `live48`): the target is many tabs _in use at once_, not
+many tabs asleep. Every one of the N tabs is active (the run cycles through all of them), and
+no browser may unload any: the competitors' tab-sleeping is off, and Zenium runs with unloading
+and its live-page cap off and its memory budget at 100 %. Zenium reports how many of the tabs
+are loaded and how many frozen at the end; the headline number is **memory per live tab**
+(steady PSS ÷ live tabs).
+
 ## The numbers
 
-| Column | Meaning |
-|---|---|
-| Steady PSS | Median over the last 60 s of the active phase of the summed PSS (proportional set size, `/proc/<pid>/smaps_rollup`). PSS splits shared pages between the processes that share them, so the sum is what the browser really costs. **The headline number.** |
-| Peak PSS | Highest PSS sample of the whole run (opening 200 tabs is usually the peak). |
-| RSS sum | The plain resident sizes added up, the way most task managers show them. Shared pages count once per process, so it overstates; given because it is the familiar number. |
-| Processes | Processes in the tree at steady state. |
-| Restore | Median of the 5 restore times. |
-| OOM kills | Processes the kernel killed for exceeding the cgroup's limit (capped runs). |
-| Browser died | The main browser process exited during the run. |
+| Column                | Meaning                                                                                                                                                                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Steady PSS            | Median over the last 60 s of the active phase of the summed PSS (proportional set size, `/proc/<pid>/smaps_rollup`). PSS splits shared pages between the processes that share them, so the sum is what the browser really costs. **The headline number.** |
+| Peak PSS              | Highest PSS sample of the whole run (opening 200 tabs is usually the peak).                                                                                                                                                                               |
+| RSS sum               | The plain resident sizes added up, the way most task managers show them. Shared pages count once per process, so it overstates; given because it is the familiar number.                                                                                  |
+| Processes             | Processes in the tree at steady state.                                                                                                                                                                                                                    |
+| Restore               | Median of the 5 restore times.                                                                                                                                                                                                                            |
+| OOM kills             | Processes the kernel killed for exceeding the cgroup's limit (capped runs).                                                                                                                                                                               |
+| Browser died          | The main browser process exited during the run.                                                                                                                                                                                                           |
+| Switch to a woken tab | With `--switch-latency`: median time from a switch in the active phase to a tab whose page had been unloaded (it loads again) until that page is painted.                                                                                                 |
+| Picture shown         | With `--switch-latency`, Zenium only: median time from such a switch until the tab's restore picture (what it looked like when last left) is on screen, and how many switches showed one.                                                                 |
 
 Every table cell is the **median of 3 runs** unless the table says otherwise.
 
