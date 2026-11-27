@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MIN_RENDERER_HEAP_MB,
   BASELINE_DISABLED_FEATURES,
   baselineDisabledFeatures,
   baselineSwitches,
@@ -38,13 +39,15 @@ describe('deriveStartupProfile', () => {
           disableBackForwardCache: true,
           disablePrerender: true,
           rasterThreads: 2,
-          v8OptimizeForSize: true
+          v8OptimizeForSize: true,
+          siteIsolation: 'relaxed'
         }
       })
     )
     expect(profile.switches).toEqual([
       { name: 'renderer-process-limit', value: '6' },
       { name: 'enable-low-end-device-mode' },
+      { name: 'disable-site-isolation-trials' },
       { name: 'num-raster-threads', value: '2' },
       { name: 'js-flags', value: '--max-old-space-size=512 --optimize-for-size' },
       {
@@ -122,6 +125,31 @@ describe('deriveStartupProfile', () => {
   })
 })
 
+describe('the V8 heap cap', () => {
+  // `--js-flags` reaches Electron's main process too: a 128 MB cap ran it out of memory and took
+  // the whole browser down, so the cap never goes below MIN_RENDERER_HEAP_MB.
+  it('is raised to the minimum, never put on the command line below it', () => {
+    const capped = (mb: number): string | undefined =>
+      deriveStartupProfile(
+        settings({ process: { ...DEFAULT_RESOURCE_SETTINGS.process, rendererHeapMb: mb } })
+      ).switches.find((sw) => sw.name === 'js-flags')?.value
+    expect(capped(128)).toBe(`--max-old-space-size=${MIN_RENDERER_HEAP_MB}`)
+    expect(capped(2048)).toBe('--max-old-space-size=2048')
+    expect(capped(0)).toBeUndefined()
+    expect(
+      sanitizeResourceSettings({ process: { rendererHeapMb: 128 } }).process.rendererHeapMb
+    ).toBe(MIN_RENDERER_HEAP_MB)
+  })
+
+  it('keeps site isolation full unless relaxed is asked for', () => {
+    expect(
+      sanitizeResourceSettings({ process: { siteIsolation: 'none' } }).process.siteIsolation
+    ).toBe('full')
+    const names = deriveStartupProfile(settings()).switches.map((sw) => sw.name)
+    expect(names).not.toContain('disable-site-isolation-trials')
+  })
+})
+
 describe('sanitizeResourceSettings', () => {
   it('returns the defaults for garbage input', () => {
     expect(sanitizeResourceSettings(undefined)).toEqual(DEFAULT_RESOURCE_SETTINGS)
@@ -186,7 +214,8 @@ describe('automation switches', () => {
           disableBackForwardCache: true,
           disablePrerender: true,
           rasterThreads: 1,
-          v8OptimizeForSize: true
+          v8OptimizeForSize: true,
+          siteIsolation: 'relaxed'
         }
       }
     ]

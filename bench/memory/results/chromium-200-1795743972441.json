@@ -1,0 +1,1207 @@
+{
+ "browser": "chromium",
+ "label": "chromium",
+ "preset": "200/20",
+ "capMb": null,
+ "args": "",
+ "zeniumState": null,
+ "startedAt": "2026-11-27T01:46:12.441Z",
+ "phases": {
+  "launched": 364,
+  "opened": 84937,
+  "settled": 115358,
+  "active": 265461,
+  "restored": 277473
+ },
+ "samples": [
+  {
+   "t": 1022,
+   "pssMb": 416,
+   "rssMb": 1191,
+   "procs": 11
+  },
+  {
+   "t": 2037,
+   "pssMb": 415,
+   "rssMb": 1191,
+   "procs": 11
+  },
+  {
+   "t": 3053,
+   "pssMb": 429,
+   "rssMb": 1308,
+   "procs": 12
+  },
+  {
+   "t": 4078,
+   "pssMb": 579,
+   "rssMb": 1747,
+   "procs": 15
+  },
+  {
+   "t": 5163,
+   "pssMb": 838,
+   "rssMb": 2380,
+   "procs": 18
+  },
+  {
+   "t": 6453,
+   "pssMb": 1002,
+   "rssMb": 3080,
+   "procs": 22
+  },
+  {
+   "t": 7687,
+   "pssMb": 1358,
+   "rssMb": 4126,
+   "procs": 28
+  },
+  {
+   "t": 8828,
+   "pssMb": 1607,
+   "rssMb": 4917,
+   "procs": 33
+  },
+  {
+   "t": 10247,
+   "pssMb": 1958,
+   "rssMb": 5867,
+   "procs": 38
+  },
+  {
+   "t": 11704,
+   "pssMb": 2506,
+   "rssMb": 6906,
+   "procs": 42
+  },
+  {
+   "t": 13192,
+   "pssMb": 2479,
+   "rssMb": 7520,
+   "procs": 48
+  },
+  {
+   "t": 14659,
+   "pssMb": 2756,
+   "rssMb": 8746,
+   "procs": 58
+  },
+  {
+   "t": 15953,
+   "pssMb": 2988,
+   "rssMb": 10477,
+   "procs": 75
+  },
+  {
+   "t": 17519,
+   "pssMb": 3291,
+   "rssMb": 13053,
+   "procs": 101
+  },
+  {
+   "t": 19482,
+   "pssMb": 3446,
+   "rssMb": 14306,
+   "procs": 111
+  },
+  {
+   "t": 21731,
+   "pssMb": 3765,
+   "rssMb": 15154,
+   "procs": 115
+  },
+  {
+   "t": 23418,
+   "pssMb": 3889,
+   "rssMb": 15134,
+   "procs": 110
+  },
+  {
+   "t": 25489,
+   "pssMb": 4255,
+   "rssMb": 16530,
+   "procs": 122
+  },
+  {
+   "t": 26980,
+   "pssMb": 4439,
+   "rssMb": 17705,
+   "procs": 134
+  },
+  {
+   "t": 28519,
+   "pssMb": 4503,
+   "rssMb": 18191,
+   "procs": 138
+  },
+  {
+   "t": 29807,
+   "pssMb": 4558,
+   "rssMb": 18509,
+   "procs": 139
+  },
+  {
+   "t": 31220,
+   "pssMb": 4647,
+   "rssMb": 18516,
+   "procs": 137
+  },
+  {
+   "t": 32507,
+   "pssMb": 4776,
+   "rssMb": 19214,
+   "procs": 142
+  },
+  {
+   "t": 33838,
+   "pssMb": 5044,
+   "rssMb": 20305,
+   "procs": 150
+  },
+  {
+   "t": 35124,
+   "pssMb": 5208,
+   "rssMb": 20778,
+   "procs": 153
+  },
+  {
+   "t": 36381,
+   "pssMb": 5420,
+   "rssMb": 21393,
+   "procs": 156
+  },
+  {
+   "t": 37647,
+   "pssMb": 5474,
+   "rssMb": 22095,
+   "procs": 163
+  },
+  {
+   "t": 38923,
+   "pssMb": 5622,
+   "rssMb": 22503,
+   "procs": 166
+  },
+  {
+   "t": 40510,
+   "pssMb": 5777,
+   "rssMb": 22723,
+   "procs": 165
+  },
+  {
+   "t": 41776,
+   "pssMb": 5914,
+   "rssMb": 23728,
+   "procs": 174
+  },
+  {
+   "t": 43528,
+   "pssMb": 6089,
+   "rssMb": 23996,
+   "procs": 175
+  },
+  {
+   "t": 44908,
+   "pssMb": 6096,
+   "rssMb": 24121,
+   "procs": 175
+  },
+  {
+   "t": 46283,
+   "pssMb": 6191,
+   "rssMb": 24062,
+   "procs": 172
+  },
+  {
+   "t": 47511,
+   "pssMb": 6445,
+   "rssMb": 24500,
+   "procs": 173
+  },
+  {
+   "t": 48831,
+   "pssMb": 6345,
+   "rssMb": 24285,
+   "procs": 170
+  },
+  {
+   "t": 50194,
+   "pssMb": 6533,
+   "rssMb": 24784,
+   "procs": 173
+  },
+  {
+   "t": 51582,
+   "pssMb": 6481,
+   "rssMb": 24823,
+   "procs": 172
+  },
+  {
+   "t": 52893,
+   "pssMb": 6619,
+   "rssMb": 25381,
+   "procs": 176
+  },
+  {
+   "t": 54443,
+   "pssMb": 6851,
+   "rssMb": 26251,
+   "procs": 183
+  },
+  {
+   "t": 55866,
+   "pssMb": 6874,
+   "rssMb": 26623,
+   "procs": 185
+  },
+  {
+   "t": 57223,
+   "pssMb": 7014,
+   "rssMb": 27066,
+   "procs": 188
+  },
+  {
+   "t": 58583,
+   "pssMb": 7136,
+   "rssMb": 27320,
+   "procs": 188
+  },
+  {
+   "t": 59866,
+   "pssMb": 7366,
+   "rssMb": 27675,
+   "procs": 189
+  },
+  {
+   "t": 61319,
+   "pssMb": 7296,
+   "rssMb": 27967,
+   "procs": 192
+  },
+  {
+   "t": 62748,
+   "pssMb": 7377,
+   "rssMb": 28257,
+   "procs": 194
+  },
+  {
+   "t": 64109,
+   "pssMb": 7628,
+   "rssMb": 28756,
+   "procs": 196
+  },
+  {
+   "t": 65462,
+   "pssMb": 7520,
+   "rssMb": 28833,
+   "procs": 197
+  },
+  {
+   "t": 66823,
+   "pssMb": 7675,
+   "rssMb": 29317,
+   "procs": 200
+  },
+  {
+   "t": 68372,
+   "pssMb": 7858,
+   "rssMb": 29834,
+   "procs": 203
+  },
+  {
+   "t": 69723,
+   "pssMb": 7855,
+   "rssMb": 30383,
+   "procs": 209
+  },
+  {
+   "t": 71204,
+   "pssMb": 7982,
+   "rssMb": 30849,
+   "procs": 213
+  },
+  {
+   "t": 73565,
+   "pssMb": 8150,
+   "rssMb": 31012,
+   "procs": 212
+  },
+  {
+   "t": 74962,
+   "pssMb": 8548,
+   "rssMb": 31464,
+   "procs": 209
+  },
+  {
+   "t": 76987,
+   "pssMb": 8479,
+   "rssMb": 31548,
+   "procs": 209
+  },
+  {
+   "t": 78337,
+   "pssMb": 8752,
+   "rssMb": 32212,
+   "procs": 213
+  },
+  {
+   "t": 79994,
+   "pssMb": 9007,
+   "rssMb": 32690,
+   "procs": 215
+  },
+  {
+   "t": 81488,
+   "pssMb": 8833,
+   "rssMb": 32694,
+   "procs": 216
+  },
+  {
+   "t": 82971,
+   "pssMb": 9068,
+   "rssMb": 33783,
+   "procs": 226
+  },
+  {
+   "t": 84608,
+   "pssMb": 9242,
+   "rssMb": 34308,
+   "procs": 229
+  },
+  {
+   "t": 86903,
+   "pssMb": 9473,
+   "rssMb": 34261,
+   "procs": 223
+  },
+  {
+   "t": 88388,
+   "pssMb": 9340,
+   "rssMb": 34640,
+   "procs": 228
+  },
+  {
+   "t": 89959,
+   "pssMb": 9551,
+   "rssMb": 34910,
+   "procs": 228
+  },
+  {
+   "t": 91407,
+   "pssMb": 9593,
+   "rssMb": 35086,
+   "procs": 229
+  },
+  {
+   "t": 92749,
+   "pssMb": 9698,
+   "rssMb": 35239,
+   "procs": 229
+  },
+  {
+   "t": 94331,
+   "pssMb": 9814,
+   "rssMb": 35379,
+   "procs": 229
+  },
+  {
+   "t": 95684,
+   "pssMb": 9771,
+   "rssMb": 35372,
+   "procs": 229
+  },
+  {
+   "t": 97341,
+   "pssMb": 9904,
+   "rssMb": 35500,
+   "procs": 228
+  },
+  {
+   "t": 98855,
+   "pssMb": 10000,
+   "rssMb": 35552,
+   "procs": 227
+  },
+  {
+   "t": 100252,
+   "pssMb": 10182,
+   "rssMb": 35481,
+   "procs": 223
+  },
+  {
+   "t": 101665,
+   "pssMb": 10022,
+   "rssMb": 35354,
+   "procs": 223
+  },
+  {
+   "t": 103315,
+   "pssMb": 10043,
+   "rssMb": 35078,
+   "procs": 219
+  },
+  {
+   "t": 104662,
+   "pssMb": 10266,
+   "rssMb": 35730,
+   "procs": 224
+  },
+  {
+   "t": 106161,
+   "pssMb": 10056,
+   "rssMb": 35315,
+   "procs": 221
+  },
+  {
+   "t": 107597,
+   "pssMb": 10112,
+   "rssMb": 35168,
+   "procs": 218
+  },
+  {
+   "t": 108928,
+   "pssMb": 10181,
+   "rssMb": 35109,
+   "procs": 216
+  },
+  {
+   "t": 110856,
+   "pssMb": 10064,
+   "rssMb": 34886,
+   "procs": 215
+  },
+  {
+   "t": 112351,
+   "pssMb": 10178,
+   "rssMb": 35320,
+   "procs": 219
+  },
+  {
+   "t": 113785,
+   "pssMb": 10271,
+   "rssMb": 35320,
+   "procs": 217
+  },
+  {
+   "t": 115358,
+   "pssMb": 10495,
+   "rssMb": 35639,
+   "procs": 218
+  },
+  {
+   "t": 117638,
+   "pssMb": 10501,
+   "rssMb": 35825,
+   "procs": 219
+  },
+  {
+   "t": 119225,
+   "pssMb": 10618,
+   "rssMb": 36120,
+   "procs": 220
+  },
+  {
+   "t": 121992,
+   "pssMb": 10980,
+   "rssMb": 37772,
+   "procs": 236
+  },
+  {
+   "t": 123734,
+   "pssMb": 10924,
+   "rssMb": 38210,
+   "procs": 241
+  },
+  {
+   "t": 125760,
+   "pssMb": 11003,
+   "rssMb": 38586,
+   "procs": 244
+  },
+  {
+   "t": 128086,
+   "pssMb": 11261,
+   "rssMb": 39384,
+   "procs": 249
+  },
+  {
+   "t": 130763,
+   "pssMb": 11113,
+   "rssMb": 39159,
+   "procs": 247
+  },
+  {
+   "t": 133540,
+   "pssMb": 11345,
+   "rssMb": 39163,
+   "procs": 243
+  },
+  {
+   "t": 135972,
+   "pssMb": 11418,
+   "rssMb": 39536,
+   "procs": 245
+  },
+  {
+   "t": 138489,
+   "pssMb": 11281,
+   "rssMb": 39611,
+   "procs": 247
+  },
+  {
+   "t": 140581,
+   "pssMb": 11260,
+   "rssMb": 39740,
+   "procs": 248
+  },
+  {
+   "t": 142645,
+   "pssMb": 11344,
+   "rssMb": 40239,
+   "procs": 252
+  },
+  {
+   "t": 144288,
+   "pssMb": 11360,
+   "rssMb": 40177,
+   "procs": 251
+  },
+  {
+   "t": 145819,
+   "pssMb": 11433,
+   "rssMb": 40266,
+   "procs": 250
+  },
+  {
+   "t": 147478,
+   "pssMb": 11570,
+   "rssMb": 40486,
+   "procs": 251
+  },
+  {
+   "t": 149083,
+   "pssMb": 11602,
+   "rssMb": 40765,
+   "procs": 254
+  },
+  {
+   "t": 150970,
+   "pssMb": 11619,
+   "rssMb": 41017,
+   "procs": 256
+  },
+  {
+   "t": 152600,
+   "pssMb": 11627,
+   "rssMb": 40786,
+   "procs": 253
+  },
+  {
+   "t": 154048,
+   "pssMb": 11768,
+   "rssMb": 40958,
+   "procs": 253
+  },
+  {
+   "t": 155557,
+   "pssMb": 11637,
+   "rssMb": 40941,
+   "procs": 254
+  },
+  {
+   "t": 157045,
+   "pssMb": 11594,
+   "rssMb": 40903,
+   "procs": 254
+  },
+  {
+   "t": 158705,
+   "pssMb": 11818,
+   "rssMb": 41493,
+   "procs": 257
+  },
+  {
+   "t": 160070,
+   "pssMb": 11745,
+   "rssMb": 41631,
+   "procs": 259
+  },
+  {
+   "t": 161503,
+   "pssMb": 11619,
+   "rssMb": 41516,
+   "procs": 259
+  },
+  {
+   "t": 162879,
+   "pssMb": 11626,
+   "rssMb": 41537,
+   "procs": 259
+  },
+  {
+   "t": 164280,
+   "pssMb": 11608,
+   "rssMb": 41521,
+   "procs": 259
+  },
+  {
+   "t": 165675,
+   "pssMb": 11587,
+   "rssMb": 41504,
+   "procs": 259
+  },
+  {
+   "t": 167049,
+   "pssMb": 11605,
+   "rssMb": 41652,
+   "procs": 260
+  },
+  {
+   "t": 168441,
+   "pssMb": 11624,
+   "rssMb": 41799,
+   "procs": 261
+  },
+  {
+   "t": 169890,
+   "pssMb": 11715,
+   "rssMb": 41893,
+   "procs": 261
+  },
+  {
+   "t": 171351,
+   "pssMb": 11716,
+   "rssMb": 41999,
+   "procs": 262
+  },
+  {
+   "t": 172781,
+   "pssMb": 11711,
+   "rssMb": 42093,
+   "procs": 263
+  },
+  {
+   "t": 174246,
+   "pssMb": 11867,
+   "rssMb": 42377,
+   "procs": 264
+  },
+  {
+   "t": 175695,
+   "pssMb": 11927,
+   "rssMb": 42358,
+   "procs": 263
+  },
+  {
+   "t": 177393,
+   "pssMb": 12149,
+   "rssMb": 42559,
+   "procs": 263
+  },
+  {
+   "t": 178898,
+   "pssMb": 12256,
+   "rssMb": 42709,
+   "procs": 263
+  },
+  {
+   "t": 180345,
+   "pssMb": 12242,
+   "rssMb": 42715,
+   "procs": 263
+  },
+  {
+   "t": 181740,
+   "pssMb": 12212,
+   "rssMb": 42651,
+   "procs": 263
+  },
+  {
+   "t": 183140,
+   "pssMb": 12128,
+   "rssMb": 42559,
+   "procs": 263
+  },
+  {
+   "t": 184507,
+   "pssMb": 12076,
+   "rssMb": 42495,
+   "procs": 263
+  },
+  {
+   "t": 185893,
+   "pssMb": 12046,
+   "rssMb": 42467,
+   "procs": 263
+  },
+  {
+   "t": 187268,
+   "pssMb": 12060,
+   "rssMb": 42489,
+   "procs": 263
+  },
+  {
+   "t": 188629,
+   "pssMb": 12030,
+   "rssMb": 42467,
+   "procs": 263
+  },
+  {
+   "t": 189988,
+   "pssMb": 12095,
+   "rssMb": 42543,
+   "procs": 263
+  },
+  {
+   "t": 191360,
+   "pssMb": 12104,
+   "rssMb": 42558,
+   "procs": 263
+  },
+  {
+   "t": 192734,
+   "pssMb": 12084,
+   "rssMb": 42540,
+   "procs": 263
+  },
+  {
+   "t": 194141,
+   "pssMb": 11959,
+   "rssMb": 42418,
+   "procs": 263
+  },
+  {
+   "t": 195503,
+   "pssMb": 11895,
+   "rssMb": 42349,
+   "procs": 263
+  },
+  {
+   "t": 196869,
+   "pssMb": 11896,
+   "rssMb": 42349,
+   "procs": 263
+  },
+  {
+   "t": 198225,
+   "pssMb": 11800,
+   "rssMb": 42159,
+   "procs": 262
+  },
+  {
+   "t": 199585,
+   "pssMb": 11785,
+   "rssMb": 42148,
+   "procs": 262
+  },
+  {
+   "t": 200943,
+   "pssMb": 11743,
+   "rssMb": 42107,
+   "procs": 262
+  },
+  {
+   "t": 202306,
+   "pssMb": 11727,
+   "rssMb": 41991,
+   "procs": 261
+  },
+  {
+   "t": 203655,
+   "pssMb": 11707,
+   "rssMb": 41972,
+   "procs": 261
+  },
+  {
+   "t": 205014,
+   "pssMb": 11694,
+   "rssMb": 41860,
+   "procs": 260
+  },
+  {
+   "t": 206430,
+   "pssMb": 11789,
+   "rssMb": 41945,
+   "procs": 260
+  },
+  {
+   "t": 207797,
+   "pssMb": 11776,
+   "rssMb": 41839,
+   "procs": 259
+  },
+  {
+   "t": 209174,
+   "pssMb": 11785,
+   "rssMb": 41833,
+   "procs": 259
+  },
+  {
+   "t": 210542,
+   "pssMb": 11766,
+   "rssMb": 41717,
+   "procs": 258
+  },
+  {
+   "t": 211904,
+   "pssMb": 11767,
+   "rssMb": 41716,
+   "procs": 258
+  },
+  {
+   "t": 213299,
+   "pssMb": 11754,
+   "rssMb": 41609,
+   "procs": 257
+  },
+  {
+   "t": 214670,
+   "pssMb": 11694,
+   "rssMb": 41541,
+   "procs": 257
+  },
+  {
+   "t": 216052,
+   "pssMb": 11682,
+   "rssMb": 41429,
+   "procs": 256
+  },
+  {
+   "t": 217437,
+   "pssMb": 11656,
+   "rssMb": 41402,
+   "procs": 256
+  },
+  {
+   "t": 218790,
+   "pssMb": 11633,
+   "rssMb": 41277,
+   "procs": 255
+  },
+  {
+   "t": 220221,
+   "pssMb": 11628,
+   "rssMb": 41272,
+   "procs": 255
+  },
+  {
+   "t": 221568,
+   "pssMb": 11612,
+   "rssMb": 41258,
+   "procs": 255
+  },
+  {
+   "t": 222905,
+   "pssMb": 11618,
+   "rssMb": 41266,
+   "procs": 255
+  },
+  {
+   "t": 224265,
+   "pssMb": 11581,
+   "rssMb": 41229,
+   "procs": 255
+  },
+  {
+   "t": 225633,
+   "pssMb": 11579,
+   "rssMb": 41226,
+   "procs": 255
+  },
+  {
+   "t": 226989,
+   "pssMb": 11576,
+   "rssMb": 41227,
+   "procs": 255
+  },
+  {
+   "t": 228371,
+   "pssMb": 11622,
+   "rssMb": 41282,
+   "procs": 255
+  },
+  {
+   "t": 229734,
+   "pssMb": 11616,
+   "rssMb": 41285,
+   "procs": 255
+  },
+  {
+   "t": 231120,
+   "pssMb": 11763,
+   "rssMb": 41456,
+   "procs": 255
+  },
+  {
+   "t": 232519,
+   "pssMb": 11790,
+   "rssMb": 41499,
+   "procs": 255
+  },
+  {
+   "t": 233892,
+   "pssMb": 11882,
+   "rssMb": 41637,
+   "procs": 255
+  },
+  {
+   "t": 235297,
+   "pssMb": 11927,
+   "rssMb": 41702,
+   "procs": 255
+  },
+  {
+   "t": 236689,
+   "pssMb": 11815,
+   "rssMb": 41539,
+   "procs": 255
+  },
+  {
+   "t": 238039,
+   "pssMb": 11760,
+   "rssMb": 41447,
+   "procs": 255
+  },
+  {
+   "t": 239431,
+   "pssMb": 11754,
+   "rssMb": 41436,
+   "procs": 255
+  },
+  {
+   "t": 240788,
+   "pssMb": 11743,
+   "rssMb": 41426,
+   "procs": 255
+  },
+  {
+   "t": 242164,
+   "pssMb": 11749,
+   "rssMb": 41434,
+   "procs": 255
+  },
+  {
+   "t": 243512,
+   "pssMb": 11704,
+   "rssMb": 41394,
+   "procs": 255
+  },
+  {
+   "t": 244865,
+   "pssMb": 11695,
+   "rssMb": 41382,
+   "procs": 255
+  },
+  {
+   "t": 246230,
+   "pssMb": 11685,
+   "rssMb": 41373,
+   "procs": 255
+  },
+  {
+   "t": 247577,
+   "pssMb": 11692,
+   "rssMb": 41381,
+   "procs": 255
+  },
+  {
+   "t": 248931,
+   "pssMb": 11575,
+   "rssMb": 41267,
+   "procs": 255
+  },
+  {
+   "t": 250280,
+   "pssMb": 11545,
+   "rssMb": 41231,
+   "procs": 255
+  },
+  {
+   "t": 251627,
+   "pssMb": 11540,
+   "rssMb": 41228,
+   "procs": 255
+  },
+  {
+   "t": 252988,
+   "pssMb": 11530,
+   "rssMb": 41219,
+   "procs": 255
+  },
+  {
+   "t": 254346,
+   "pssMb": 11534,
+   "rssMb": 41226,
+   "procs": 255
+  },
+  {
+   "t": 255696,
+   "pssMb": 11531,
+   "rssMb": 41221,
+   "procs": 255
+  },
+  {
+   "t": 257174,
+   "pssMb": 11874,
+   "rssMb": 41568,
+   "procs": 255
+  },
+  {
+   "t": 258541,
+   "pssMb": 11627,
+   "rssMb": 41322,
+   "procs": 255
+  },
+  {
+   "t": 259930,
+   "pssMb": 11643,
+   "rssMb": 41341,
+   "procs": 255
+  },
+  {
+   "t": 261338,
+   "pssMb": 11747,
+   "rssMb": 41430,
+   "procs": 255
+  },
+  {
+   "t": 262704,
+   "pssMb": 11771,
+   "rssMb": 41465,
+   "procs": 255
+  },
+  {
+   "t": 264057,
+   "pssMb": 11762,
+   "rssMb": 41445,
+   "procs": 255
+  },
+  {
+   "t": 265461,
+   "pssMb": 11763,
+   "rssMb": 41449,
+   "procs": 255
+  },
+  {
+   "t": 266841,
+   "pssMb": 11779,
+   "rssMb": 41579,
+   "procs": 256
+  },
+  {
+   "t": 268266,
+   "pssMb": 11754,
+   "rssMb": 41555,
+   "procs": 256
+  },
+  {
+   "t": 269651,
+   "pssMb": 11691,
+   "rssMb": 41606,
+   "procs": 257
+  },
+  {
+   "t": 271035,
+   "pssMb": 11679,
+   "rssMb": 41700,
+   "procs": 258
+  },
+  {
+   "t": 272496,
+   "pssMb": 11661,
+   "rssMb": 41683,
+   "procs": 258
+  },
+  {
+   "t": 273880,
+   "pssMb": 11801,
+   "rssMb": 42033,
+   "procs": 259
+  },
+  {
+   "t": 275269,
+   "pssMb": 11796,
+   "rssMb": 42029,
+   "procs": 259
+  },
+  {
+   "t": 276634,
+   "pssMb": 11803,
+   "rssMb": 42151,
+   "procs": 260
+  }
+ ],
+ "restores": [
+  {
+   "url": "https://www.freecodecamp.org/",
+   "ms": 135,
+   "reloaded": false
+  },
+  {
+   "url": "https://www.coursera.org/",
+   "ms": 126,
+   "reloaded": false
+  },
+  {
+   "url": "https://en.wikipedia.org/wiki/World_War_II",
+   "ms": 642,
+   "reloaded": false
+  },
+  {
+   "url": "https://www.dictionary.com/",
+   "ms": 297,
+   "reloaded": false
+  },
+  {
+   "url": "https://www.lonelyplanet.com/",
+   "ms": 138,
+   "reloaded": false
+  }
+ ],
+ "errors": [],
+ "browserExited": null,
+ "breakdown": {
+  "renderer": {
+   "count": 248,
+   "pssMb": 10509
+  },
+  "browser": {
+   "count": 1,
+   "pssMb": 928
+  },
+  "utility:network": {
+   "count": 1,
+   "pssMb": 143
+  },
+  "gpu-process": {
+   "count": 1,
+   "pssMb": 123
+  },
+  "utility:storage": {
+   "count": 1,
+   "pssMb": 30
+  },
+  "utility:audio": {
+   "count": 1,
+   "pssMb": 19
+  },
+  "zygote": {
+   "count": 2,
+   "pssMb": 11
+  }
+ },
+ "activeSwitches": 53,
+ "summary": {
+  "peakPssMb": 12256,
+  "peakRssMb": 42715,
+  "steadyPssMb": 11694.5,
+  "steadyRssMb": 41414,
+  "steadyProcs": 255,
+  "restoreMedianMs": 138,
+  "restoreReloaded": 0,
+  "restoreFailed": 0,
+  "errors": 0,
+  "oomKills": 0,
+  "crashed": false
+ }
+}

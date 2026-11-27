@@ -16,6 +16,7 @@ import type {
   GlanceTrigger,
   GovernorActionKind,
   GpuMode,
+  SiteIsolation,
   HomepageMode,
   ImportSource,
   NewTabBackgroundKind,
@@ -44,6 +45,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, ENERGY_SAVER_LOW_BATTERY_PERCENT } from '@shared/types'
 import { defaultEnergySaverMode } from '@core/resources/energySaver'
+import { isMaxConcurrency, maxConcurrencyPatch } from '@core/resources/concurrency'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
 import { toolbarDepartures, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
@@ -3044,6 +3046,15 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           ],
           onChange: (v) => setR({ gpuMode: v })
         }),
+        {
+          kind: 'switch',
+          id: 'max-concurrency',
+          label: 'Max concurrency',
+          description:
+            'Keep many heavy pages live at once on less memory: sites share processes (relaxed site isolation, at most 6 page processes). About a fifth less memory with dozens of pages open (fewer processes), but weaker protection between sites. Applies at the next launch.',
+          checked: isMaxConcurrency(r.process),
+          onChange: (v) => setP(maxConcurrencyPatch(v))
+        },
         numberRow({
           id: 'renderer-limit',
           label: 'Renderer process limit',
@@ -3054,11 +3065,24 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           max: 64,
           onCommit: (v) => setP({ rendererProcessLimit: v })
         }),
+        choice<SiteIsolation>({
+          id: 'site-isolation',
+          label: 'Site isolation',
+          value: r.process.siteIsolation,
+          sheetDescription:
+            'Relaxed lets a page’s frames from other sites share its process, as Chrome on Android does: fewer processes and less memory, but weaker protection between sites.',
+          keywords: ['spectre', 'process per site', 'memory'],
+          options: [
+            { value: 'full', label: 'Full – every site in its own process' },
+            { value: 'relaxed', label: 'Relaxed – less memory' }
+          ],
+          onChange: (v) => setP({ siteIsolation: v })
+        }),
         numberRow({
           id: 'renderer-heap',
           label: 'JavaScript heap cap per page',
           description:
-            'A page that grows past its V8 heap cap is unloaded instead of bloating. 0 = default.',
+            'A page that grows past its V8 heap cap is unloaded instead of bloating. 0 = default; at least 512 MB, because the cap also binds the browser’s own process.',
           value: r.process.rendererHeapMb,
           min: 0,
           max: 16384,

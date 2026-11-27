@@ -21,6 +21,15 @@ export interface StartupProfile {
 
 export const MAX_RENDERER_PROCESS_LIMIT = 64
 export const MAX_RENDERER_HEAP_MB = 16384
+/**
+ * The smallest heap cap the setting takes (a smaller non-zero value is raised to it).
+ * `--js-flags` is not the renderers' alone: Electron's main process reads it too, and the main
+ * process – the browser's whole core, the filter engine, the Safe Browsing tables – needs a few
+ * hundred MB of heap at startup and during a list update. At 128 MB its V8 ran out of memory and
+ * the whole browser went down (measured, Nov 2026); 512 MB leaves it its headroom while still
+ * bounding a runaway page.
+ */
+export const MIN_RENDERER_HEAP_MB = 512
 export const MAX_RASTER_THREADS = 8
 
 /**
@@ -45,12 +54,11 @@ export function deriveStartupProfile(settings: ResourceSettings): StartupProfile
     })
   }
   if (p.rendererHeapMb > 0) {
-    jsFlags.push(
-      `--max-old-space-size=${Math.min(MAX_RENDERER_HEAP_MB, Math.round(p.rendererHeapMb))}`
-    )
+    jsFlags.push(`--max-old-space-size=${clampHeapMb(p.rendererHeapMb)}`)
   }
   if (p.v8OptimizeForSize) jsFlags.push('--optimize-for-size')
   if (p.lowEndDeviceMode) switches.push({ name: 'enable-low-end-device-mode' })
+  if (p.siteIsolation === 'relaxed') switches.push({ name: 'disable-site-isolation-trials' })
   // Electron already disables the spare renderer; listing it keeps the intent explicit.
   if (p.disableSpareRenderer) disabledFeatures.push('SpareRendererForSitePerProcess')
   if (p.disableBackForwardCache) disabledFeatures.push('BackForwardCache')
@@ -206,15 +214,24 @@ export function sanitizeResourceSettings(raw: unknown): ResourceSettings {
         0,
         MAX_RENDERER_PROCESS_LIMIT
       ),
-      rendererHeapMb: int(p.rendererHeapMb, d.process.rendererHeapMb, 0, MAX_RENDERER_HEAP_MB),
+      rendererHeapMb: (() => {
+        const mb = int(p.rendererHeapMb, d.process.rendererHeapMb, 0, MAX_RENDERER_HEAP_MB)
+        return mb > 0 ? clampHeapMb(mb) : 0
+      })(),
       lowEndDeviceMode: bool(p.lowEndDeviceMode, d.process.lowEndDeviceMode),
       disableSpareRenderer: bool(p.disableSpareRenderer, d.process.disableSpareRenderer),
       disableBackForwardCache: bool(p.disableBackForwardCache, d.process.disableBackForwardCache),
       disablePrerender: bool(p.disablePrerender, d.process.disablePrerender),
       rasterThreads: int(p.rasterThreads, d.process.rasterThreads, 0, MAX_RASTER_THREADS),
-      v8OptimizeForSize: bool(p.v8OptimizeForSize, d.process.v8OptimizeForSize)
+      v8OptimizeForSize: bool(p.v8OptimizeForSize, d.process.v8OptimizeForSize),
+      siteIsolation: oneOf(p.siteIsolation, ['full', 'relaxed'], d.process.siteIsolation)
     }
   }
+}
+
+/** A non-zero heap cap within [MIN_RENDERER_HEAP_MB, MAX_RENDERER_HEAP_MB]. */
+function clampHeapMb(mb: number): number {
+  return Math.min(MAX_RENDERER_HEAP_MB, Math.max(MIN_RENDERER_HEAP_MB, Math.round(mb)))
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -237,4 +254,34 @@ function int(v: unknown, fallback: number, lo: number, hi: number): number {
 
 function oneOf<T extends string>(v: unknown, options: readonly T[], fallback: T): T {
   return typeof v === 'string' && (options as readonly string[]).includes(v) ? (v as T) : fallback
+}
+
+/**
+ * Switches Chromium reads before the app's own code runs, so `app.commandLine.appendSwitch` is
+ * too late for them: `--renderer-process-limit` is read while the browser process initialises,
+ * before Electron loads the main script (measured, Nov 2026: set from the main script it left 33
+ * page processes for 24 tabs at a limit of 6; on the real command line, 12).
+ */
+export const EARLY_SWITCHES: readonly string[] = ['renderer-process-limit']
+
+/** Marks a launch that already restarted itself to take an early switch: never twice. */
+export const EARLY_RELAUNCH_MARK = '--zen-early-switches'
+
+/**
+ * The arguments to relaunch with when the wanted early switches are not on this launch's real
+ * command line (`argv` without the executable), or null when it already carries them (or already
+ * relaunched for them once).
+ */
+export function earlyRelaunchArgs(
+  wanted: readonly StartupSwitch[],
+  argv: readonly string[]
+): string[] | null {
+  if (argv.includes(EARLY_RELAUNCH_MARK)) return null
+  const early = wanted
+    .filter((sw) => EARLY_SWITCHES.includes(sw.name))
+    .map((sw) => (sw.value === undefined ? `--${sw.name}` : `--${sw.name}=${sw.value}`))
+  if (early.every((arg) => argv.includes(arg))) return null
+  // Keep every other argument (URLs, files, `--user-data-dir`…); replace stale early switches.
+  const rest = argv.filter((arg) => !EARLY_SWITCHES.some((name) => arg.startsWith(`--${name}`)))
+  return [...rest, ...early, EARLY_RELAUNCH_MARK]
 }

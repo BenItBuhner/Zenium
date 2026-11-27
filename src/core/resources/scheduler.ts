@@ -27,6 +27,7 @@ const IN_FLIGHT_TIMEOUT_MS = 30_000
 export class LoadScheduler {
   private readonly queue: Array<{ tabId: string; context: string | undefined }> = []
   private readonly inFlight = new Map<string, number>()
+  private pumping = false
 
   constructor(private readonly host: SchedulerHost) {}
 
@@ -61,13 +62,23 @@ export class LoadScheduler {
 
   /** Start queued loads while there are free slots. */
   pump(): void {
-    this.expireStale()
+    // `canStart` may discard a page to make room, and a discard reports back through
+    // `finished`, which pumps again: that inner pump is left to this one, which may find the
+    // queue it checked a moment ago emptied by it.
+    if (this.pumping) return
+    this.pumping = true
     let changed = false
-    while (this.queue.length && this.canStart()) {
-      const { tabId, context } = this.queue.shift()!
-      changed = true
-      if (!this.host.tabExists(tabId)) continue
-      this.start(tabId, context)
+    try {
+      this.expireStale()
+      while (this.queue.length && this.canStart()) {
+        const next = this.queue.shift()
+        if (!next) break
+        changed = true
+        if (!this.host.tabExists(next.tabId)) continue
+        this.start(next.tabId, next.context)
+      }
+    } finally {
+      this.pumping = false
     }
     if (changed) this.host.onChange()
   }

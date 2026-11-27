@@ -367,7 +367,9 @@ export class ElectronPlatform implements Platform {
     }
     this.performance = electronPerformanceHost({
       holdBackgroundWork: options.holdBackgroundWork === true,
-      spawnWorker: () => createBackgroundWorker({})
+      // A small young generation: the worker's tasks build a few large structures, not many
+      // short-lived objects, so the default 16–32 MB semi-spaces are mostly idle memory.
+      spawnWorker: () => createBackgroundWorker({ resourceLimits: { maxYoungGenerationSizeMb: 8 } })
     })
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)

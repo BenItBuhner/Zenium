@@ -13,3 +13,6 @@ resources/safebrowsing
 android/app/src/test/resources/blinktrace
 # The nightly drivers' golden matrix, one line as the script writes it (android-nightly-drivers.test.mjs compares it byte for byte).
 .github/scripts/fixtures/android-nightly-drivers-matrix.json
+# Raw benchmark runs (bench/memory): data, not code.
+bench/memory/results
+bench/memory/experiments

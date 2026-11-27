@@ -6,6 +6,7 @@ import {
   baselineDisabledFeatures,
   baselineSwitches,
   deriveStartupProfile,
+  earlyRelaunchArgs,
   sanitizeResourceSettings,
   startupSwitches,
   type StartupProfile
@@ -34,6 +35,16 @@ export function applyResourceSwitches(userDataDir: string): StartupProfile {
   if (!profile.hardwareAcceleration) app.disableHardwareAcceleration()
   applied = profile
   return profile
+}
+
+/**
+ * The arguments to restart with once, before any window, when the profile wants a switch that
+ * Chromium reads before this script runs (`EARLY_SWITCHES`) and the real command line lacks it;
+ * null otherwise. Only an opt-in process limit asks for one (e.g. Max concurrency).
+ */
+export function earlySwitchRelaunchArgs(): string[] | null {
+  if (!applied) return null
+  return earlyRelaunchArgs(applied.switches, process.argv.slice(1))
 }
 
 /** The profile this process was started with (null when `applyResourceSwitches` never ran). */

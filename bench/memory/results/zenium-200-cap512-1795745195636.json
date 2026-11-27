@@ -1,0 +1,287 @@
+{
+ "browser": "zenium",
+ "label": "zenium",
+ "preset": "200/20",
+ "capMb": 512,
+ "args": "",
+ "zeniumState": null,
+ "startedAt": "2026-11-27T02:06:35.636Z",
+ "phases": {
+  "launched": 1659,
+  "opened": 5958,
+  "settled": 35958,
+  "active": 35958,
+  "restored": 35959
+ },
+ "samples": [
+  {
+   "t": 1009,
+   "pssMb": 137,
+   "rssMb": 244,
+   "procs": 3,
+   "cgMb": 147
+  },
+  {
+   "t": 2057,
+   "pssMb": 423,
+   "rssMb": 792,
+   "procs": 7,
+   "cgMb": 466
+  },
+  {
+   "t": 3083,
+   "pssMb": 544,
+   "rssMb": 1016,
+   "procs": 8,
+   "cgMb": 512
+  },
+  {
+   "t": 4103,
+   "pssMb": 544,
+   "rssMb": 1017,
+   "procs": 8,
+   "cgMb": 512
+  },
+  {
+   "t": 5129,
+   "pssMb": 544,
+   "rssMb": 1068,
+   "procs": 10,
+   "cgMb": 510
+  },
+  {
+   "t": 6131,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 12
+  },
+  {
+   "t": 7132,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 12
+  },
+  {
+   "t": 8134,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 12
+  },
+  {
+   "t": 9137,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 12
+  },
+  {
+   "t": 10139,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 11141,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 12144,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 13147,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 14149,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 15152,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 16154,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 17155,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 18158,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 19160,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 20163,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 21165,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 22168,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 23170,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 24172,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 25175,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 26177,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 27179,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 28182,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 29183,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 30186,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 31189,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 32191,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 33194,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 34197,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  },
+  {
+   "t": 35201,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 11
+  }
+ ],
+ "restores": [],
+ "errors": [],
+ "browserExited": {
+  "t": 5784,
+  "code": null,
+  "signal": "SIGKILL"
+ },
+ "breakdown": {},
+ "activeSwitches": 0,
+ "oomKills": 2,
+ "cgroupMaxMb": 512,
+ "summary": {
+  "peakPssMb": 544,
+  "peakRssMb": 1068,
+  "steadyPssMb": null,
+  "steadyRssMb": null,
+  "steadyProcs": null,
+  "restoreMedianMs": null,
+  "restoreReloaded": 0,
+  "restoreFailed": 0,
+  "errors": 0,
+  "oomKills": 2,
+  "crashed": true
+ }
+}

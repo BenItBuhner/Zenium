@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DISCARD_TARGET,
+  HIDDEN_TRIM_MS,
   PURGE_COOLDOWN_MS,
   THROTTLE_COOLDOWN_MS,
   attribute,
@@ -532,7 +533,11 @@ describe('plan – cpu ladder', () => {
     ]
     const p = plan(input({ processes: shared, tabs: tabs(), memory: memoryWith({ cpu: 3 }) }))
     expect(kinds(p, 'throttle')).toEqual([])
-    expect(p.actions).toEqual([expect.objectContaining({ kind: 'freeze', tabId: 'sibling' })])
+    // The quiet page, hidden for long, is trimmed besides (see "hidden pages are trimmed").
+    expect(p.actions).toEqual([
+      expect.objectContaining({ kind: 'freeze', tabId: 'sibling' }),
+      expect.objectContaining({ kind: 'purge', tabId: 'quiet', reason: 'hidden: trimmed' })
+    ])
   })
 
   it('throttles a single page right away when it alone burns more than half the budget', () => {
@@ -663,5 +668,37 @@ describe('plan – streaks', () => {
     expect(under.memory.underStreak.memory).toBe(1)
     // Unlimited resources always count as comfortably under.
     expect(under.memory.underStreak.gpu).toBe(2)
+  })
+})
+
+describe('plan – hidden pages are trimmed', () => {
+  it('purges a page once, a little after it is left, and leaves it loaded', () => {
+    const left = (lastActiveAt: number, lastPurgedAt = 0): TabSample[] => [
+      tab('shown', { visible: true, active: true, pids: [1] }),
+      tab('left', { pids: [2], lastActiveAt, lastPurgedAt })
+    ]
+    const processes = [proc(1, 100, 1), proc(2, 100, 1)]
+    // Just left: not yet.
+    expect(plan(input({ processes, tabs: left(NOW - HIDDEN_TRIM_MS + 1) })).actions).toEqual([])
+    // Left a while ago: trimmed once.
+    expect(plan(input({ processes, tabs: left(NOW - HIDDEN_TRIM_MS) })).actions).toEqual([
+      expect.objectContaining({ kind: 'purge', tabId: 'left', reason: 'hidden: trimmed' })
+    ])
+    // Trimmed since it was left: not again.
+    expect(
+      plan(input({ processes, tabs: left(NOW - 5 * HIDDEN_TRIM_MS, NOW - HIDDEN_TRIM_MS) })).actions
+    ).toEqual([])
+  })
+
+  it('leaves frozen, loading and protected pages alone', () => {
+    const processes = [proc(1, 100, 1), proc(2, 100, 1)]
+    const old = NOW - 10 * HIDDEN_TRIM_MS
+    for (const extra of [{ frozen: true }, { loading: true }, { audible: true }]) {
+      const tabs = [
+        tab('shown', { visible: true, active: true, pids: [1] }),
+        tab('left', { pids: [2], lastActiveAt: old, ...extra })
+      ]
+      expect(plan(input({ processes, tabs })).actions).toEqual([])
+    }
   })
 })

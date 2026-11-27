@@ -1,5 +1,5 @@
 import { app, powerMonitor, type WebContents } from 'electron'
-import { availableParallelism, totalmem } from 'node:os'
+import { availableParallelism } from 'node:os'
 import type { Governor, TabView } from '../../../core/platform'
 import { ElectronTabView, ElectronTabViewHost } from '../views'
 import type { ElectronWindow } from '../window'
@@ -19,6 +19,8 @@ import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
 import { ConcurrencyClamp } from './clamp'
 import { hostMetrics } from './hostMetrics'
+import { effectiveTotalMemoryMb } from './memoryLimit'
+import { OomPriority } from './oomPriority'
 import { BatteryLevel, forceDeviceHasBatteryRequested } from './battery'
 import { energySaverActive } from '../../../core/resources/energySaver'
 import { LoadScheduler } from '../../../core/resources/scheduler'
@@ -28,6 +30,8 @@ import {
   plan,
   protectionReason,
   victimScore,
+  TRIM_PRESSURE_COOLDOWN_MS,
+  TRIM_REASON,
   type PlannedAction,
   type PlannerInput,
   type PlannerMemory,
@@ -69,6 +73,8 @@ export class ResourceGovernor implements Governor {
    */
   readonly clamp = new ConcurrencyClamp(this.lifecycle, () => this.concurrencyOverride())
   readonly scheduler: LoadScheduler
+  /** Hidden pages' renderers go first when the OS must kill something (`oomPriority.ts`). */
+  private readonly oom = new OomPriority()
   snapshot: ResourceSnapshot = emptyResourceSnapshot()
 
   private memory: PlannerMemory = emptyPlannerMemory()
@@ -84,6 +90,8 @@ export class ResourceGovernor implements Governor {
   private readonly actions: GovernorAction[] = []
   private lastExecuted: PlannedAction[] = []
   private lastPressureToastAt = 0
+  /** When the last trim's pressure notification went out (`TRIM_PRESSURE_COOLDOWN_MS`). */
+  private lastTrimPressureAt = 0
   private readonly startupProfile = appliedStartupProfile()
   private readonly cleanups: Array<() => void> = []
   /**
@@ -258,6 +266,16 @@ export class ResourceGovernor implements Governor {
       const result = plan(input)
       this.memory = result.memory
       const changedModel = await this.execute(result.actions)
+      // After the plan: a page it froze or discarded is already in its new state.
+      this.oom.apply(
+        input.tabs
+          .filter((t) => t.loaded)
+          .map((t) => ({
+            pids: t.pids,
+            visible: t.visible,
+            frozen: t.frozen || Boolean(this.browser.tabs.tab(t.id)?.frozen)
+          }))
+      )
       this.publish(result, input, changedModel)
     } catch (error) {
       console.error('[zen] resource governor sample failed:', error)
@@ -505,7 +523,7 @@ export class ResourceGovernor implements Governor {
         timeoutMinutes: state.settings.unloadTimeoutMinutes
       },
       system: {
-        totalMemoryMb: totalmem() / 1_048_576,
+        totalMemoryMb: effectiveTotalMemoryMb(),
         cpuCount: cpuCount(),
         onBattery,
         energySaver: energySaverActive({
@@ -597,8 +615,20 @@ export class ResourceGovernor implements Governor {
     const purging = actions.find((a) => a.kind === 'purge')
     if (purging) {
       const wc = this.wc(purging.tabId)
-      const critical = this.memory.overStreak.memory >= 2 || this.memory.overStreak.gpu >= 2
-      if (wc) await this.lifecycle.notifyMemoryPressure(wc, critical ? 'critical' : 'moderate')
+      const overBudget = this.memory.overStreak.memory >= 2 || this.memory.overStreak.gpu >= 2
+      // A page left behind is trimmed at the critical level – what drops decoded images,
+      // fonts and the allocator's free pages; the moderate one leaves most of it – at most
+      // once per `TRIM_PRESSURE_COOLDOWN_MS`, the notification being the whole browser's.
+      const trimOnly = actions.every((a) => a.kind !== 'purge' || a.reason === TRIM_REASON)
+      const now = Date.now()
+      if (wc && trimOnly) {
+        if (now - this.lastTrimPressureAt >= TRIM_PRESSURE_COOLDOWN_MS) {
+          this.lastTrimPressureAt = now
+          await this.lifecycle.notifyMemoryPressure(wc, 'critical')
+        }
+      } else if (wc) {
+        await this.lifecycle.notifyMemoryPressure(wc, overBudget ? 'critical' : 'moderate')
+      }
     }
     for (const action of actions) {
       const tab = this.browser.tabs.tab(action.tabId)
@@ -650,7 +680,15 @@ export class ResourceGovernor implements Governor {
         return true
       }
       case 'freeze':
-        if (!wc || !(await this.lifecycle.freeze(wc))) return false
+        if (!wc) return false
+        // Shed what the page can give back before it stops running (a frozen page's main
+        // thread cannot purge later): its renderer drops its caches – decoded images, fonts,
+        // the resource cache – as under critical memory pressure, and V8 collects garbage.
+        // Chrome's "purge and freeze"; best effort, the freeze goes ahead regardless.
+        await this.lifecycle.notifyMemoryPressure(wc, 'critical')
+        await this.lifecycle.purge(wc)
+        this.lastPurgedAt.set(tab.id, Date.now())
+        if (!(await this.lifecycle.freeze(wc))) return false
         tab.frozen = true
         return true
       case 'thaw':

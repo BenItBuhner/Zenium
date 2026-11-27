@@ -1,0 +1,564 @@
+{
+ "browser": "firefox",
+ "label": "firefox",
+ "preset": "200/20",
+ "capMb": 512,
+ "args": "",
+ "zeniumState": null,
+ "startedAt": "2026-11-27T02:34:21.570Z",
+ "phases": {
+  "launched": 2155,
+  "opened": 44078,
+  "settled": 74079,
+  "active": 74079,
+  "restored": 74080
+ },
+ "samples": [
+  {
+   "t": 1009,
+   "pssMb": 242,
+   "rssMb": 367,
+   "procs": 4,
+   "cgMb": 362
+  },
+  {
+   "t": 2021,
+   "pssMb": 420,
+   "rssMb": 728,
+   "procs": 7,
+   "cgMb": 512
+  },
+  {
+   "t": 3047,
+   "pssMb": 491,
+   "rssMb": 938,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 4060,
+   "pssMb": 486,
+   "rssMb": 603,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 5071,
+   "pssMb": 495,
+   "rssMb": 603,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 6082,
+   "pssMb": 493,
+   "rssMb": 645,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 7096,
+   "pssMb": 489,
+   "rssMb": 606,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 8132,
+   "pssMb": 490,
+   "rssMb": 601,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 9146,
+   "pssMb": 491,
+   "rssMb": 606,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 10167,
+   "pssMb": 492,
+   "rssMb": 607,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 11181,
+   "pssMb": 489,
+   "rssMb": 602,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 12203,
+   "pssMb": 491,
+   "rssMb": 602,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 13223,
+   "pssMb": 491,
+   "rssMb": 610,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 14246,
+   "pssMb": 491,
+   "rssMb": 707,
+   "procs": 10,
+   "cgMb": 512
+  },
+  {
+   "t": 15261,
+   "pssMb": 490,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 16284,
+   "pssMb": 491,
+   "rssMb": 615,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 17307,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 18321,
+   "pssMb": 492,
+   "rssMb": 617,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 19342,
+   "pssMb": 490,
+   "rssMb": 615,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 20360,
+   "pssMb": 490,
+   "rssMb": 614,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 21374,
+   "pssMb": 491,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 22391,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 23413,
+   "pssMb": 492,
+   "rssMb": 615,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 24437,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 25454,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 26471,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 27494,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 28514,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 29530,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 30556,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 31580,
+   "pssMb": 492,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 32593,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 33610,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 34646,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 35671,
+   "pssMb": 493,
+   "rssMb": 617,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 36696,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 37708,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 38727,
+   "pssMb": 493,
+   "rssMb": 617,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 39760,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 40790,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 41816,
+   "pssMb": 493,
+   "rssMb": 616,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 42838,
+   "pssMb": 493,
+   "rssMb": 617,
+   "procs": 11,
+   "cgMb": 512
+  },
+  {
+   "t": 43839,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 43
+  },
+  {
+   "t": 44840,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 45843,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 46845,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 47847,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 48849,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 49852,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 50854,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 51857,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 52860,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 53862,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 54864,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 55866,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 56868,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 57871,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 58873,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 59875,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 60877,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 61880,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 62883,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 63885,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 64887,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 65890,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 66892,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 67895,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 68897,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 69899,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 70901,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 71903,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 72906,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  },
+  {
+   "t": 73908,
+   "pssMb": 0,
+   "rssMb": 0,
+   "procs": 0,
+   "cgMb": 42
+  }
+ ],
+ "restores": [],
+ "errors": [
+  {
+   "t": 31291,
+   "where": "open",
+   "message": "WebDriver:ExecuteScript timed out after 17000 ms"
+  },
+  {
+   "t": 43777,
+   "where": "open",
+   "message": "connection closed"
+  }
+ ],
+ "browserExited": {
+  "t": 43778,
+  "code": null,
+  "signal": "SIGKILL"
+ },
+ "breakdown": {},
+ "activeSwitches": 0,
+ "oomKills": 1,
+ "cgroupMaxMb": 512,
+ "summary": {
+  "peakPssMb": 495,
+  "peakRssMb": 938,
+  "steadyPssMb": null,
+  "steadyRssMb": null,
+  "steadyProcs": null,
+  "restoreMedianMs": null,
+  "restoreReloaded": 0,
+  "restoreFailed": 0,
+  "errors": 2,
+  "oomKills": 1,
+  "crashed": true
+ }
+}
