@@ -38,8 +38,13 @@ export interface BackgroundWorkOptions {
 
 /** How long a held startup sweep waits before it looks at the hold again. */
 export const HOLD_RECHECK_MS = 5_000
-/** An idle worker is let go after this; the next task spawns one again. */
-export const WORKER_IDLE_MS = 30_000
+/**
+ * An idle worker is let go after this; the next task spawns one again. Short: the worker's own
+ * V8 heap holds on to the 100–300 MB a list or feed parse needed until the worker exits, and
+ * the tasks come in bursts (startup, a sweep) a second or two apart, so a respawn is rare and
+ * cheap (tens of ms) next to holding that memory for half a minute.
+ */
+export const WORKER_IDLE_MS = 3_000
 
 export class BackgroundWork {
   private worker: BackgroundWorkerHandle | null = null

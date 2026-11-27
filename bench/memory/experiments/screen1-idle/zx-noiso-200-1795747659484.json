@@ -1,0 +1,1503 @@
+{
+ "browser": "zenium",
+ "label": "zx-noiso",
+ "preset": "200/20",
+ "capMb": null,
+ "args": "[\"--disable-site-isolation-trials\"]",
+ "zeniumState": null,
+ "startedAt": "2026-11-27T02:47:39.484Z",
+ "phases": {
+  "launched": 620,
+  "opened": 70457,
+  "settled": 100460,
+  "active": 250642,
+  "restored": 263807
+ },
+ "samples": [
+  {
+   "t": 1066,
+   "pssMb": 468,
+   "rssMb": 878,
+   "procs": 7
+  },
+  {
+   "t": 2095,
+   "pssMb": 671,
+   "rssMb": 1166,
+   "procs": 8
+  },
+  {
+   "t": 3111,
+   "pssMb": 670,
+   "rssMb": 1165,
+   "procs": 8
+  },
+  {
+   "t": 4145,
+   "pssMb": 710,
+   "rssMb": 1350,
+   "procs": 10
+  },
+  {
+   "t": 5198,
+   "pssMb": 881,
+   "rssMb": 1659,
+   "procs": 11
+  },
+  {
+   "t": 6303,
+   "pssMb": 993,
+   "rssMb": 1941,
+   "procs": 13
+  },
+  {
+   "t": 7415,
+   "pssMb": 1127,
+   "rssMb": 2097,
+   "procs": 13
+  },
+  {
+   "t": 8486,
+   "pssMb": 1349,
+   "rssMb": 2474,
+   "procs": 15
+  },
+  {
+   "t": 9577,
+   "pssMb": 1467,
+   "rssMb": 2787,
+   "procs": 17
+  },
+  {
+   "t": 10631,
+   "pssMb": 1595,
+   "rssMb": 3028,
+   "procs": 18
+  },
+  {
+   "t": 11715,
+   "pssMb": 1700,
+   "rssMb": 3251,
+   "procs": 19
+  },
+  {
+   "t": 12784,
+   "pssMb": 1828,
+   "rssMb": 3403,
+   "procs": 19
+  },
+  {
+   "t": 13858,
+   "pssMb": 1827,
+   "rssMb": 3532,
+   "procs": 21
+  },
+  {
+   "t": 14965,
+   "pssMb": 2000,
+   "rssMb": 3857,
+   "procs": 22
+  },
+  {
+   "t": 16088,
+   "pssMb": 2123,
+   "rssMb": 4073,
+   "procs": 23
+  },
+  {
+   "t": 17179,
+   "pssMb": 2159,
+   "rssMb": 4401,
+   "procs": 26
+  },
+  {
+   "t": 18240,
+   "pssMb": 2334,
+   "rssMb": 4847,
+   "procs": 29
+  },
+  {
+   "t": 19342,
+   "pssMb": 2417,
+   "rssMb": 5024,
+   "procs": 30
+  },
+  {
+   "t": 20554,
+   "pssMb": 2607,
+   "rssMb": 5457,
+   "procs": 33
+  },
+  {
+   "t": 21707,
+   "pssMb": 2684,
+   "rssMb": 5724,
+   "procs": 35
+  },
+  {
+   "t": 22814,
+   "pssMb": 2301,
+   "rssMb": 5142,
+   "procs": 33
+  },
+  {
+   "t": 24302,
+   "pssMb": 2340,
+   "rssMb": 5146,
+   "procs": 32
+  },
+  {
+   "t": 25530,
+   "pssMb": 2516,
+   "rssMb": 5336,
+   "procs": 32
+  },
+  {
+   "t": 26604,
+   "pssMb": 2502,
+   "rssMb": 5409,
+   "procs": 33
+  },
+  {
+   "t": 27743,
+   "pssMb": 2578,
+   "rssMb": 5482,
+   "procs": 33
+  },
+  {
+   "t": 28889,
+   "pssMb": 2657,
+   "rssMb": 5678,
+   "procs": 35
+  },
+  {
+   "t": 30013,
+   "pssMb": 2566,
+   "rssMb": 5519,
+   "procs": 34
+  },
+  {
+   "t": 31128,
+   "pssMb": 2581,
+   "rssMb": 5610,
+   "procs": 35
+  },
+  {
+   "t": 32241,
+   "pssMb": 2336,
+   "rssMb": 5247,
+   "procs": 34
+  },
+  {
+   "t": 33305,
+   "pssMb": 2299,
+   "rssMb": 5251,
+   "procs": 34
+  },
+  {
+   "t": 34365,
+   "pssMb": 1718,
+   "rssMb": 4100,
+   "procs": 29
+  },
+  {
+   "t": 35435,
+   "pssMb": 1831,
+   "rssMb": 4262,
+   "procs": 29
+  },
+  {
+   "t": 36506,
+   "pssMb": 1858,
+   "rssMb": 4302,
+   "procs": 29
+  },
+  {
+   "t": 37626,
+   "pssMb": 1979,
+   "rssMb": 4427,
+   "procs": 29
+  },
+  {
+   "t": 38738,
+   "pssMb": 1997,
+   "rssMb": 4540,
+   "procs": 30
+  },
+  {
+   "t": 39819,
+   "pssMb": 2046,
+   "rssMb": 4681,
+   "procs": 31
+  },
+  {
+   "t": 40940,
+   "pssMb": 2142,
+   "rssMb": 4876,
+   "procs": 32
+  },
+  {
+   "t": 42015,
+   "pssMb": 2203,
+   "rssMb": 4860,
+   "procs": 31
+  },
+  {
+   "t": 43085,
+   "pssMb": 2287,
+   "rssMb": 5043,
+   "procs": 32
+  },
+  {
+   "t": 44146,
+   "pssMb": 2345,
+   "rssMb": 5115,
+   "procs": 32
+  },
+  {
+   "t": 45194,
+   "pssMb": 2134,
+   "rssMb": 4855,
+   "procs": 32
+  },
+  {
+   "t": 46252,
+   "pssMb": 2194,
+   "rssMb": 5104,
+   "procs": 34
+  },
+  {
+   "t": 47339,
+   "pssMb": 1875,
+   "rssMb": 4605,
+   "procs": 32
+  },
+  {
+   "t": 48418,
+   "pssMb": 1920,
+   "rssMb": 4715,
+   "procs": 33
+  },
+  {
+   "t": 49511,
+   "pssMb": 1977,
+   "rssMb": 4788,
+   "procs": 33
+  },
+  {
+   "t": 50601,
+   "pssMb": 1985,
+   "rssMb": 4753,
+   "procs": 33
+  },
+  {
+   "t": 51687,
+   "pssMb": 1984,
+   "rssMb": 4688,
+   "procs": 32
+  },
+  {
+   "t": 52802,
+   "pssMb": 1886,
+   "rssMb": 4571,
+   "procs": 32
+  },
+  {
+   "t": 53876,
+   "pssMb": 1952,
+   "rssMb": 4666,
+   "procs": 32
+  },
+  {
+   "t": 54955,
+   "pssMb": 1880,
+   "rssMb": 4562,
+   "procs": 32
+  },
+  {
+   "t": 56034,
+   "pssMb": 1648,
+   "rssMb": 4314,
+   "procs": 32
+  },
+  {
+   "t": 57100,
+   "pssMb": 1616,
+   "rssMb": 4300,
+   "procs": 32
+  },
+  {
+   "t": 58205,
+   "pssMb": 1624,
+   "rssMb": 4385,
+   "procs": 33
+  },
+  {
+   "t": 59299,
+   "pssMb": 1729,
+   "rssMb": 4532,
+   "procs": 33
+  },
+  {
+   "t": 60438,
+   "pssMb": 1825,
+   "rssMb": 4711,
+   "procs": 34
+  },
+  {
+   "t": 61497,
+   "pssMb": 1883,
+   "rssMb": 4875,
+   "procs": 35
+  },
+  {
+   "t": 62577,
+   "pssMb": 1863,
+   "rssMb": 4779,
+   "procs": 34
+  },
+  {
+   "t": 63676,
+   "pssMb": 1894,
+   "rssMb": 4799,
+   "procs": 34
+  },
+  {
+   "t": 64775,
+   "pssMb": 1912,
+   "rssMb": 4825,
+   "procs": 34
+  },
+  {
+   "t": 65848,
+   "pssMb": 1938,
+   "rssMb": 4813,
+   "procs": 33
+  },
+  {
+   "t": 66911,
+   "pssMb": 1975,
+   "rssMb": 4955,
+   "procs": 34
+  },
+  {
+   "t": 67975,
+   "pssMb": 2058,
+   "rssMb": 5049,
+   "procs": 34
+  },
+  {
+   "t": 69036,
+   "pssMb": 2060,
+   "rssMb": 5125,
+   "procs": 35
+  },
+  {
+   "t": 70113,
+   "pssMb": 2102,
+   "rssMb": 5192,
+   "procs": 35
+  },
+  {
+   "t": 71190,
+   "pssMb": 2124,
+   "rssMb": 5226,
+   "procs": 35
+  },
+  {
+   "t": 72279,
+   "pssMb": 2043,
+   "rssMb": 5172,
+   "procs": 36
+  },
+  {
+   "t": 73357,
+   "pssMb": 1971,
+   "rssMb": 5075,
+   "procs": 36
+  },
+  {
+   "t": 74413,
+   "pssMb": 1948,
+   "rssMb": 4986,
+   "procs": 35
+  },
+  {
+   "t": 75480,
+   "pssMb": 1972,
+   "rssMb": 5098,
+   "procs": 36
+  },
+  {
+   "t": 76533,
+   "pssMb": 1931,
+   "rssMb": 5029,
+   "procs": 36
+  },
+  {
+   "t": 77601,
+   "pssMb": 1896,
+   "rssMb": 4979,
+   "procs": 36
+  },
+  {
+   "t": 78676,
+   "pssMb": 1885,
+   "rssMb": 4886,
+   "procs": 35
+  },
+  {
+   "t": 79741,
+   "pssMb": 1903,
+   "rssMb": 4917,
+   "procs": 35
+  },
+  {
+   "t": 80856,
+   "pssMb": 1839,
+   "rssMb": 4856,
+   "procs": 36
+  },
+  {
+   "t": 81932,
+   "pssMb": 1807,
+   "rssMb": 4728,
+   "procs": 34
+  },
+  {
+   "t": 83055,
+   "pssMb": 1865,
+   "rssMb": 4812,
+   "procs": 34
+  },
+  {
+   "t": 84138,
+   "pssMb": 1837,
+   "rssMb": 4774,
+   "procs": 34
+  },
+  {
+   "t": 85187,
+   "pssMb": 1762,
+   "rssMb": 4578,
+   "procs": 33
+  },
+  {
+   "t": 86264,
+   "pssMb": 2052,
+   "rssMb": 4876,
+   "procs": 33
+  },
+  {
+   "t": 87327,
+   "pssMb": 1969,
+   "rssMb": 4897,
+   "procs": 35
+  },
+  {
+   "t": 88418,
+   "pssMb": 1966,
+   "rssMb": 4867,
+   "procs": 34
+  },
+  {
+   "t": 89611,
+   "pssMb": 1875,
+   "rssMb": 4720,
+   "procs": 34
+  },
+  {
+   "t": 90699,
+   "pssMb": 1823,
+   "rssMb": 4562,
+   "procs": 33
+  },
+  {
+   "t": 91776,
+   "pssMb": 1901,
+   "rssMb": 4680,
+   "procs": 33
+  },
+  {
+   "t": 92875,
+   "pssMb": 1900,
+   "rssMb": 4655,
+   "procs": 34
+  },
+  {
+   "t": 93952,
+   "pssMb": 1907,
+   "rssMb": 4656,
+   "procs": 33
+  },
+  {
+   "t": 95004,
+   "pssMb": 1946,
+   "rssMb": 4695,
+   "procs": 33
+  },
+  {
+   "t": 96082,
+   "pssMb": 2007,
+   "rssMb": 4766,
+   "procs": 33
+  },
+  {
+   "t": 97167,
+   "pssMb": 2014,
+   "rssMb": 4749,
+   "procs": 33
+  },
+  {
+   "t": 98235,
+   "pssMb": 1761,
+   "rssMb": 4478,
+   "procs": 33
+  },
+  {
+   "t": 99313,
+   "pssMb": 1834,
+   "rssMb": 4603,
+   "procs": 33
+  },
+  {
+   "t": 100382,
+   "pssMb": 1530,
+   "rssMb": 4194,
+   "procs": 33
+  },
+  {
+   "t": 101467,
+   "pssMb": 1572,
+   "rssMb": 4377,
+   "procs": 34
+  },
+  {
+   "t": 102535,
+   "pssMb": 1493,
+   "rssMb": 4207,
+   "procs": 33
+  },
+  {
+   "t": 103705,
+   "pssMb": 1597,
+   "rssMb": 4339,
+   "procs": 33
+  },
+  {
+   "t": 104873,
+   "pssMb": 1699,
+   "rssMb": 4457,
+   "procs": 33
+  },
+  {
+   "t": 106300,
+   "pssMb": 1842,
+   "rssMb": 4538,
+   "procs": 32
+  },
+  {
+   "t": 107588,
+   "pssMb": 1978,
+   "rssMb": 4774,
+   "procs": 33
+  },
+  {
+   "t": 108752,
+   "pssMb": 2088,
+   "rssMb": 4927,
+   "procs": 33
+  },
+  {
+   "t": 110020,
+   "pssMb": 2167,
+   "rssMb": 5023,
+   "procs": 33
+  },
+  {
+   "t": 111142,
+   "pssMb": 2232,
+   "rssMb": 5109,
+   "procs": 33
+  },
+  {
+   "t": 112648,
+   "pssMb": 2321,
+   "rssMb": 5218,
+   "procs": 33
+  },
+  {
+   "t": 113969,
+   "pssMb": 2392,
+   "rssMb": 5348,
+   "procs": 33
+  },
+  {
+   "t": 115230,
+   "pssMb": 2520,
+   "rssMb": 5475,
+   "procs": 33
+  },
+  {
+   "t": 116366,
+   "pssMb": 2193,
+   "rssMb": 4973,
+   "procs": 31
+  },
+  {
+   "t": 117488,
+   "pssMb": 2255,
+   "rssMb": 5086,
+   "procs": 32
+  },
+  {
+   "t": 118612,
+   "pssMb": 2334,
+   "rssMb": 5220,
+   "procs": 32
+  },
+  {
+   "t": 119864,
+   "pssMb": 2262,
+   "rssMb": 5204,
+   "procs": 33
+  },
+  {
+   "t": 121044,
+   "pssMb": 1718,
+   "rssMb": 4114,
+   "procs": 29
+  },
+  {
+   "t": 122263,
+   "pssMb": 1905,
+   "rssMb": 4386,
+   "procs": 29
+  },
+  {
+   "t": 123345,
+   "pssMb": 1960,
+   "rssMb": 4536,
+   "procs": 30
+  },
+  {
+   "t": 124406,
+   "pssMb": 1926,
+   "rssMb": 4505,
+   "procs": 30
+  },
+  {
+   "t": 125464,
+   "pssMb": 1938,
+   "rssMb": 4544,
+   "procs": 30
+  },
+  {
+   "t": 126550,
+   "pssMb": 1920,
+   "rssMb": 4532,
+   "procs": 30
+  },
+  {
+   "t": 127627,
+   "pssMb": 1935,
+   "rssMb": 4638,
+   "procs": 31
+  },
+  {
+   "t": 128690,
+   "pssMb": 1973,
+   "rssMb": 4699,
+   "procs": 31
+  },
+  {
+   "t": 129748,
+   "pssMb": 1966,
+   "rssMb": 4696,
+   "procs": 31
+  },
+  {
+   "t": 130803,
+   "pssMb": 1944,
+   "rssMb": 4659,
+   "procs": 31
+  },
+  {
+   "t": 131861,
+   "pssMb": 1972,
+   "rssMb": 4705,
+   "procs": 31
+  },
+  {
+   "t": 132915,
+   "pssMb": 1961,
+   "rssMb": 4700,
+   "procs": 31
+  },
+  {
+   "t": 134003,
+   "pssMb": 2010,
+   "rssMb": 4915,
+   "procs": 33
+  },
+  {
+   "t": 135114,
+   "pssMb": 1818,
+   "rssMb": 4774,
+   "procs": 34
+  },
+  {
+   "t": 136198,
+   "pssMb": 1775,
+   "rssMb": 4721,
+   "procs": 34
+  },
+  {
+   "t": 137334,
+   "pssMb": 1794,
+   "rssMb": 4680,
+   "procs": 33
+  },
+  {
+   "t": 138409,
+   "pssMb": 1730,
+   "rssMb": 4592,
+   "procs": 33
+  },
+  {
+   "t": 139495,
+   "pssMb": 1780,
+   "rssMb": 4683,
+   "procs": 33
+  },
+  {
+   "t": 140566,
+   "pssMb": 1758,
+   "rssMb": 4653,
+   "procs": 33
+  },
+  {
+   "t": 141722,
+   "pssMb": 1756,
+   "rssMb": 4663,
+   "procs": 33
+  },
+  {
+   "t": 142802,
+   "pssMb": 1788,
+   "rssMb": 4601,
+   "procs": 32
+  },
+  {
+   "t": 143993,
+   "pssMb": 1785,
+   "rssMb": 4611,
+   "procs": 32
+  },
+  {
+   "t": 145271,
+   "pssMb": 1790,
+   "rssMb": 4560,
+   "procs": 32
+  },
+  {
+   "t": 146556,
+   "pssMb": 1921,
+   "rssMb": 4678,
+   "procs": 32
+  },
+  {
+   "t": 147758,
+   "pssMb": 1976,
+   "rssMb": 4810,
+   "procs": 32
+  },
+  {
+   "t": 148974,
+   "pssMb": 2027,
+   "rssMb": 5070,
+   "procs": 35
+  },
+  {
+   "t": 150123,
+   "pssMb": 1992,
+   "rssMb": 4957,
+   "procs": 34
+  },
+  {
+   "t": 151509,
+   "pssMb": 2074,
+   "rssMb": 5016,
+   "procs": 34
+  },
+  {
+   "t": 152942,
+   "pssMb": 2072,
+   "rssMb": 5044,
+   "procs": 34
+  },
+  {
+   "t": 154025,
+   "pssMb": 1884,
+   "rssMb": 4785,
+   "procs": 34
+  },
+  {
+   "t": 155126,
+   "pssMb": 1830,
+   "rssMb": 4767,
+   "procs": 34
+  },
+  {
+   "t": 156306,
+   "pssMb": 1936,
+   "rssMb": 4920,
+   "procs": 35
+  },
+  {
+   "t": 157433,
+   "pssMb": 2088,
+   "rssMb": 5143,
+   "procs": 35
+  },
+  {
+   "t": 158571,
+   "pssMb": 2043,
+   "rssMb": 5057,
+   "procs": 35
+  },
+  {
+   "t": 159856,
+   "pssMb": 2229,
+   "rssMb": 5336,
+   "procs": 36
+  },
+  {
+   "t": 161054,
+   "pssMb": 2321,
+   "rssMb": 5444,
+   "procs": 36
+  },
+  {
+   "t": 162126,
+   "pssMb": 2499,
+   "rssMb": 5656,
+   "procs": 36
+  },
+  {
+   "t": 163302,
+   "pssMb": 2568,
+   "rssMb": 5786,
+   "procs": 37
+  },
+  {
+   "t": 164425,
+   "pssMb": 2514,
+   "rssMb": 5642,
+   "procs": 35
+  },
+  {
+   "t": 165624,
+   "pssMb": 2530,
+   "rssMb": 5670,
+   "procs": 35
+  },
+  {
+   "t": 166759,
+   "pssMb": 2631,
+   "rssMb": 5800,
+   "procs": 35
+  },
+  {
+   "t": 167949,
+   "pssMb": 2745,
+   "rssMb": 5917,
+   "procs": 35
+  },
+  {
+   "t": 169054,
+   "pssMb": 2808,
+   "rssMb": 6001,
+   "procs": 35
+  },
+  {
+   "t": 170180,
+   "pssMb": 2735,
+   "rssMb": 5807,
+   "procs": 34
+  },
+  {
+   "t": 171388,
+   "pssMb": 2860,
+   "rssMb": 6106,
+   "procs": 36
+  },
+  {
+   "t": 172479,
+   "pssMb": 1783,
+   "rssMb": 4230,
+   "procs": 29
+  },
+  {
+   "t": 173615,
+   "pssMb": 1914,
+   "rssMb": 4448,
+   "procs": 29
+  },
+  {
+   "t": 174919,
+   "pssMb": 1976,
+   "rssMb": 4644,
+   "procs": 31
+  },
+  {
+   "t": 176053,
+   "pssMb": 2071,
+   "rssMb": 4876,
+   "procs": 32
+  },
+  {
+   "t": 177180,
+   "pssMb": 2145,
+   "rssMb": 4976,
+   "procs": 32
+  },
+  {
+   "t": 178324,
+   "pssMb": 2148,
+   "rssMb": 5069,
+   "procs": 33
+  },
+  {
+   "t": 179468,
+   "pssMb": 2245,
+   "rssMb": 5185,
+   "procs": 33
+  },
+  {
+   "t": 180695,
+   "pssMb": 2294,
+   "rssMb": 5321,
+   "procs": 34
+  },
+  {
+   "t": 181845,
+   "pssMb": 1798,
+   "rssMb": 4609,
+   "procs": 33
+  },
+  {
+   "t": 182930,
+   "pssMb": 1834,
+   "rssMb": 4648,
+   "procs": 33
+  },
+  {
+   "t": 184043,
+   "pssMb": 1903,
+   "rssMb": 4660,
+   "procs": 32
+  },
+  {
+   "t": 185163,
+   "pssMb": 1934,
+   "rssMb": 4705,
+   "procs": 32
+  },
+  {
+   "t": 186281,
+   "pssMb": 1975,
+   "rssMb": 4703,
+   "procs": 32
+  },
+  {
+   "t": 187352,
+   "pssMb": 2024,
+   "rssMb": 4807,
+   "procs": 32
+  },
+  {
+   "t": 188483,
+   "pssMb": 2102,
+   "rssMb": 4939,
+   "procs": 32
+  },
+  {
+   "t": 189836,
+   "pssMb": 2181,
+   "rssMb": 5050,
+   "procs": 32
+  },
+  {
+   "t": 190968,
+   "pssMb": 2145,
+   "rssMb": 5095,
+   "procs": 33
+  },
+  {
+   "t": 192084,
+   "pssMb": 2042,
+   "rssMb": 5026,
+   "procs": 34
+  },
+  {
+   "t": 193146,
+   "pssMb": 1675,
+   "rssMb": 4245,
+   "procs": 30
+  },
+  {
+   "t": 194279,
+   "pssMb": 1612,
+   "rssMb": 4296,
+   "procs": 32
+  },
+  {
+   "t": 195362,
+   "pssMb": 1697,
+   "rssMb": 4520,
+   "procs": 33
+  },
+  {
+   "t": 196489,
+   "pssMb": 1795,
+   "rssMb": 4699,
+   "procs": 34
+  },
+  {
+   "t": 197722,
+   "pssMb": 1936,
+   "rssMb": 4923,
+   "procs": 34
+  },
+  {
+   "t": 199003,
+   "pssMb": 2028,
+   "rssMb": 4984,
+   "procs": 34
+  },
+  {
+   "t": 200118,
+   "pssMb": 2073,
+   "rssMb": 5166,
+   "procs": 36
+  },
+  {
+   "t": 201322,
+   "pssMb": 1991,
+   "rssMb": 4962,
+   "procs": 35
+  },
+  {
+   "t": 202401,
+   "pssMb": 2017,
+   "rssMb": 5120,
+   "procs": 36
+  },
+  {
+   "t": 203482,
+   "pssMb": 2031,
+   "rssMb": 5111,
+   "procs": 35
+  },
+  {
+   "t": 204593,
+   "pssMb": 2092,
+   "rssMb": 5188,
+   "procs": 35
+  },
+  {
+   "t": 205845,
+   "pssMb": 2146,
+   "rssMb": 5156,
+   "procs": 34
+  },
+  {
+   "t": 207260,
+   "pssMb": 2362,
+   "rssMb": 5499,
+   "procs": 35
+  },
+  {
+   "t": 208598,
+   "pssMb": 2487,
+   "rssMb": 5665,
+   "procs": 35
+  },
+  {
+   "t": 209749,
+   "pssMb": 2429,
+   "rssMb": 5465,
+   "procs": 34
+  },
+  {
+   "t": 211061,
+   "pssMb": 2558,
+   "rssMb": 5656,
+   "procs": 34
+  },
+  {
+   "t": 212217,
+   "pssMb": 2208,
+   "rssMb": 4876,
+   "procs": 30
+  },
+  {
+   "t": 213406,
+   "pssMb": 2295,
+   "rssMb": 5085,
+   "procs": 31
+  },
+  {
+   "t": 214674,
+   "pssMb": 2060,
+   "rssMb": 4765,
+   "procs": 31
+  },
+  {
+   "t": 215768,
+   "pssMb": 2131,
+   "rssMb": 4873,
+   "procs": 31
+  },
+  {
+   "t": 216848,
+   "pssMb": 2243,
+   "rssMb": 5041,
+   "procs": 31
+  },
+  {
+   "t": 217975,
+   "pssMb": 2286,
+   "rssMb": 5170,
+   "procs": 32
+  },
+  {
+   "t": 219062,
+   "pssMb": 2366,
+   "rssMb": 5277,
+   "procs": 32
+  },
+  {
+   "t": 220145,
+   "pssMb": 2353,
+   "rssMb": 5274,
+   "procs": 32
+  },
+  {
+   "t": 221252,
+   "pssMb": 2453,
+   "rssMb": 5485,
+   "procs": 33
+  },
+  {
+   "t": 222317,
+   "pssMb": 2422,
+   "rssMb": 5457,
+   "procs": 33
+  },
+  {
+   "t": 223478,
+   "pssMb": 2457,
+   "rssMb": 5570,
+   "procs": 34
+  },
+  {
+   "t": 224542,
+   "pssMb": 2486,
+   "rssMb": 5620,
+   "procs": 34
+  },
+  {
+   "t": 225607,
+   "pssMb": 2475,
+   "rssMb": 5669,
+   "procs": 35
+  },
+  {
+   "t": 226709,
+   "pssMb": 2536,
+   "rssMb": 5665,
+   "procs": 34
+  },
+  {
+   "t": 227783,
+   "pssMb": 2488,
+   "rssMb": 5633,
+   "procs": 34
+  },
+  {
+   "t": 228891,
+   "pssMb": 2576,
+   "rssMb": 5827,
+   "procs": 35
+  },
+  {
+   "t": 229982,
+   "pssMb": 2592,
+   "rssMb": 5756,
+   "procs": 34
+  },
+  {
+   "t": 231066,
+   "pssMb": 2613,
+   "rssMb": 5767,
+   "procs": 34
+  },
+  {
+   "t": 232132,
+   "pssMb": 2593,
+   "rssMb": 5749,
+   "procs": 34
+  },
+  {
+   "t": 233190,
+   "pssMb": 2311,
+   "rssMb": 5125,
+   "procs": 31
+  },
+  {
+   "t": 234266,
+   "pssMb": 1702,
+   "rssMb": 4054,
+   "procs": 27
+  },
+  {
+   "t": 235315,
+   "pssMb": 1699,
+   "rssMb": 4052,
+   "procs": 27
+  },
+  {
+   "t": 236361,
+   "pssMb": 1678,
+   "rssMb": 4148,
+   "procs": 28
+  },
+  {
+   "t": 237422,
+   "pssMb": 1665,
+   "rssMb": 4137,
+   "procs": 28
+  },
+  {
+   "t": 238503,
+   "pssMb": 1559,
+   "rssMb": 3882,
+   "procs": 27
+  },
+  {
+   "t": 239581,
+   "pssMb": 1595,
+   "rssMb": 3954,
+   "procs": 27
+  },
+  {
+   "t": 240634,
+   "pssMb": 1623,
+   "rssMb": 3992,
+   "procs": 27
+  },
+  {
+   "t": 241711,
+   "pssMb": 1658,
+   "rssMb": 4013,
+   "procs": 27
+  },
+  {
+   "t": 242775,
+   "pssMb": 1650,
+   "rssMb": 4012,
+   "procs": 27
+  },
+  {
+   "t": 243823,
+   "pssMb": 1693,
+   "rssMb": 4144,
+   "procs": 28
+  },
+  {
+   "t": 244873,
+   "pssMb": 1760,
+   "rssMb": 4243,
+   "procs": 28
+  },
+  {
+   "t": 245935,
+   "pssMb": 1776,
+   "rssMb": 4320,
+   "procs": 29
+  },
+  {
+   "t": 247001,
+   "pssMb": 1848,
+   "rssMb": 4427,
+   "procs": 29
+  },
+  {
+   "t": 248052,
+   "pssMb": 1790,
+   "rssMb": 4371,
+   "procs": 29
+  },
+  {
+   "t": 249143,
+   "pssMb": 1883,
+   "rssMb": 4583,
+   "procs": 30
+  },
+  {
+   "t": 250221,
+   "pssMb": 1925,
+   "rssMb": 4643,
+   "procs": 30
+  },
+  {
+   "t": 251337,
+   "pssMb": 2042,
+   "rssMb": 4839,
+   "procs": 31
+  },
+  {
+   "t": 252399,
+   "pssMb": 2098,
+   "rssMb": 4915,
+   "procs": 31
+  },
+  {
+   "t": 253488,
+   "pssMb": 2102,
+   "rssMb": 4978,
+   "procs": 32
+  },
+  {
+   "t": 254552,
+   "pssMb": 2177,
+   "rssMb": 5106,
+   "procs": 32
+  },
+  {
+   "t": 255611,
+   "pssMb": 2240,
+   "rssMb": 5176,
+   "procs": 32
+  },
+  {
+   "t": 256681,
+   "pssMb": 2243,
+   "rssMb": 5261,
+   "procs": 33
+  },
+  {
+   "t": 257738,
+   "pssMb": 2232,
+   "rssMb": 5250,
+   "procs": 33
+  },
+  {
+   "t": 258829,
+   "pssMb": 2226,
+   "rssMb": 5308,
+   "procs": 34
+  },
+  {
+   "t": 259907,
+   "pssMb": 2272,
+   "rssMb": 5292,
+   "procs": 33
+  },
+  {
+   "t": 260963,
+   "pssMb": 2272,
+   "rssMb": 5295,
+   "procs": 33
+  },
+  {
+   "t": 262065,
+   "pssMb": 2227,
+   "rssMb": 5235,
+   "procs": 33
+  },
+  {
+   "t": 263127,
+   "pssMb": 2248,
+   "rssMb": 5262,
+   "procs": 33
+  }
+ ],
+ "restores": [
+  {
+   "url": "https://www.freecodecamp.org/",
+   "ms": 652,
+   "reloaded": true
+  },
+  {
+   "url": "https://www.coursera.org/",
+   "ms": 712,
+   "reloaded": true
+  },
+  {
+   "url": "https://en.wikipedia.org/wiki/World_War_II",
+   "ms": 588,
+   "reloaded": true
+  },
+  {
+   "url": "https://www.dictionary.com/",
+   "ms": 563,
+   "reloaded": true
+  },
+  {
+   "url": "https://www.lonelyplanet.com/",
+   "ms": 558,
+   "reloaded": true
+  }
+ ],
+ "errors": [
+  {
+   "t": 135547,
+   "where": "active",
+   "message": "Input.dispatchMouseEvent timed out after 5000 ms"
+  }
+ ],
+ "browserExited": null,
+ "breakdown": {
+  "renderer": {
+   "count": 24,
+   "pssMb": 1327
+  },
+  "browser": {
+   "count": 1,
+   "pssMb": 439
+  },
+  "gpu-process": {
+   "count": 1,
+   "pssMb": 119
+  },
+  "utility:network": {
+   "count": 1,
+   "pssMb": 43
+  },
+  "utility:audio": {
+   "count": 1,
+   "pssMb": 19
+  },
+  "zygote": {
+   "count": 2,
+   "pssMb": 17
+  }
+ },
+ "activeSwitches": 56,
+ "summary": {
+  "peakPssMb": 2860,
+  "peakRssMb": 6106,
+  "steadyPssMb": 2066.5,
+  "steadyRssMb": 5033.5,
+  "steadyProcs": 32.5,
+  "restoreMedianMs": 588,
+  "restoreReloaded": 5,
+  "restoreFailed": 0,
+  "errors": 1,
+  "oomKills": 0,
+  "crashed": false
+ }
+}

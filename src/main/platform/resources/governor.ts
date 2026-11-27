@@ -1,5 +1,5 @@
 import { app, powerMonitor, type WebContents } from 'electron'
-import { availableParallelism, totalmem } from 'node:os'
+import { availableParallelism } from 'node:os'
 import type { Governor, TabView } from '../../../core/platform'
 import { ElectronTabView, ElectronTabViewHost } from '../views'
 import type { ElectronWindow } from '../window'
@@ -19,6 +19,8 @@ import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
 import { ConcurrencyClamp } from './clamp'
 import { hostMetrics } from './hostMetrics'
+import { effectiveTotalMemoryMb } from './memoryLimit'
+import { OomPriority } from './oomPriority'
 import { BatteryLevel, forceDeviceHasBatteryRequested } from './battery'
 import { energySaverActive } from '../../../core/resources/energySaver'
 import { LoadScheduler } from '../../../core/resources/scheduler'
@@ -69,6 +71,8 @@ export class ResourceGovernor implements Governor {
    */
   readonly clamp = new ConcurrencyClamp(this.lifecycle, () => this.concurrencyOverride())
   readonly scheduler: LoadScheduler
+  /** Hidden pages' renderers go first when the OS must kill something (`oomPriority.ts`). */
+  private readonly oom = new OomPriority()
   snapshot: ResourceSnapshot = emptyResourceSnapshot()
 
   private memory: PlannerMemory = emptyPlannerMemory()
@@ -258,6 +262,16 @@ export class ResourceGovernor implements Governor {
       const result = plan(input)
       this.memory = result.memory
       const changedModel = await this.execute(result.actions)
+      // After the plan: a page it froze or discarded is already in its new state.
+      this.oom.apply(
+        input.tabs
+          .filter((t) => t.loaded)
+          .map((t) => ({
+            pids: t.pids,
+            visible: t.visible,
+            frozen: t.frozen || Boolean(this.browser.tabs.tab(t.id)?.frozen)
+          }))
+      )
       this.publish(result, input, changedModel)
     } catch (error) {
       console.error('[zen] resource governor sample failed:', error)
@@ -505,7 +519,7 @@ export class ResourceGovernor implements Governor {
         timeoutMinutes: state.settings.unloadTimeoutMinutes
       },
       system: {
-        totalMemoryMb: totalmem() / 1_048_576,
+        totalMemoryMb: effectiveTotalMemoryMb(),
         cpuCount: cpuCount(),
         onBattery,
         energySaver: energySaverActive({
@@ -650,7 +664,15 @@ export class ResourceGovernor implements Governor {
         return true
       }
       case 'freeze':
-        if (!wc || !(await this.lifecycle.freeze(wc))) return false
+        if (!wc) return false
+        // Shed what the page can give back before it stops running (a frozen page's main
+        // thread cannot purge later): its renderer drops its caches – decoded images, fonts,
+        // the resource cache – as under critical memory pressure, and V8 collects garbage.
+        // Chrome's "purge and freeze"; best effort, the freeze goes ahead regardless.
+        await this.lifecycle.notifyMemoryPressure(wc, 'critical')
+        await this.lifecycle.purge(wc)
+        this.lastPurgedAt.set(tab.id, Date.now())
+        if (!(await this.lifecycle.freeze(wc))) return false
         tab.frozen = true
         return true
       case 'thaw':
