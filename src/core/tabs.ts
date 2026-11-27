@@ -3396,6 +3396,26 @@ export class TabManager {
     if (changed) this.browser.state.commitVolatile()
   }
 
+  /**
+   * Keep a tab awake, or let it sleep again (tab menu → Sleep → Keep This Tab Awake): a kept tab
+   * is never frozen or unloaded by any mode, timer or pressure; a frozen one wakes at once.
+   */
+  setKeepAwake(tabId: string, on: boolean): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    tab.keepAwake = on || undefined
+    if (on && (tab.frozen || tab.cpuThrottle > 1)) void this.browser.governor.wakeTab(tabId)
+    this.browser.state.commit()
+  }
+
+  /** Whether the site of `url` is on the never-sleep list (Sleep → Always Keep … Awake). */
+  siteKeptAwake(url: string): boolean {
+    return neverUnloaded(
+      url,
+      this.settings.unloadExcludedDomains.map((d) => d.toLowerCase())
+    )
+  }
+
   toggleMute(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
@@ -5247,7 +5267,8 @@ export class TabManager {
     const out: SleepCandidate[] = []
     for (const [id] of this.views) {
       const page = this.sleepCandidate(id, visible)
-      if (page !== null) out.push(page)
+      // A tab the person keeps awake is never a candidate (tab menu → Sleep).
+      if (page !== null && this.tab(id)?.keepAwake !== true) out.push(page)
     }
     return out
   }

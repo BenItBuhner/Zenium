@@ -193,6 +193,7 @@ export function sanitizeResourceSettings(raw: unknown): ResourceSettings {
   const p = isRecord(r.process) ? r.process : {}
   return {
     enabled: bool(r.enabled, d.enabled),
+    mode: oneOf(r.mode, ['auto', 'custom'], d.mode),
     enforcement: oneOf(r.enforcement, ['balanced', 'strict', 'extreme'], d.enforcement),
     memoryMb: int(r.memoryMb, d.memoryMb, 0, 1_048_576),
     memoryPercent: int(r.memoryPercent, d.memoryPercent, 5, 100),

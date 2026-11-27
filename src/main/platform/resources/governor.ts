@@ -19,7 +19,12 @@ import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
 import { ConcurrencyClamp } from './clamp'
 import { hostMetrics } from './hostMetrics'
-import { effectiveTotalMemoryMb } from './memoryLimit'
+import { availableMemoryMb, effectiveTotalMemoryMb } from './memoryLimit'
+import { join } from 'node:path'
+import { JsonStore } from '../../../core/store/JsonStore'
+import { FileStoreIO } from '../storeIo'
+import { HabitsTracker } from '../../../core/resources/habitsTracker'
+import type { TabHabits } from '../../../core/resources/habits'
 import { OomPriority } from './oomPriority'
 import { BatteryLevel, forceDeviceHasBatteryRequested } from './battery'
 import { energySaverActive } from '../../../core/resources/energySaver'
@@ -42,6 +47,8 @@ import {
 import { appliedStartupProfile } from './startup'
 import { deriveStartupProfile, pendingStartupSwitches } from '../../../core/resources/switches'
 
+/** Learned tab habits are written at most this often. */
+const HABITS_SAVE_MS = 5 * 60_000
 const BASE_INTERVAL_MS = 5_000
 const PRESSURE_INTERVAL_MS = 2_000
 const IDLE_INTERVAL_MS = 15_000
@@ -113,10 +120,30 @@ export class ResourceGovernor implements Governor {
   private batteryPercent: number | null = null
   private hasBattery: boolean | null = null
 
+  /**
+   * How this person comes back to tabs, learned on the device for Auto mode
+   * (`core/resources/habits.ts`); saved every few minutes and when the governor stops.
+   */
+  readonly habits: HabitsTracker
+  private readonly habitsStore: JsonStore<TabHabits> | null
+  private habitsSavedAt = Date.now()
+
   /** Windows whose minimise / restore events already feed the governor. */
   private readonly watched = new WeakSet<ZenWindow>()
 
   constructor(private readonly browser: Browser) {
+    this.habitsStore = safe(
+      () =>
+        new JsonStore<TabHabits>(
+          new FileStoreIO(join(app.getPath('userData'), 'zen')),
+          'habits.json'
+        ),
+      null
+    )
+    this.habits = new HabitsTracker(
+      safe(() => this.habitsStore?.readSync() ?? null, null),
+      Date.now()
+    )
     this.scheduler = new LoadScheduler({
       // The page is owned by the window that asked for it, if that window is still around; never
       // start a load once the last window is gone (`focusedWindow()` would open a new one).
@@ -236,6 +263,7 @@ export class ResourceGovernor implements Governor {
   }
 
   stop(): void {
+    this.saveHabits(true)
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
@@ -243,6 +271,16 @@ export class ResourceGovernor implements Governor {
     this.clamp.stop()
     hostMetrics.forget('governor')
     for (const cleanup of this.cleanups.splice(0)) cleanup()
+  }
+
+  /** Write the learned habits when they changed (every few minutes, or now). */
+  private saveHabits(now = false): void {
+    if (!this.habits.dirty || !this.habitsStore) return
+    if (!now && Date.now() - this.habitsSavedAt < HABITS_SAVE_MS) return
+    this.habits.dirty = false
+    this.habitsSavedAt = Date.now()
+    this.habitsStore.write(this.habits.habits)
+    if (now) void this.habitsStore.flush()
   }
 
   /** Re-sample shortly (settings changed, power source changed, window state changed …). */
@@ -266,6 +304,7 @@ export class ResourceGovernor implements Governor {
       const result = plan(input)
       this.memory = result.memory
       const changedModel = await this.execute(result.actions)
+      this.saveHabits()
       // After the plan: a page it froze or discarded is already in its new state.
       this.oom.apply(
         input.tabs
@@ -512,6 +551,15 @@ export class ResourceGovernor implements Governor {
       if (visible.has(tab.id)) this.lastVisibleAt.set(tab.id, now)
       samples.push(this.sampleTab(tab, this.wc(tab.id), visible, activeId))
     }
+    this.habits.update(
+      samples.map((t) => ({
+        id: t.id,
+        site: t.site ?? '',
+        visible: t.visible,
+        lastActiveAt: t.lastActiveAt
+      })),
+      now
+    )
     const onBattery = safe(() => powerMonitor.isOnBatteryPower(), false)
     this.batteryPercent = safe(() => this.battery.read(now), null)
     this.hasBattery = safe(() => this.battery.hasBattery(), null)
@@ -533,11 +581,13 @@ export class ResourceGovernor implements Governor {
           disabledForSession: this.energySaverDisabledForSession
         }),
         idleSeconds: safe(() => powerMonitor.getSystemIdleTime(), 0),
-        windowMinimized: this.windowMinimized()
+        windowMinimized: this.windowMinimized(),
+        availableMemoryMb: safe(() => availableMemoryMb(now), null) ?? undefined
       },
       processes,
       tabs: samples,
       memory: this.memory,
+      habits: this.habits.habits,
       force
     }
   }
@@ -569,6 +619,8 @@ export class ResourceGovernor implements Governor {
       excluded: isExcluded(tab.url, state.settings.unloadExcludedDomains),
       devtoolsOpen: state.devtoolsOpenFor.has(tab.id),
       agentDriven: this.browser.agents.isDriving(tab.id),
+      keepAwake: tab.keepAwake === true,
+      site: getDomain(tab.url),
       frozen: tab.frozen,
       cpuThrottle: tab.cpuThrottle,
       lastActiveAt: Math.max(tab.lastActiveAt, this.lastVisibleAt.get(tab.id) ?? 0),

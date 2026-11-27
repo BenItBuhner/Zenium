@@ -27,6 +27,8 @@ const MINUTE = 60_000
 function settings(overrides: Partial<ResourceSettings> = {}): ResourceSettings {
   return {
     ...structuredClone(DEFAULT_RESOURCE_SETTINGS),
+    // The fixed rules below are Custom mode's; Auto has its own block at the end.
+    mode: 'custom',
     memoryMb: 1000,
     cpuPercent: 50,
     gpuMemoryMb: 0,
@@ -700,5 +702,105 @@ describe('plan – hidden pages are trimmed', () => {
       ]
       expect(plan(input({ processes, tabs })).actions).toEqual([])
     }
+  })
+})
+
+describe('plan – Auto mode', () => {
+  const auto = (overrides: Partial<ResourceSettings> = {}): ResourceSettings =>
+    settings({ mode: 'auto', maxLoadedTabs: 2, ...overrides })
+  const HOUR = 60 * MINUTE
+
+  it('keeps recently hidden tabs live with plenty free, whatever the cap and fixed timers say', () => {
+    const tabs = [
+      tab('front', { visible: true, active: true, lastActiveAt: NOW }),
+      ...['a', 'b', 'c', 'd'].map((id) => tab(id, { lastActiveAt: NOW - 25 * MINUTE }))
+    ]
+    const p = plan(
+      input({
+        settings: auto(),
+        tabs,
+        system: system({ availableMemoryMb: 12_000 })
+      })
+    )
+    expect(kinds(p, 'discard')).toEqual([])
+    expect(p.autoPressure).toBe(0)
+  })
+
+  it('unloads tabs that have been hidden for days even with plenty free', () => {
+    const p = plan(
+      input({
+        settings: auto(),
+        tabs: [
+          tab('front', { visible: true, active: true }),
+          tab('old', { lastActiveAt: NOW - 50 * HOUR })
+        ],
+        system: system({ availableMemoryMb: 12_000 })
+      })
+    )
+    expect(kinds(p, 'discard')).toEqual(['old'])
+  })
+
+  it('frees memory at once, least likely to be needed first, when the machine is short', () => {
+    const tabs = [
+      tab('front', { visible: true, active: true, pids: [1] }),
+      tab('recent', { lastActiveAt: NOW - 2 * MINUTE, pids: [2] }),
+      tab('stale', { lastActiveAt: NOW - 3 * HOUR, pids: [3] })
+    ]
+    const p = plan(
+      input({
+        settings: auto(),
+        tabs,
+        processes: [proc(1, 300), proc(2, 300), proc(3, 300)],
+        system: system({ availableMemoryMb: 500 })
+      })
+    )
+    expect(kinds(p, 'discard')[0]).toBe('stale')
+    expect(p.autoPressure).toBe(1)
+  })
+
+  it('never touches a tab kept awake, playing audio or on a keep-awake site', () => {
+    const tabs = [
+      tab('front', { visible: true, active: true }),
+      tab('awake', { keepAwake: true, lastActiveAt: NOW - 50 * HOUR }),
+      tab('music', { audible: true, lastActiveAt: NOW - 50 * HOUR }),
+      tab('site', { excluded: true, lastActiveAt: NOW - 50 * HOUR })
+    ]
+    const p = plan(input({ settings: auto(), tabs, system: system({ availableMemoryMb: 200 }) }))
+    expect(p.actions.filter((a) => a.kind === 'discard' || a.kind === 'freeze')).toEqual([])
+  })
+
+  it('with Memory Saver off, unloads only when the machine is short', () => {
+    const tabs = [
+      tab('front', { visible: true, active: true }),
+      tab('old', { lastActiveAt: NOW - 50 * HOUR })
+    ]
+    const off = { enabled: false, timeoutMinutes: 20 }
+    expect(
+      kinds(
+        plan(
+          input({
+            settings: auto(),
+            unload: off,
+            tabs,
+            system: system({ availableMemoryMb: 12_000 })
+          })
+        ),
+        'discard'
+      )
+    ).toEqual([])
+    expect(
+      kinds(
+        plan(
+          input({ settings: auto(), unload: off, tabs, system: system({ availableMemoryMb: 100 }) })
+        ),
+        'discard'
+      )
+    ).toEqual(['old'])
+  })
+
+  it('has no fixed memory budget (the free memory is the measure)', () => {
+    const p = plan(input({ settings: auto({ memoryMb: 10 }), processes: [proc(1, 5000)] }))
+    expect(p.gauges.memory.budget).toBe(0)
+    expect(p.pressure).not.toContain('memory')
   })
 })

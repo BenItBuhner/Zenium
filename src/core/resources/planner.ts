@@ -12,7 +12,9 @@
  *           →  throttle visible panes (strict) / the active tab (extreme)
  *   gpu:    pause muted background media  →  purge  →  discard one hidden tab per cycle
  * Time-based rules (freeze after N minutes hidden, unload after M minutes, idle freeze) and the
- * live-page cap run regardless of pressure.
+ * live-page cap run regardless of pressure – in Custom mode. In Auto mode (the default) the free
+ * memory of the machine and the person's habits decide instead (`auto.ts`); the idle freeze
+ * stays.
  */
 import type {
   GovernorActionKind,
@@ -21,6 +23,8 @@ import type {
   ResourceSettings,
   TabResourceUsage
 } from '../../shared/types'
+import { planAuto } from './auto'
+import { emptyHabits, type TabHabits } from './habits'
 
 export type ProcessKind =
   | 'Browser'
@@ -64,6 +68,10 @@ export interface TabSample {
   devtoolsOpen: boolean
   /** An AI agent is driving the tab (its timers and script must keep running). */
   agentDriven?: boolean
+  /** The person asked for this tab to stay awake (tab menu → Sleep → Keep This Tab Awake). */
+  keepAwake?: boolean
+  /** The site (registrable domain) Auto keeps its habits under. */
+  site?: string
   frozen: boolean
   cpuThrottle: number
   lastActiveAt: number
@@ -85,6 +93,11 @@ export interface SystemSample {
   energySaver: boolean
   /** Seconds since the last user input anywhere on the system. */
   idleSeconds: number
+  /**
+   * Memory the system could hand out now, MB (all apps counted; under a cgroup limit, what is
+   * left of it). Absent where it cannot be read: Auto then plans as if plenty were free.
+   */
+  availableMemoryMb?: number
   windowMinimized: boolean
 }
 
@@ -105,6 +118,8 @@ export interface PlannerInput {
   processes: ProcessSample[]
   tabs: TabSample[]
   memory: PlannerMemory
+  /** This person's tab habits, for Auto mode (`habits.ts`); absent → the generous prior. */
+  habits?: TabHabits
   /** Plan as if every budget were exceeded ("free up memory now"). */
   force?: boolean
 }
@@ -129,6 +144,8 @@ export interface Attribution {
 }
 
 export interface Plan {
+  /** Auto mode's memory pressure, 0–1 (absent in Custom mode). */
+  autoPressure?: number
   gauges: Record<ResourceKind, ResourceGauge>
   attribution: Attribution
   pressure: ResourceKind[]
@@ -257,6 +274,7 @@ export function attribute(
 
 /** Why a tab must be left alone, or null when the governor may act on it. */
 export function protectionReason(tab: TabSample, settings: ResourceSettings): string | null {
+  if (tab.keepAwake) return 'kept awake'
   if (tab.excluded) return 'excluded domain'
   if (tab.devtoolsOpen) return 'devtools open'
   if (tab.agentDriven) return 'driven by an AI agent'
@@ -303,7 +321,10 @@ export function previousThrottle(current: number): number {
 
 export function plan(input: PlannerInput): Plan {
   const { now, settings, system, tabs } = input
+  const auto = settings.mode === 'auto'
   const budgets = deriveBudgets(settings, system)
+  // Auto weighs the machine's free memory itself (`auto.ts`); the fixed budget is Custom's.
+  if (auto) budgets.memory = { configured: 0, budget: 0 }
   const attribution = attribute(input.processes, tabs, system.cpuCount)
   const gauges: Record<ResourceKind, ResourceGauge> = {
     memory: { ...budgets.memory, used: attribution.totalMemoryMb },
@@ -344,9 +365,43 @@ export function plan(input: PlannerInput): Plan {
     if (tab.frozen && !freezeVisibleWhenIdle) act(tab, 'thaw', 'tab is visible')
   }
 
+  // --- Auto: free memory and the person's habits decide ---------------------------------------
+  if (auto) {
+    const autoPlan = planAuto(
+      tabs.map((tab) => ({
+        id: tab.id,
+        site: tab.site ?? '',
+        loaded: tab.loaded,
+        frozen: tab.frozen,
+        visible: tab.visible,
+        loading: tab.loading,
+        protected: protectionReason(tab, settings) !== null,
+        hiddenMs: tab.visible ? 0 : Math.max(0, now - tab.lastActiveAt),
+        memoryMb: usageById.get(tab.id)?.memoryMb ?? 0
+      })),
+      {
+        totalMemoryMb: system.totalMemoryMb,
+        // Unreadable → as if plenty were free: Auto then only sleeps what habits say to.
+        availableMemoryMb: system.availableMemoryMb ?? system.totalMemoryMb,
+        energySaver: system.energySaver
+      },
+      input.habits ?? emptyHabits(now)
+    )
+    plan.autoPressure = autoPlan.pressure
+    const byId = new Map(tabs.map((t) => [t.id, t]))
+    for (const a of autoPlan.actions) {
+      const tab = byId.get(a.tabId)
+      if (!tab || acted.has(tab.id)) continue
+      // Memory Saver off: only the machine running short unloads anything.
+      if (a.kind === 'discard' && !input.unload.enabled && !a.reason.startsWith('memory:')) continue
+      act(tab, a.kind, a.reason)
+    }
+  }
+
   // --- time-based rules ---------------------------------------------------------------------
-  const unloadAfter = input.unload.enabled ? input.unload.timeoutMinutes * 60_000 : Infinity
-  const freezeAfter = settings.freezeAfterMinutes * 60_000
+  const unloadAfter =
+    !auto && input.unload.enabled ? input.unload.timeoutMinutes * 60_000 : Infinity
+  const freezeAfter = auto ? Infinity : settings.freezeAfterMinutes * 60_000
   for (const tab of hidden) {
     if (acted.has(tab.id) || protectionReason(tab, settings)) continue
     const hiddenFor = now - tab.lastActiveAt
@@ -373,7 +428,8 @@ export function plan(input: PlannerInput): Plan {
   }
 
   // --- live page cap -------------------------------------------------------------------------
-  const cap = settings.maxLoadedTabs > 0 ? Math.max(MIN_LOADED_TABS, settings.maxLoadedTabs) : 0
+  const cap =
+    !auto && settings.maxLoadedTabs > 0 ? Math.max(MIN_LOADED_TABS, settings.maxLoadedTabs) : 0
   if (cap > 0) {
     let live = loaded.length - plan.actions.filter((a) => a.kind === 'discard').length
     for (const tab of rankVictims(hidden, usageById, 'memory', now, settings, acted)) {

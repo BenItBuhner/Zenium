@@ -6581,15 +6581,14 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1). */
+    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1); Unload and Freeze are one Sleep row. */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
       'Reload Tab',
       'Mute Tab',
       'Mute Site',
-      'Unload Tab',
-      'Freeze Tab',
+      'Sleep',
       'Duplicate Tab',
       'Pin Tab',
       'Add to Essentials',
@@ -6616,20 +6615,27 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      // Firefox's twenty, Chrome's Add tab to reading list, and the in-app Proxy submenu.
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(22)
+      // Firefox's twenty with Unload and Freeze as one Sleep row, Chrome's Add tab to reading
+      // list, and the in-app Proxy submenu.
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(21)
       expect(separators(shown)).toBe(4)
-      // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
-      // unload and the freeze are the tab's state, as its mute is, not its place.
+      // The state group in Firefox's order – Reload, Mute, Unload, Duplicate, Pin: sleep is the
+      // tab's state, as its mute is, not its place.
       const top = topLabels(shown)
       expect(top.slice(top.indexOf('Reload Tab'), top.indexOf('Pin Tab') + 1)).toEqual([
         'Reload Tab',
         'Mute Tab',
         'Mute Site',
-        'Unload Tab',
-        'Freeze Tab',
+        'Sleep',
         'Duplicate Tab',
         'Pin Tab'
+      ])
+      expect(topLabels(item(h, 'Sleep').submenu!)).toEqual([
+        'Put Tab to Sleep',
+        'Freeze Tab',
+        '-',
+        'Keep This Tab Awake',
+        'Always Keep example.com Awake'
       ])
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
@@ -6660,6 +6666,29 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Direct connection',
         'System proxy'
       ])
+    })
+
+    it('Sleep keeps the tab, or its whole site, awake and back again', () => {
+      const h = pageHarness()
+      const open = (): void => {
+        h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      }
+      open()
+      item(h, 'Keep This Tab Awake').click?.()
+      expect(h.browser.tabs.tab(h.tabId)?.keepAwake).toBe(true)
+      open()
+      expect(item(h, 'Keep This Tab Awake').checked).toBe(true)
+      expect(enabled(h, 'Put Tab to Sleep')).toBe(false)
+      item(h, 'Keep This Tab Awake').click?.()
+      expect(h.browser.tabs.tab(h.tabId)?.keepAwake).toBeUndefined()
+
+      open()
+      item(h, 'Always Keep example.com Awake').click?.()
+      expect(h.browser.state.settings.unloadExcludedDomains).toContain('example.com')
+      open()
+      expect(item(h, 'Always Keep example.com Awake').checked).toBe(true)
+      item(h, 'Always Keep example.com Awake').click?.()
+      expect(h.browser.state.settings.unloadExcludedDomains).not.toContain('example.com')
     })
 
     it('lists configured proxies in the Proxy submenu and writes the tab override', () => {
@@ -6732,7 +6761,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Copy Link as Markdown',
         'Email Link…',
         'Freeze Tab',
-        'Unload Tab',
+        'Put Tab to Sleep',
         'Close Tabs Above',
         'Close Tabs Below',
         'Close Other Tabs',

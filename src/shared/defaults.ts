@@ -167,6 +167,7 @@ export function emptyPasswordsStatus(): PasswordsStatus {
  */
 export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
   enabled: true,
+  mode: 'auto',
   enforcement: 'strict',
   memoryMb: 0,
   memoryPercent: 35,
