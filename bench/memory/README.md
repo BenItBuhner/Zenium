@@ -75,6 +75,13 @@ node bench/memory/run.mjs --browser chromium --preset 200 --cap 512   # inside a
 node bench/memory/run.mjs --browser zenium --preset 200 --label tuned \
   --zenium-state '{"settings":{"resources":{"maxLoadedTabs":4}}}' \
   --args-json '["--js-flags=--optimize-for-size"]'
+# diagnosis (Chromium family and Zenium): every target at the end of the active phase into the
+# result, and a memory-infra dump of every process (allocator by allocator) as a trace file
+node bench/memory/run.mjs --browser zenium --preset live24 --dump-targets --memory-dump md.json
+# Max concurrency: the process limit on the real command line, as Zenium relaunches itself with it
+node bench/memory/run.mjs --browser zenium --preset live24 --label maxconc \
+  --zenium-state '{"settings":{"resources":{"process":{"siteIsolation":"relaxed","rendererProcessLimit":6}}}}' \
+  --args-json '["--renderer-process-limit=6"]'
 # the whole matrix (3 rounds x 3 presets x 4 browsers, plus capped runs), then the tables
 sh bench/memory/matrix.sh
 node bench/memory/report.mjs bench/memory/results

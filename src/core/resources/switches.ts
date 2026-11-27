@@ -255,3 +255,33 @@ function int(v: unknown, fallback: number, lo: number, hi: number): number {
 function oneOf<T extends string>(v: unknown, options: readonly T[], fallback: T): T {
   return typeof v === 'string' && (options as readonly string[]).includes(v) ? (v as T) : fallback
 }
+
+/**
+ * Switches Chromium reads before the app's own code runs, so `app.commandLine.appendSwitch` is
+ * too late for them: `--renderer-process-limit` is read while the browser process initialises,
+ * before Electron loads the main script (measured, Nov 2026: set from the main script it left 33
+ * page processes for 24 tabs at a limit of 6; on the real command line, 12).
+ */
+export const EARLY_SWITCHES: readonly string[] = ['renderer-process-limit']
+
+/** Marks a launch that already restarted itself to take an early switch: never twice. */
+export const EARLY_RELAUNCH_MARK = '--zen-early-switches'
+
+/**
+ * The arguments to relaunch with when the wanted early switches are not on this launch's real
+ * command line (`argv` without the executable), or null when it already carries them (or already
+ * relaunched for them once).
+ */
+export function earlyRelaunchArgs(
+  wanted: readonly StartupSwitch[],
+  argv: readonly string[]
+): string[] | null {
+  if (argv.includes(EARLY_RELAUNCH_MARK)) return null
+  const early = wanted
+    .filter((sw) => EARLY_SWITCHES.includes(sw.name))
+    .map((sw) => (sw.value === undefined ? `--${sw.name}` : `--${sw.name}=${sw.value}`))
+  if (early.every((arg) => argv.includes(arg))) return null
+  // Keep every other argument (URLs, files, `--user-data-dir`…); replace stale early switches.
+  const rest = argv.filter((arg) => !EARLY_SWITCHES.some((name) => arg.startsWith(`--${name}`)))
+  return [...rest, ...early, EARLY_RELAUNCH_MARK]
+}

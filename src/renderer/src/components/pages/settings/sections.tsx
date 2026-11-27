@@ -46,6 +46,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, ENERGY_SAVER_LOW_BATTERY_PERCENT } from '@shared/types'
 import { defaultEnergySaverMode } from '@core/resources/energySaver'
+import { isMaxConcurrency, maxConcurrencyPatch } from '@core/resources/concurrency'
 import {
   CONTAINER_COLORS,
   CONTAINER_ICONS,
@@ -3120,6 +3121,15 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           ],
           onChange: (v) => setR({ gpuMode: v })
         }),
+        {
+          kind: 'switch',
+          id: 'max-concurrency',
+          label: 'Max concurrency',
+          description:
+            'Keep many heavy pages live at once on less memory: sites share processes (relaxed site isolation, at most 6 page processes). About a fifth less memory with dozens of pages open (fewer processes), but weaker protection between sites. Applies at the next launch.',
+          checked: isMaxConcurrency(r.process),
+          onChange: (v) => setP(maxConcurrencyPatch(v))
+        },
         numberRow({
           id: 'renderer-limit',
           label: 'Renderer process limit',
