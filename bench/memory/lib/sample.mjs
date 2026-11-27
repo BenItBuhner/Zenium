@@ -68,3 +68,38 @@ export function median(values) {
   const mid = v.length >> 1
   return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2
 }
+
+/**
+ * PSS of a process tree grouped by what each process is (Chromium's `--type=` and utility
+ * sub-type, Firefox's `-contentproc` kind, otherwise "browser"), largest first.
+ */
+export function breakdown(rootPids) {
+  const groups = {}
+  const pids = new Set()
+  for (const root of rootPids) for (const pid of treePids(root)) pids.add(pid)
+  for (const pid of pids) {
+    let cmd
+    let text
+    try {
+      cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean)
+      // Chromium rewrites its title into one space-separated string.
+      if (cmd.length === 1) cmd = cmd[0].split(' ')
+      text = readFileSync(`/proc/${pid}/smaps_rollup`, 'utf8')
+    } catch {
+      continue
+    }
+    const pss = Number(/^Pss:\s+(\d+) kB/m.exec(text)?.[1] ?? 0) / 1024
+    const type = cmd.find((a) => a.startsWith('--type='))?.slice(7)
+    const sub = cmd.find((a) => a.startsWith('--utility-sub-type='))?.slice(19)
+    const ff = cmd.includes('-contentproc') ? `content:${cmd.at(-1)}` : null
+    const key = ff ?? (sub ? `utility:${sub.split('.')[0]}` : (type ?? 'browser'))
+    const g = (groups[key] ??= { count: 0, pssMb: 0 })
+    g.count++
+    g.pssMb += pss
+  }
+  return Object.fromEntries(
+    Object.entries(groups)
+      .map(([k, v]) => [k, { count: v.count, pssMb: Math.round(v.pssMb) }])
+      .sort((a, b) => b[1].pssMb - a[1].pssMb)
+  )
+}

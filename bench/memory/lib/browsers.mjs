@@ -5,14 +5,13 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { CdpClient, BidiClient } from './proto.mjs'
+import { CdpClient, MarionetteClient } from './proto.mjs'
 import { treePids } from './sample.mjs'
 
 const here = new URL('.', import.meta.url).pathname
 export const ZENIUM_DIR = process.env.ZENIUM_DIR ?? resolve(here, '../../..')
 export const BINARIES = {
-  chromium:
-    process.env.CHROMIUM_BIN ?? '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome',
+  chromium: process.env.CHROMIUM_BIN ?? '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome',
   edge: process.env.EDGE_BIN ?? '/opt/bench/edge/opt/microsoft/msedge/msedge',
   firefox: process.env.FIREFOX_BIN ?? '/opt/bench/firefox/firefox',
   zenium: process.env.ZENIUM_ELECTRON ?? join(ZENIUM_DIR, 'node_modules/electron/dist/electron')
@@ -168,9 +167,7 @@ class ChromiumFamily {
       async () => {
         const id = await this.target(tab)
         if (!id) return null
-        return this.cdp.withSession(id, (s) =>
-          this.cdp.evaluate(s, PAINTED(sinceEpochMs), 5_000)
-        )
+        return this.cdp.withSession(id, (s) => this.cdp.evaluate(s, PAINTED(sinceEpochMs), 5_000))
       },
       timeoutMs,
       'the tab to paint'
@@ -224,8 +221,9 @@ class Zenium {
     this.shellId = await waitFor(
       async () => {
         const { targetInfos } = await this.cdp.send('Target.getTargets')
-        return targetInfos.find((t) => t.type === 'page' && /out\/renderer\/index\.html/.test(t.url))
-          ?.targetId
+        return targetInfos.find(
+          (t) => t.type === 'page' && /out\/renderer\/index\.html/.test(t.url)
+        )?.targetId
       },
       30_000,
       'the Zenium window'
@@ -304,9 +302,7 @@ class Zenium {
       async () => {
         const id = await this.target(tab)
         if (!id) return null
-        return this.cdp.withSession(id, (s) =>
-          this.cdp.evaluate(s, PAINTED(sinceEpochMs), 5_000)
-        )
+        return this.cdp.withSession(id, (s) => this.cdp.evaluate(s, PAINTED(sinceEpochMs), 5_000))
       },
       timeoutMs,
       'the tab to paint'
@@ -320,7 +316,7 @@ class Zenium {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Firefox (WebDriver BiDi)
+// Firefox (Marionette)
 // ---------------------------------------------------------------------------------------------
 
 /** First-run prompts off, plus Firefox's tab unloader made as eager as its prefs allow. */
@@ -351,7 +347,7 @@ class Firefox {
   constructor(opts) {
     this.kind = 'firefox'
     this.opts = opts
-    this.port = opts.port ?? 9222
+    this.port = opts.port ?? 2828
     this.tabs = []
   }
 
@@ -362,25 +358,33 @@ class Firefox {
     // certificate store; Chromium-based browsers read the system NSS store instead.
     const ca = process.env.FIREFOX_EXTRA_CA
     if (ca && existsSync(ca))
-      execFileSync('certutil', ['-A', '-n', 'extra-ca', '-t', 'C,,', '-i', ca, '-d', `sql:${profileDir}`])
-    const prefs = { ...FIREFOX_PREFS, ...(memorySaver ? FIREFOX_UNLOAD_PREFS : {}) }
+      execFileSync('certutil', [
+        '-A',
+        '-n',
+        'extra-ca',
+        '-t',
+        'C,,',
+        '-i',
+        ca,
+        '-d',
+        `sql:${profileDir}`
+      ])
+    const prefs = {
+      ...FIREFOX_PREFS,
+      'marionette.port': this.port,
+      ...(memorySaver ? FIREFOX_UNLOAD_PREFS : {})
+    }
     writeFileSync(
       join(profileDir, 'user.js'),
       Object.entries(prefs)
         .map(([k, v]) => `user_pref(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
         .join('\n')
     )
-    let wsUrl = null
-    const onLog = (text) => {
-      const m = /WebDriver BiDi listening on (ws:\/\/\S+)/.exec(text)
-      if (m) wsUrl = m[1]
-      log?.(text)
-    }
     const args = [
       '--profile',
       profileDir,
       '--no-remote',
-      `--remote-debugging-port=${this.port}`,
+      '--marionette',
       '--width',
       String(WIDTH),
       '--height',
@@ -390,59 +394,79 @@ class Firefox {
     ]
     this.child = spawnInCgroup(BINARIES.firefox, args, {
       cgroup,
-      log: onLog,
-      env: { MOZ_CRASHREPORTER_DISABLE: '1' }
+      log,
+      env: { MOZ_CRASHREPORTER_DISABLE: '1', MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' }
     })
     this.rootPid = this.child.pid
-    await waitFor(() => wsUrl, 45_000, 'Firefox to start')
-    this.bidi = await BidiClient.connect(`${wsUrl}/session`)
+    this.m = await waitFor(() => MarionetteClient.connect(this.port), 45_000, 'Firefox to start')
+    await this.m.run('chrome', 'window.__zb = new Map(); return true')
   }
 
   async openTab(url) {
-    const { context } = await this.bidi.send('browsingContext.create', {
-      type: 'tab',
-      background: true
-    })
-    await this.bidi.send('browsingContext.navigate', { context, url, wait: 'none' })
-    const tab = { context, url }
+    const id = this.tabs.length + 1
+    await this.m.run(
+      'chrome',
+      `const [id, url] = arguments
+       const tab = gBrowser.addTab(url, {
+         inBackground: true,
+         triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()
+       })
+       window.__zb.set(id, tab)
+       return true`,
+      [id, url]
+    )
+    const tab = { id, url }
     this.tabs.push(tab)
     return tab
   }
 
   async activate(tab) {
-    await this.bidi.send('browsingContext.activate', { context: tab.context })
+    await this.m.run(
+      'chrome',
+      `const tab = window.__zb.get(arguments[0]); if (tab) gBrowser.selectedTab = tab; return Boolean(tab)`,
+      [tab.id]
+    )
   }
 
-  async scroll(tab, deltaY) {
-    await this.bidi.send(
-      'input.performActions',
-      {
-        context: tab.context,
-        actions: [
-          {
-            type: 'wheel',
-            id: 'wheel',
-            actions: [
-              { type: 'scroll', x: WIDTH / 2, y: Math.round(HEIGHT / 3), deltaX: 0, deltaY, duration: 100 }
-            ]
-          }
-        ]
-      },
+  async scroll(_tab, deltaY) {
+    // A wheel event through the widget, over the middle of the content area.
+    await this.m.run(
+      'chrome',
+      `const r = gBrowser.selectedBrowser.getBoundingClientRect()
+       window.windowUtils.sendWheelEvent(r.left + r.width / 2, r.top + r.height / 2,
+         0, arguments[0], 0, 0 /* DOM_DELTA_PIXEL */, 0, 0, 0, 0)
+       return true`,
+      [deltaY],
       5_000
     )
   }
 
   async waitPainted(tab, sinceEpochMs, timeoutMs) {
     return waitFor(
-      () => this.bidi.evaluate(tab.context, PAINTED(sinceEpochMs), 5_000),
+      async () => {
+        // The tab in front's window handle, then the same paint check as the other browsers.
+        const handle = await this.m.run(
+          'chrome',
+          `const tab = window.__zb.get(arguments[0])
+           if (!tab || tab !== gBrowser.selectedTab || tab.hasAttribute('pending')) return null
+           const { NavigableManager } = ChromeUtils.importESModule(
+             'chrome://remote/content/shared/NavigableManager.sys.mjs')
+           return NavigableManager.getIdForBrowser(tab.linkedBrowser)`,
+          [tab.id]
+        )
+        if (!handle) return null
+        await this.m.context('content')
+        await this.m.send('WebDriver:SwitchToWindow', { handle, focus: false }, 5_000)
+        return this.m.run('content', `return ${PAINTED(sinceEpochMs)}`, [], 5_000)
+      },
       timeoutMs,
       'the tab to paint'
     )
   }
 
   async close() {
-    await this.bidi?.send('browser.close', {}, 5_000).catch(() => {})
-    this.bidi?.close()
+    await this.m?.send('Marionette:Quit', { flags: ['eForceQuit'] }, 5_000).catch(() => {})
+    this.m?.close()
     await killTree(this.child)
   }
 }

@@ -21,7 +21,7 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
 }
 
 const fmt = (v, unit = '') => (v === null || v === undefined ? '–' : `${Math.round(v)}${unit}`)
-const order = (wanted ?? ['zenium', 'chromium', 'firefox', 'edge'])
+const order = wanted ?? ['zenium', 'chromium', 'firefox', 'edge']
 const rank = (label) => {
   const i = order.indexOf(label)
   return i < 0 ? order.length : i
@@ -29,7 +29,12 @@ const rank = (label) => {
 const rows = [...groups.entries()].sort(([a], [b]) => {
   const [la, pa, ca] = a.split('|')
   const [lb, pb, cb] = b.split('|')
-  return ca.localeCompare(cb) || Number(pa.split('/')[0]) - Number(pb.split('/')[0]) || rank(la) - rank(lb) || la.localeCompare(lb)
+  return (
+    ca.localeCompare(cb) ||
+    Number(pa.split('/')[0]) - Number(pb.split('/')[0]) ||
+    rank(la) - rank(lb) ||
+    la.localeCompare(lb)
+  )
 })
 
 let lastSection = null
@@ -47,6 +52,21 @@ for (const [key, runs] of rows) {
   const m = (f) => median(runs.map((r) => f(r.summary)))
   const sum = (f) => runs.reduce((a, r) => a + f(r.summary), 0)
   console.log(
-    `| ${label} | ${preset} | ${runs.length} | ${fmt(m((s) => s.steadyPssMb), ' MB')} | ${fmt(m((s) => s.peakPssMb), ' MB')} | ${fmt(m((s) => s.steadyRssMb), ' MB')} | ${fmt(m((s) => s.peakRssMb), ' MB')} | ${fmt(m((s) => s.steadyProcs))} | ${fmt(m((s) => s.restoreMedianMs), ' ms')} | ${sum((s) => s.restoreReloaded)}/${runs.reduce((a, r) => a + r.restores.length, 0)} | ${sum((s) => s.restoreFailed)} | ${sum((s) => s.oomKills)} | ${runs.filter((r) => r.summary.crashed).length}/${runs.length} |`
+    `| ${label} | ${preset} | ${runs.length} | ${fmt(
+      m((s) => s.steadyPssMb),
+      ' MB'
+    )} | ${fmt(
+      m((s) => s.peakPssMb),
+      ' MB'
+    )} | ${fmt(
+      m((s) => s.steadyRssMb),
+      ' MB'
+    )} | ${fmt(
+      m((s) => s.peakRssMb),
+      ' MB'
+    )} | ${fmt(m((s) => s.steadyProcs))} | ${fmt(
+      m((s) => s.restoreMedianMs),
+      ' ms'
+    )} | ${sum((s) => s.restoreReloaded)}/${runs.reduce((a, r) => a + r.restores.length, 0)} | ${sum((s) => s.restoreFailed)} | ${sum((s) => s.oomKills)} | ${runs.filter((r) => r.summary.crashed).length}/${runs.length} |`
   )
 }

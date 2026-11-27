@@ -106,12 +106,13 @@ export default defineConfig(
   {
     // Plain Node scripts run by the GitHub Actions workflows, the desktop smoke harness,
     // electron-builder hooks and maintenance tasks, and the demo servers kept beside the Android
-    // instrumentation drivers; no TypeScript annotations available.
+    // instrumentation drivers, and the memory benchmark (`bench/memory`); no TypeScript annotations available.
     files: [
       '.github/scripts/**/*.mjs',
       '.github/smoke/**/*.mjs',
       'build/**/*.mjs',
       'scripts/**/*.mjs',
+      'bench/**/*.mjs',
       'android/app/src/androidTest/assets/**/*.mjs'
     ],
     rules: {
