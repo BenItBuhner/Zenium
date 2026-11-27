@@ -138,6 +138,12 @@ export interface Plan {
 }
 
 export const THROTTLE_STEPS = [1, 4, 8, 16] as const
+/** A hidden page is trimmed (purged once) this long after it was left. */
+export const HIDDEN_TRIM_MS = 15_000
+/** The reason a trim's purge carries (the governor raises its pressure notification by it). */
+export const TRIM_REASON = 'hidden: trimmed'
+/** At most one trim pressure notification (it is browser-wide) this often. */
+export const TRIM_PRESSURE_COOLDOWN_MS = 30_000
 /** Do not purge the same tab more often than this. */
 export const PURGE_COOLDOWN_MS = 60_000
 /** Do not change a tab's throttle more often than this. */
@@ -529,6 +535,14 @@ export function plan(input: PlannerInput): Plan {
     }
   }
 
+  // A page left behind keeps running but gives back what it can, once, a little after it is
+  // hidden (last, so that nothing above is held back by it): a garbage collection and a memory-pressure notification (caches, decoded images,
+  // fonts). It stays loaded and live; switching back to it is instant.
+  for (const tab of hidden) {
+    if (acted.has(tab.id) || tab.frozen || tab.loading || protectionReason(tab, settings)) continue
+    if (now - tab.lastActiveAt < HIDDEN_TRIM_MS || tab.lastPurgedAt >= tab.lastActiveAt) continue
+    act(tab, 'purge', TRIM_REASON)
+  }
   return plan
 }
 

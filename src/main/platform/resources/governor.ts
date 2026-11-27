@@ -30,6 +30,8 @@ import {
   plan,
   protectionReason,
   victimScore,
+  TRIM_PRESSURE_COOLDOWN_MS,
+  TRIM_REASON,
   type PlannedAction,
   type PlannerInput,
   type PlannerMemory,
@@ -88,6 +90,8 @@ export class ResourceGovernor implements Governor {
   private readonly actions: GovernorAction[] = []
   private lastExecuted: PlannedAction[] = []
   private lastPressureToastAt = 0
+  /** When the last trim's pressure notification went out (`TRIM_PRESSURE_COOLDOWN_MS`). */
+  private lastTrimPressureAt = 0
   private readonly startupProfile = appliedStartupProfile()
   private readonly cleanups: Array<() => void> = []
   /**
@@ -611,8 +615,20 @@ export class ResourceGovernor implements Governor {
     const purging = actions.find((a) => a.kind === 'purge')
     if (purging) {
       const wc = this.wc(purging.tabId)
-      const critical = this.memory.overStreak.memory >= 2 || this.memory.overStreak.gpu >= 2
-      if (wc) await this.lifecycle.notifyMemoryPressure(wc, critical ? 'critical' : 'moderate')
+      const overBudget = this.memory.overStreak.memory >= 2 || this.memory.overStreak.gpu >= 2
+      // A page left behind is trimmed at the critical level – what drops decoded images,
+      // fonts and the allocator's free pages; the moderate one leaves most of it – at most
+      // once per `TRIM_PRESSURE_COOLDOWN_MS`, the notification being the whole browser's.
+      const trimOnly = actions.every((a) => a.kind !== 'purge' || a.reason === TRIM_REASON)
+      const now = Date.now()
+      if (wc && trimOnly) {
+        if (now - this.lastTrimPressureAt >= TRIM_PRESSURE_COOLDOWN_MS) {
+          this.lastTrimPressureAt = now
+          await this.lifecycle.notifyMemoryPressure(wc, 'critical')
+        }
+      } else if (wc) {
+        await this.lifecycle.notifyMemoryPressure(wc, overBudget ? 'critical' : 'moderate')
+      }
     }
     for (const action of actions) {
       const tab = this.browser.tabs.tab(action.tabId)
