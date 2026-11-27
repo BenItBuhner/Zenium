@@ -107,6 +107,40 @@ Zenium main at 24 live tabs: 3,220–3,432 MB over 7 runs (median 3,292). Switch
 | `--renderer-process-limit=6` alone                                                        | 3,286 MB          | −3 %      | site isolation keeps sites apart anyway                      |
 | `--js-flags=--optimize-for-size --max-semi-space-size=1`                                  | 3,329 MB          | −2 %      |                                                              |
 
+### With the hidden-tab trim merged (#830): what is left per live tab
+
+Main (with #830) at 24 live tabs: 2,592 / 2,602 / 2,609 MB (median 2,602, **108 MB per live
+tab**); at 48: 4,564 / 4,678 MB (96 per tab). One run each below unless noted, against that
+main (run-to-run spread ±20 MB): none of these moved it.
+
+| Change (on top of the trim)                                   | Steady PSS       | Processes |
+| ------------------------------------------------------------- | ---------------- | --------- |
+| `--enable-features=ProcessPerSiteUpToMainFrameThreshold`      | 2,721 MB         | 41        |
+| `--process-per-site`                                          | 2,599 MB         | 34        |
+| `IsolateSandboxedIframes` off                                 | 2,646 MB         | 41        |
+| `BackForwardCache` off                                        | 2,661 MB         | 41        |
+| `PartitionAllocBackupRefPtr` off                              | 2,630 MB         | 41        |
+| Pause every playing video in every frame (harness experiment) | 2,652 MB         | 41        |
+| `--js-flags=--max-semi-space-size=1` / `=4`                   | 2,653 / 2,631 MB | 41        |
+
+Why: a memory-infra dump (`--memory-dump`) of the 24-tab run shows 35 page processes for 24
+tabs (`--dump-targets`: 33 cross-site frames – video players, payment, captcha and tracker
+frames – get processes of their own). JavaScript heaps are about a quarter of renderer memory;
+the rest is mostly each process's fixed cost (malloc, Blink, compositor). Fewer processes is the
+lever, and with full site isolation Chromium will not share them.
+
+**Max concurrency** (opt-in setting: relaxed site isolation, at most 6 page processes): 3 runs each at 24 tabs; at 48, one run (main: two).
+
+| Live tabs | Main                           | Max concurrency                   | Δ         |
+| --------- | ------------------------------ | --------------------------------- | --------- |
+| 24        | 2,602 MB (108 / tab, 41 procs) | **2,167 MB** (90 / tab, 12 procs) | **−17 %** |
+| 48        | 4,621 MB (96 / tab, 69 procs)  | **3,765 MB** (78 / tab, 12 procs) | **−19 %** |
+
+Switch times unchanged (p50 521–526 ms, p90 651–710 ms in both). The renderer process limit only
+works from the real command line (Chromium reads it before the main script runs; set from the
+script it left 33 processes), so Zenium restarts itself once at launch when the setting asks
+for one.
+
 ### Merged
 
 - #828: smaller main bundle (minified, ASCII): main process 185 → 169 MB settled, first-run peak

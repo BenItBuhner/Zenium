@@ -287,6 +287,45 @@ async function main() {
         .mainMemory(Number(args['inspect-main']), args['heap-snapshot'])
         .catch((e) => String(e.message))
     result.activeSwitches = k
+    if (args['memory-dump'] && browser.cdp) {
+      // A memory-infra dump of every process (allocator by allocator), for diagnosis.
+      const cdp = browser.cdp
+      const chunks = []
+      let done
+      const finished = new Promise((r) => (done = r))
+      const off = cdp.on((m) => {
+        if (m.method === 'Tracing.dataCollected') chunks.push(...m.params.value)
+        if (m.method === 'Tracing.tracingComplete') done()
+      })
+      try {
+        await cdp.send('Tracing.start', {
+          traceConfig: {
+            includedCategories: ['disabled-by-default-memory-infra'],
+            excludedCategories: ['*'],
+            memoryDumpConfig: { triggers: [] }
+          },
+          transferMode: 'ReportEvents'
+        })
+        await sleep(1_000)
+        await cdp.send(
+          'Tracing.requestMemoryDump',
+          { deterministic: true, levelOfDetail: 'detailed' },
+          undefined,
+          120_000
+        )
+        await cdp.send('Tracing.end')
+        await Promise.race([finished, sleep(60_000)])
+        writeFileSync(args['memory-dump'], JSON.stringify(chunks))
+      } catch (e) {
+        note('memory-dump', e)
+      } finally {
+        off()
+      }
+    }
+    if (args['dump-targets'] && browser.cdp)
+      result.targets = (
+        await browser.cdp.send('Target.getTargets').catch(() => ({ targetInfos: [] }))
+      ).targetInfos.map((t) => ({ type: t.type, url: String(t.url).slice(0, 120) }))
 
     // 3. restore latency of background tabs
     for (const i of restoreIdx) {

@@ -5,7 +5,7 @@ import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
 import { APP_USER_MODEL_ID } from './platform/notifications'
 import { moveLegacyDirectory } from './platform/legacyPaths'
-import { applyResourceSwitches } from './platform/resources/startup'
+import { applyResourceSwitches, earlySwitchRelaunchArgs } from './platform/resources/startup'
 import { installWindowsRestart } from './platform/restartRegistration'
 import { ENABLE_SANDBOX_SWITCH, sandboxRequest } from './platform/sandbox'
 import { installShellTasks } from './platform/shellTasks'
@@ -110,6 +110,15 @@ function main(): void {
   const gotLock = app.requestSingleInstanceLock()
   if (!gotLock) {
     app.quit()
+    return
+  }
+  // A process limit takes effect only from the real command line: restart once with it, before
+  // anything opens (`EARLY_SWITCHES`). The lock goes first so the new process can take it.
+  const relaunchArgs = earlySwitchRelaunchArgs()
+  if (relaunchArgs) {
+    app.releaseSingleInstanceLock()
+    app.relaunch({ args: relaunchArgs })
+    app.exit(0)
     return
   }
   let browser: Browser | null = null
