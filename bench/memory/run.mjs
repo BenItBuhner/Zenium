@@ -153,6 +153,18 @@ async function main() {
   const mark = (name) => (result.phases[name] = Date.now() - t0)
   let exitInfo = null
 
+  // A user is at the machine: real X input every 2 s (a one-pixel pointer nudge), so browsers
+  // that watch the system's idle time (Zenium freezes everything after 10 idle minutes; Xvfb
+  // otherwise reports hours idle) see someone there, as on a desktop in use.
+  let nudge = 1
+  const presence = setInterval(() => {
+    nudge = -nudge
+    spawn('xdotool', ['mousemove_relative', '--', String(nudge), '0'], {
+      stdio: 'ignore',
+      env: process.env
+    }).on('error', () => clearInterval(presence))
+  }, 2_000)
+
   let sampling = true
   const sampler = (async () => {
     while (sampling) {
@@ -246,6 +258,7 @@ async function main() {
     note('run', e)
   } finally {
     sampling = false
+    clearInterval(presence)
     await sampler
     result.browserExited = exitInfo
     if (cg) {
