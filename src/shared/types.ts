@@ -870,6 +870,11 @@ export interface Tab {
   memorySaver?: { savedMb: number; wokeAt: number } | null
   /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
   frozen: boolean
+  /**
+   * The person asked for this tab never to be put to sleep (tab menu → Sleep → Keep This Tab
+   * Awake): no freeze, no unload, whatever the mode. Absent = not kept awake.
+   */
+  keepAwake?: boolean
   /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */
   cpuThrottle: number
   zoom: number
@@ -4227,8 +4232,17 @@ export interface ResourceProcessProfile {
   siteIsolation: SiteIsolation
 }
 
+/**
+ * `ResourceSettings.mode`: `auto` sleeps hidden tabs by how much memory the machine has free and
+ * how this person comes back to tabs, learned on the device (`core/resources/auto.ts`); `custom`
+ * uses the fixed timers, cap and budget below.
+ */
+export type ResourceMode = 'auto' | 'custom'
+
 export interface ResourceSettings {
   enabled: boolean
+  /** Absent in profiles from before Auto existed (read as `auto`). */
+  mode: ResourceMode
   enforcement: ResourceEnforcement
   /** Memory budget for the whole browser (every Chromium process) in MB; 0 = use `memoryPercent`. */
   memoryMb: number

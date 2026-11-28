@@ -1,3 +1,4 @@
+import { neverUnloaded } from './memoryPressure'
 import type { Browser } from './browser'
 import { surfaceMounted, type ZenWindow } from './window'
 import {
@@ -352,6 +353,20 @@ export class Menus {
    * site?", and the toast's Undo is the protection. On the desktop the row runs `direct` in the
    * core, as it always did – its page may still ask.
    */
+  /**
+   * Sleep → Always Keep <site> Awake: put the page's site on the never-sleep list, or take every
+   * entry that names it (its host or its registrable domain) off again.
+   */
+  private toggleSiteAwake(url: string, win: ZenWindow): void {
+    const domain = getDomain(url)
+    if (!domain) return
+    const list = this.browser.state.settings.unloadExcludedDomains
+    const next = this.browser.tabs.siteKeptAwake(url)
+      ? list.filter((d) => !neverUnloaded(url, [d.toLowerCase()]))
+      : [...list, domain]
+    this.browser.updateSettings({ unloadExcludedDomains: next }, win)
+  }
+
   private closeRow(
     win: ZenWindow,
     tabIds: () => string[],
@@ -2474,23 +2489,44 @@ export class Menus {
         enabled: Boolean(domain),
         click: () => tabs.toggleMuteSite(tabId)
       },
-      // Unload and Freeze are the tab's state, as its mute is – Firefox's state group runs
-      // Reload, Mute, Unload, Duplicate, Pin – and stand between the mutes and Duplicate.
+      // Sleep is the tab's state, as its mute is – Firefox's state group runs Reload, Mute,
+      // Unload, Duplicate, Pin – and stands between the mutes and Duplicate: one row, its
+      // submenu the ways to put the tab to sleep now and the two ways to keep it awake.
       {
-        label: 'Unload Tab',
-        enabled: !tab.discarded && active?.id !== tabId,
-        click: () => tabs.discard(tabId)
-      },
-      tab.frozen || tab.cpuThrottle > 1
-        ? {
-            label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
-            click: () => void this.browser.governor.wakeTab(tabId)
-          }
-        : {
-            label: 'Freeze Tab',
-            enabled: !tab.discarded && tabs.windowsShowing(tabId).length === 0,
-            click: () => void this.browser.governor.freezeTab(tabId)
+        label: 'Sleep',
+        submenu: [
+          {
+            label: 'Put Tab to Sleep',
+            enabled: !tab.discarded && active?.id !== tabId && !tab.keepAwake,
+            click: () => tabs.discard(tabId)
           },
+          tab.frozen || tab.cpuThrottle > 1
+            ? {
+                label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
+                click: () => void this.browser.governor.wakeTab(tabId)
+              }
+            : {
+                label: 'Freeze Tab',
+                enabled:
+                  !tab.discarded && !tab.keepAwake && tabs.windowsShowing(tabId).length === 0,
+                click: () => void this.browser.governor.freezeTab(tabId)
+              },
+          { type: 'separator' },
+          {
+            label: 'Keep This Tab Awake',
+            type: 'checkbox',
+            checked: tab.keepAwake === true,
+            click: () => tabs.setKeepAwake(tabId, !tab.keepAwake)
+          },
+          {
+            label: domain ? `Always Keep ${domain} Awake` : 'Always Keep This Site Awake',
+            type: 'checkbox',
+            enabled: Boolean(domain),
+            checked: Boolean(domain) && tabs.siteKeptAwake(tab.url),
+            click: () => this.toggleSiteAwake(tab.url, win)
+          }
+        ]
+      },
       { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
       // Pin after Duplicate, as Firefox orders them; a pinned row's own rows stand with it.
       tab.essential
