@@ -49,6 +49,7 @@ import type { ZenWindow } from './window'
 import { orderedTabsForSpace, regularFolderTabs, tabVisibleIn } from './model'
 import { AnswerService } from './answers'
 import { matchesAtWordStart } from './history'
+import { looksLikeAsk, suggestHostFix } from '../shared/typoFix'
 import type { Shortcut } from './omniboxShortcuts'
 
 /**
@@ -84,7 +85,11 @@ export const RELEVANCE = {
   /** A term at the start of a word in the title or of a path segment (HistoryQuick's idea). */
   historyWordStart: 930,
   space: 900,
-  history: 880
+  history: 880,
+  /** "Did you mean github.com?" (`shared/typoFix.ts`): under what was typed, never the default. */
+  typoFix: 1295,
+  /** "Ask Zenium" for text that reads as a question, once a model service is set up. */
+  ask: 1245
 } as const
 
 // Zero-suggest's section names live with the shared module the chrome reads them from too.
@@ -319,6 +324,43 @@ export class SuggestionService {
       }
     }
 
+    // A slip in an address: the closest host visited or widely used, under the typed one.
+    const fix = keyword || !url ? null : this.hostFix(query, wantsHistory)
+    if (fix) {
+      const fixUrl = `https://${fix}/`
+      rows.push({
+        id: 'typo',
+        kind: 'url',
+        title: `Did you mean ${fix}?`,
+        subtitle: '',
+        url: fixUrl,
+        favicon: this.browser.history.faviconFor(fixUrl),
+        targetId: null,
+        fill: fix,
+        relevance: RELEVANCE.typoFix
+      })
+    }
+
+    // A question or a task: hand it to the built-in agent, when it has a key.
+    if (
+      !keyword &&
+      !isPrivate &&
+      this.browser.assistant?.status().provider &&
+      looksLikeAsk(query)
+    ) {
+      rows.push({
+        id: 'ask',
+        kind: 'ask',
+        title: query,
+        subtitle: 'Ask Zenium',
+        url: null,
+        favicon: null,
+        targetId: null,
+        fill: query,
+        relevance: RELEVANCE.ask
+      })
+    }
+
     // Offline answers: arithmetic and unit conversions. Enter searches the question, as Chrome.
     const offline = keyword ? null : localAnswer(query)
     if (offline) {
@@ -470,6 +512,21 @@ export class SuggestionService {
   // ---------------------------------------------------------------------------
   // Local sources
   // ---------------------------------------------------------------------------
+
+  /** The host a typed address most likely meant (`suggestHostFix`), from history when allowed. */
+  private hostFix(query: string, wantsHistory: boolean): string | null {
+    const known: string[] = []
+    if (wantsHistory) {
+      for (const site of this.browser.history.topSites(200)) {
+        try {
+          known.push(new URL(site.url).hostname)
+        } catch {
+          /* not an address */
+        }
+      }
+    }
+    return suggestHostFix(query, known)
+  }
 
   private keywordStarters(query: string, engines: SearchEngine[]): Ranked[] {
     const q = query.toLowerCase()

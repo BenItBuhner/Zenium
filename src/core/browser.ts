@@ -41,6 +41,7 @@ import { InactiveTabsService, sanitizeArchiveDays } from './inactiveTabs'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
 import { ReadingListService } from './readingList'
+import { AssistantService } from './assistant/service'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
 import { AUTOMATIC_DOWNLOADS_PERMISSION, DownloadLimiter } from './downloadLimiter'
@@ -336,6 +337,8 @@ export class Browser {
   readonly tasks: TaskService
   /** The MCP server AI agents connect to. */
   readonly agents: AgentService
+  /** The built-in agent on the user's own API key (`zen://ask`). */
+  readonly assistant: AssistantService
   /** Release checks against GitHub and the download / install flow. */
   readonly updates: UpdateService
   /** Connection, cookies, storage and permissions of a tab's site (the site-information sheet). */
@@ -633,6 +636,17 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
+    this.assistant = new AssistantService({
+      io: platform.io,
+      secrets: platform.secrets,
+      handleHttp: (req) => this.agents.handleHttp(req),
+      agentToken: () => this.agents.connectionToken(),
+      searchEngine: () => {
+        const e = this.defaultSearchEngine()
+        return `${e.name}, ${e.searchUrl}`
+      },
+      changed: () => this.state.commitVolatile()
+    })
     this.permissions.agentPrompts = this.agents.permissionPrompts()
     // A session's END that emptied its space hands the user's window back (W7-F3): the agent's
     // `zen_session end` and the record's close (DELETE, Disconnect, the parked limit, shutdown).
@@ -693,6 +707,7 @@ export class Browser {
       agents: this.agents.list(),
       awayAgents: this.agents.away(),
       agentServer: this.agents.serverStatus(),
+      assistant: this.assistant.status(),
       agentSkills: this.agents.skillStatus(),
       updates: this.updates.status(),
       passwords: this.passwords.status(),
@@ -1697,6 +1712,7 @@ export class Browser {
     void this.extensions.start()
     this.sync.start()
     this.agents.start()
+    void this.assistant.start()
     this.updates.start()
     this.passwords.start()
     this.autofill.start()
@@ -3022,6 +3038,7 @@ export class Browser {
   shutdown(): void {
     if (this.quitting) return
     this.quitting = true
+    this.assistant.shutdown()
     void this.agents.stop()
     this.updates.stop()
     this.downloads.shutdown()
@@ -4440,6 +4457,16 @@ export class Browser {
       'sync.tabsFromDevices': () => this.sync.tabsFromDevices(),
       'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 
+      'assistant.ask': ({ prompt, taskId, open }, win) => {
+        const id = this.assistant.ask(prompt, taskId)
+        if (open) this.pages.open('ask', null, win, null, { query: { task: id } })
+        return id
+      },
+      'assistant.stop': ({ taskId }) => this.assistant.stop(taskId),
+      'assistant.remove': ({ taskId }) => this.assistant.remove(taskId),
+      'assistant.setProvider': ({ provider, key }) => this.assistant.setProvider(provider, key),
+      'assistant.forgetFact': ({ index }) => this.assistant.forgetFact(index),
+      'assistant.clearMemory': () => this.assistant.clearMemory(),
       'agent.disconnect': ({ id }) => this.agents.disconnect(id),
       'agent.release': ({ claimId }) => this.agents.releaseAway(claimId),
       'agent.setMode': ({ id, mode }) => this.agents.setMode(id, mode),

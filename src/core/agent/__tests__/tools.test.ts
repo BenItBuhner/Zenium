@@ -75,7 +75,9 @@ describe('tool definitions', () => {
       'resume',
       'status',
       'end',
-      'rename'
+      'rename',
+      'list',
+      'mode'
     ])
     expect(session.inputSchema.properties).toHaveProperty('closeTabs')
     expect(session.inputSchema.properties).toHaveProperty('name')

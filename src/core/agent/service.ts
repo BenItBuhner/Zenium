@@ -706,6 +706,11 @@ export class AgentService implements SessionStore, McpHandlers {
   // State for the UI
   // ---------------------------------------------------------------------------
 
+  /** The connection token, for the built-in agent's in-process client (`core/assistant`). */
+  connectionToken(): string {
+    return this.token
+  }
+
   serverStatus(): AgentServerStatus {
     return this.status
   }
@@ -1158,6 +1163,38 @@ export class AgentService implements SessionStore, McpHandlers {
   boundSession(claim: AgentClaim): AgentSession | undefined {
     for (const s of this.sessions.values()) if (s.claimId === claim.id) return s
     return undefined
+  }
+
+  /**
+   * Every durable session in this browser, newest activity first, for `zen_session list`: its
+   * name, whether a connection carries it right now, when it last ran, and its tabs. Keys are
+   * never part of it – a session is taken back by its key or, with the token, by its name.
+   */
+  durableSessions(): {
+    name: string
+    live: boolean
+    mode: AgentMode
+    lastSeenAt: number
+    groups: number
+    tabs: number
+  }[] {
+    const folders = this.browser.state.model.folders
+    const tabs = Object.values(this.browser.state.model.tabs)
+    return this.claims
+      .all()
+      .map((c) => {
+        const groupIds = c.groupIds.filter((g) => folders[g])
+        const holder = this.boundSession(c)
+        return {
+          name: c.name,
+          live: Boolean(holder && !holder.parked),
+          mode: c.mode,
+          lastSeenAt: c.lastSeenAt,
+          groups: groupIds.length,
+          tabs: tabs.filter((t) => t.folderId && groupIds.includes(t.folderId)).length
+        }
+      })
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
   }
 
   /** The durable session the session carries, if it started one. */

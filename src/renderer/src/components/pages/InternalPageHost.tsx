@@ -3,6 +3,7 @@ import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
 import { LegalPage } from './about/LegalPage'
+import { AskPage } from './ask/AskPage'
 import { WhatsNewPage } from './about/WhatsNewPage'
 import { BookmarkManager } from './bookmarks/BookmarkManager'
 import { DownloadsPage } from './downloads/DownloadsPage'
@@ -75,6 +76,8 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
       return <TasksPage state={state} tab={tab} />
     case 'management':
       return <ManagementPage />
+    case 'ask':
+      return <AskPage state={state} tab={tab} />
     default:
       return null
   }

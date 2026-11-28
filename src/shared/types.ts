@@ -4093,6 +4093,11 @@ export interface AgentSettings {
   allowScripts: boolean
   /** Draw the agent's cursor and name tag in the pages it drives. */
   showCursor: boolean
+  /**
+   * Containers whose sign-ins (cookies) agents may move between this browser and another of
+   * yours, sealed to the other device's key (`zen_cookies`). Empty – none – by default.
+   */
+  cookieContainers: string[]
 }
 
 /** One connected agent (an MCP session). */
@@ -5272,6 +5277,8 @@ export interface UIState {
   /** Named agents that are not connected but still hold their tab groups. */
   awayAgents: AwayAgentInfo[]
   agentServer: AgentServerStatus
+  /** The built-in agent (`zen://ask`, `core/assistant`); absent on hosts that do not run it. */
+  assistant?: AssistantStatus
   /** The `zenium-browser` Agent Skill's install state per harness (`capabilities.agentSkills`). */
   agentSkills: AgentSkillStatus
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
@@ -5403,6 +5410,12 @@ export type SuggestionKind =
    * name, the subtitle its pages' hosts, `targetId` the folder – the pick is `folder.open`.
    */
   | 'folder'
+  /**
+   * Hand the typed text to the built-in agent (`zen://ask`, `core/assistant`): offered when the
+   * text reads as a question or a task and a model service is set up; the pick is `assistant.ask` with
+   * `open`, landing on the task's page.
+   */
+  | 'ask'
 
 export interface Suggestion {
   id: string
@@ -7389,6 +7402,25 @@ export interface Commands {
     result: void
   }
 
+  /** Hand the built-in agent a task, or a follow-up on `taskId`; returns the task's id. */
+  'assistant.ask': {
+    /** `open`: show the task on `zen://ask` in this window (the address bar's row). */
+    args: { prompt: string; taskId?: string; open?: boolean }
+    result: string
+  }
+  'assistant.stop': { args: { taskId: string }; result: void }
+  'assistant.remove': { args: { taskId: string }; result: void }
+  /**
+   * Set up the built-in agent's model service (any Anthropic Messages or OpenAI Responses
+   * endpoint): `key`, when given, goes to the secret store (empty removes it); `provider: null`
+   * forgets the service and its key.
+   */
+  'assistant.setProvider': {
+    args: { provider: AssistantProvider | null; key?: string }
+    result: void
+  }
+  'assistant.forgetFact': { args: { index: number }; result: void }
+  'assistant.clearMemory': { args: void; result: void }
   /** End an agent's session and release its tabs. */
   'agent.disconnect': { args: { id: string }; result: void }
   /**
@@ -8377,4 +8409,36 @@ export interface TabSearchCandidate {
   loading: boolean
   discarded: boolean
   lastActiveAt: number
+}
+
+/** One task of the built-in agent, as `zen://ask` shows it. */
+export interface AssistantTaskInfo {
+  id: string
+  title: string
+  status: 'running' | 'done' | 'failed' | 'stopped'
+  answer: string
+  error: string
+  createdAt: number
+  updatedAt: number
+  /** The user's words and the agent's answers, oldest first, without the tool calls between. */
+  conversation: { role: 'user' | 'assistant'; text: string }[]
+}
+
+/** The model service the built-in agent talks to; the key is kept apart, in the secret store. */
+export interface AssistantProvider {
+  /** Which API the service speaks: Anthropic's Messages API or OpenAI's Responses API. */
+  kind: 'anthropic' | 'openai'
+  baseUrl: string
+  model: string
+}
+
+export interface AssistantStatus {
+  /** Whether this device can hold an API key at all. */
+  available: boolean
+  hasKey: boolean
+  provider: AssistantProvider | null
+  /** Facts the user agreed the agent may keep, oldest first. */
+  memory: string[]
+  /** Newest first. */
+  tasks: AssistantTaskInfo[]
 }

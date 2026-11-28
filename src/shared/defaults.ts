@@ -49,7 +49,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   approvedNames: [],
   defaultMode: 'background',
   allowScripts: false,
-  showCursor: true
+  showCursor: true,
+  cookieContainers: []
 }
 
 export function emptyAgentServerStatus(): AgentServerStatus {

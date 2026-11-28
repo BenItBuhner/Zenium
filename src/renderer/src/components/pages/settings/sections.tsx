@@ -5089,6 +5089,24 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
       ]
     },
     {
+      id: 'agent-cookies',
+      heading: 'Sign-ins agents may move',
+      description:
+        'Off for every container by default. When on, an agent can copy a site’s sign-in from this browser to another of your browsers, or bring one here, encrypted so only the other browser can read it.',
+      rows: state.containers.map((c) => ({
+        kind: 'switch' as const,
+        id: `agent-cookies:${c.id}`,
+        label: c.name,
+        checked: a.cookieContainers.includes(c.id),
+        onChange: (v: boolean) =>
+          setAgents({
+            cookieContainers: v
+              ? [...a.cookieContainers.filter((id) => id !== c.id), c.id]
+              : a.cookieContainers.filter((id) => id !== c.id)
+          })
+      }))
+    },
+    {
       id: 'connected',
       heading: 'Connected agents',
       rows: state.agents.map((agent) =>

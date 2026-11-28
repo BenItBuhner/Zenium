@@ -8,6 +8,9 @@ import type {
   Tab
 } from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
+import { DEFAULT_CONTAINER_ID, type Container } from '../../shared/types'
+import { normalizeSite } from '../../shared/portableCookie'
+import { deviceKey, isPublicKey, openBundle, sealBundle } from './cookieTransfer'
 import { agentTabProxyId, DEFAULT_APP_PROXY_SETTINGS } from '../../shared/appProxy'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
@@ -909,7 +912,7 @@ const zenStatus: AgentTool = {
   }
 }
 
-const SESSION_ACTIONS = ['start', 'resume', 'status', 'end', 'rename'] as const
+const SESSION_ACTIONS = ['start', 'resume', 'status', 'end', 'rename', 'list', 'mode'] as const
 type SessionAction = (typeof SESSION_ACTIONS)[number]
 const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
   start: 'start',
@@ -935,7 +938,33 @@ const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
   finish: 'end',
   rename: 'rename',
   name: 'rename',
-  setname: 'rename'
+  setname: 'rename',
+  list: 'list',
+  ls: 'list',
+  sessions: 'list',
+  all: 'list',
+  mode: 'mode',
+  setmode: 'mode'
+}
+
+/** "3 min ago", "2 h ago", "4 d ago": how long since something was last seen. */
+function ago(ms: number, now = Date.now()): string {
+  const min = Math.max(0, Math.round((now - ms) / 60_000))
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} d ago`
+}
+
+export function listSessions(ctx: ToolContext): string {
+  const all = ctx.agents.durableSessions()
+  if (!all.length) return 'No sessions in this browser yet.'
+  const mine = ctx.agents.claimOf(ctx.session)?.name
+  const lines = all.map(
+    (x) =>
+      `- ${JSON.stringify(x.name)}${x.name === mine ? ' (you)' : ''}: ${x.live ? 'connected' : 'paused'}, ${x.mode}, ${x.tabs} tab${x.tabs === 1 ? '' : 's'} in ${x.groups} group${x.groups === 1 ? '' : 's'}, last active ${ago(x.lastSeenAt)}`
+  )
+  return `Sessions in this browser, most recent first:\n${lines.join('\n')}\n\nA paused session is picked up again with zen_session {"action":"resume","key":"…"}, or by starting under exactly its name with the connection token.`
 }
 
 const zenSession: AgentTool = {
@@ -943,7 +972,7 @@ const zenSession: AgentTool = {
     name: 'zen_session',
     title: 'Your session',
     description:
-      'Your session in this browser. Call {"action":"start","name":"…"} first: name yourself after the task you are doing (e.g. "Invoice reconciliation", "PR 741 review") – generic names such as "Agent", "Claude" or "Cursor" are refused, and nothing but zen_status works until you have started. A started session is durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections, and no other agent can adopt them, until you end it; the answer gives your session key. "resume" {key}: carry your session over to this connection after a reconnect that lost it (the key from start or zen_status); without the key, start again under exactly the same name and you get the same session back. "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt. "rename" {name}: change your name (the same rules as start).',
+      'Your session in this browser. Call {"action":"start","name":"…"} first: name yourself after the task you are doing (e.g. "Invoice reconciliation", "PR 741 review") – generic names such as "Agent", "Claude" or "Cursor" are refused, and nothing but zen_status works until you have started. A started session is durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections, and no other agent can adopt them, until you end it; the answer gives your session key. "resume" {key}: carry your session over to this connection after a reconnect that lost it (the key from start or zen_status); without the key, start again under exactly the same name and you get the same session back. "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt. "rename" {name}: change your name (the same rules as start). "list": every session in this browser, connected or paused, with its tabs – to find one to pick up. "mode" {mode, takeScreen}: the same as zen_mode. Changed: list and mode are new; zen_mode stays as an alias.',
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...SESSION_ACTIONS] },
@@ -953,6 +982,15 @@ const zenSession: AgentTool = {
             'start, rename: a specific, descriptive name for what you are doing (6–48 characters)'
         },
         key: { type: 'string', description: 'resume: your session key ("zk_…")' },
+        mode: {
+          type: 'string',
+          enum: ['foreground', 'background'],
+          description: 'mode: foreground or background (see zen_mode)'
+        },
+        takeScreen: {
+          type: 'boolean',
+          description: 'mode: with foreground, bring your tab in front of the user (see zen_mode)'
+        },
         closeTabs: {
           type: 'boolean',
           description:
@@ -973,6 +1011,8 @@ const zenSession: AgentTool = {
       )
     const s = ctx.session
     if (action === 'status') return text(statusText(ctx))
+    if (action === 'list') return text(listSessions(ctx))
+    if (action === 'mode') return zenMode.run(ctx, args)
     if (action === 'start') {
       const { claim, resumed } = ctx.agents.startClaim(s, str(args, 'name') ?? '')
       if (resumed)
@@ -2934,6 +2974,143 @@ const zenHistory: AgentTool = {
   }
 }
 
+const zenDevices: AgentTool = {
+  definition: {
+    name: 'zen_devices',
+    title: 'Your devices',
+    description:
+      'The browsers on this Zenium account: this one and the other devices the account or the sync folder knows, with when each was last seen. Every tool acts on this browser; reaching another device takes the hosted relay, and the answer says when it is not connected. Changed: new tool.',
+    inputSchema: schema({}),
+    annotations: { readOnlyHint: true, openWorldHint: false }
+  },
+  async run(ctx) {
+    const status = ctx.browser.sync.status()
+    const lines = [
+      `- ${JSON.stringify(status.deviceName || 'This browser')} (this browser, online)`
+    ]
+    for (const d of status.devices)
+      if (d.id !== status.deviceId)
+        lines.push(
+          `- ${JSON.stringify(d.name)}${d.kind ? ` (${d.kind})` : ''}: last seen ${ago(d.lastSeen)}`
+        )
+    const account = status.account
+      ? `Signed in as ${status.account.email}.`
+      : 'Not signed in to a Zenium account.'
+    return text(
+      `${account}\n${lines.join('\n')}\n\nOther devices can be driven once the hosted relay is connected; until then, connect to each browser's own MCP server.`
+    )
+  }
+}
+
+const COOKIE_ACTIONS = ['key', 'export', 'import'] as const
+
+/** The container an agent names (id or name, case aside), or the default one. */
+function cookieContainer(ctx: ToolContext, args: Record<string, unknown>): Container {
+  const want = (str(args, 'container') ?? DEFAULT_CONTAINER_ID).trim().toLowerCase()
+  const all = ctx.browser.state.model.containers
+  const found = all.find((c) => c.id.toLowerCase() === want || c.name.toLowerCase() === want)
+  if (!found)
+    throw new RpcError(
+      -32602,
+      `No container ${JSON.stringify(want)}. Containers: ${all.map((c) => `${c.id} ("${c.name}")`).join(', ')}`
+    )
+  return found
+}
+
+function cookieRefusal(ctx: ToolContext, c: Container): string | null {
+  if (ctx.agents.settings.cookieContainers.includes(c.id)) return null
+  return `The user has not let agents move sign-ins for the container "${c.name}". Ask them to turn it on in Settings → AI Agents → Sign-ins agents may move (on a server: zenium --server --allow-cookie-transfer).`
+}
+
+const zenCookies: AgentTool = {
+  definition: {
+    name: 'zen_cookies',
+    title: 'Move a sign-in between your browsers',
+    description:
+      'Move a site\'s sign-in (its cookies) from one of the user\'s browsers to another, end-to-end encrypted. 1) On the browser that NEEDS the sign-in: {"action":"key"} returns its device key. 2) On the browser that HAS it: {"action":"export","site":"github.com","to":"<that key>"} returns a sealed bundle only the receiving browser can open. 3) Back on the receiver: {"action":"import","bundle":"zck1…"} sets the cookies, then reload your tab. Bundles expire after 10 minutes. Only works for containers the user allowed (off by default); "container" picks one by id or name (default: "No Container"). Some sites tie a sign-in to one device and will not accept it elsewhere. Changed: new tool.',
+    inputSchema: schema(
+      {
+        action: { type: 'string', enum: [...COOKIE_ACTIONS] },
+        site: { type: 'string', description: 'export: the site, e.g. "github.com"' },
+        to: { type: 'string', description: "export: the receiving browser's device key" },
+        bundle: { type: 'string', description: 'import: the sealed bundle from export' },
+        container: {
+          type: 'string',
+          description: 'export / import: the container by id or name (default "No Container")'
+        }
+      },
+      ['action']
+    ),
+    annotations: { openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const action = (str(args, 'action') ?? '').toLowerCase().trim()
+    const secrets = ctx.browser.platform.secrets
+    const siteData = ctx.browser.platform.siteData
+    if (!secrets || !siteData?.exportCookies || !siteData.importCookies)
+      return text(
+        'This browser cannot move sign-ins (no secret store or cookie access on this platform).'
+      )
+    const key = await deviceKey(secrets)
+    const allowed = ctx.browser.state.model.containers
+      .filter((c) => ctx.agents.settings.cookieContainers.includes(c.id))
+      .map((c) => `"${c.name}"`)
+    if (action === 'key')
+      return text(
+        `This browser's device key: ${key.publicKey}\nContainers agents may move sign-ins for here: ${allowed.length ? allowed.join(', ') : 'none (the user has not turned it on)'}.`
+      )
+    if (action === 'export') {
+      const site = normalizeSite(need(args, 'site', 'e.g. "github.com"'))
+      if (!site) throw new RpcError(-32602, 'site must be a domain such as "github.com"')
+      const to = need(args, 'to', "the receiving browser's key from zen_cookies key")
+      if (!isPublicKey(to))
+        throw new RpcError(
+          -32602,
+          'to is not a device key: run {"action":"key"} on the receiving browser'
+        )
+      const c = cookieContainer(ctx, args)
+      const refused = cookieRefusal(ctx, c)
+      if (refused) return text(refused)
+      const cookies = await siteData.exportCookies(c.id, site)
+      if (!cookies.length)
+        return text(`No cookies for ${site} in "${c.name}": this browser is not signed in there.`)
+      const from = ctx.browser.sync.status().deviceName || 'Zenium'
+      const sealed = sealBundle({ site, createdAt: Date.now(), from, cookies }, to)
+      ctx.browser.toast(
+        `${ctx.session.name} copied your ${site} sign-in to another of your devices`
+      )
+      return text(
+        `Sealed ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} for ${site} to the receiving browser. Pass this to zen_cookies import there within 10 minutes:\n${sealed}`
+      )
+    }
+    if (action === 'import') {
+      const c = cookieContainer(ctx, args)
+      const refused = cookieRefusal(ctx, c)
+      if (refused) return text(refused)
+      const opened = openBundle(need(args, 'bundle', 'the "zck1…" text from export'), key)
+      if (!opened.ok)
+        return text(
+          opened.reason === 'expired'
+            ? 'That bundle has expired (10 minutes): export it again.'
+            : opened.reason === 'not-for-this-device'
+              ? 'That bundle was sealed to another browser\'s key: export again with this browser\'s key ({"action":"key"}).'
+              : 'That is not a sign-in bundle.'
+        )
+      const n = await siteData.importCookies(c.id, opened.bundle.cookies)
+      ctx.browser.toast(
+        `${ctx.session.name} brought your ${opened.bundle.site} sign-in from ${opened.bundle.from}`
+      )
+      return text(
+        `Set ${n} of ${opened.bundle.cookies.length} cookies for ${opened.bundle.site} in "${c.name}". Reload your tab on ${opened.bundle.site} to use the sign-in.`
+      )
+    }
+    throw new RpcError(
+      -32602,
+      `Unknown action ${JSON.stringify(action)} – use "key", "export" or "import"`
+    )
+  }
+}
+
 export const AGENT_TOOLS: AgentTool[] = [
   zenStatus,
   browserTabs,
@@ -2959,6 +3136,8 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserFileUpload,
   zenGroups,
   zenSession,
+  zenDevices,
+  zenCookies,
   zenSpaces,
   zenMode,
   zenHistory

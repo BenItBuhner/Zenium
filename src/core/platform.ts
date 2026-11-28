@@ -83,6 +83,7 @@ import type { QuitHoldPanel } from '../shared/quitHoldPanel'
 import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
+import type { PortableCookie } from '../shared/portableCookie'
 import type {
   ByteSource,
   EngineAssets,
@@ -2199,6 +2200,14 @@ export interface SiteDataHost {
    * without the reading leave it out: the viewer then lists the permissions' origins alone.
    */
   listOrigins?(containerId: string, probe: string[]): Promise<SiteDataOriginReading[]>
+  /**
+   * Every cookie of `site` (the registrable domain and its subdomains) in the container, values
+   * included – the one path where they cross this boundary, for an agent moving a sign-in to
+   * another device of the user's, sealed to that device's key before it leaves (`zen_cookies`).
+   */
+  exportCookies?(containerId: string, site: string): Promise<PortableCookie[]>
+  /** Set cookies exported elsewhere into the container; resolves with how many were set. */
+  importCookies?(containerId: string, cookies: PortableCookie[]): Promise<number>
 }
 
 export interface AppHost {

@@ -59,6 +59,7 @@ export type InternalPageId =
   | 'version'
   | 'game'
   | 'management'
+  | 'ask'
 
 /**
  * How a page's tab holds its page.
@@ -95,6 +96,7 @@ export type InternalPageGlyph =
   | 'activity'
   | 'book-open'
   | 'building-2'
+  | 'message-circle'
   | 'roll'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
@@ -769,6 +771,21 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     singleton: false,
     glyph: 'roll',
     pill: { showStar: true },
+    splittable: true,
+    sections: []
+  },
+  /**
+   * The built-in agent (`zen://ask?task=<id>`, `core/assistant`): a task handed over from the
+   * address bar's "Ask Zenium" row or typed here, its answer, follow-ups, the API key and what
+   * the agent remembers. One tab: asking again from the bar lands in the same one.
+   */
+  ask: {
+    id: 'ask',
+    title: 'Ask Zenium',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'message-circle',
+    pill: { showStar: false },
     splittable: true,
     sections: []
   }

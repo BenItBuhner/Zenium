@@ -1672,3 +1672,43 @@ describe('SuggestionService: zero-suggest on the touch layouts (OMN-04)', () => 
     ])
   })
 })
+
+describe('SuggestionService: typo fixes and the agent row', () => {
+  it('offers the host the user meant under the typed address, never as the default', async () => {
+    const { suggestions, history, win } = setup()
+    history.visit('https://mycompany.io/', 'Home', null, { transition: 'typed' })
+    const rows = await suggestions.suggest('mycompnay.io', null, win)
+    expect(rows[0]).toMatchObject({ kind: 'url', id: 'url' })
+    expect(rows.find((r) => r.id === 'typo')).toMatchObject({
+      title: 'Did you mean mycompany.io?',
+      url: 'https://mycompany.io/'
+    })
+    expect(
+      (await suggestions.suggest('githb.com', null, win)).find((r) => r.id === 'typo')?.title
+    ).toBe('Did you mean github.com?')
+    expect((await suggestions.suggest('github.com', null, win)).some((r) => r.id === 'typo')).toBe(
+      false
+    )
+  })
+
+  it('offers "Ask Zenium" for a question only once a model service is set up, and never in private', async () => {
+    const { suggestions, win } = setup()
+    const browser = (suggestions as unknown as { browser: { assistant?: unknown } }).browser
+    const q = 'what is the tallest building in oslo'
+    expect((await suggestions.suggest(q, null, win)).some((r) => r.kind === 'ask')).toBe(false)
+    browser.assistant = { status: () => ({ provider: {} }) }
+    const rows = await suggestions.suggest(q, null, win)
+    expect(rows[0].kind).toBe('search')
+    expect(rows.find((r) => r.kind === 'ask')).toMatchObject({ title: q, subtitle: 'Ask Zenium' })
+    expect((await suggestions.suggest('pizza oslo', null, win)).some((r) => r.kind === 'ask')).toBe(
+      false
+    )
+    const priv = setup('private')
+    ;(priv.suggestions as unknown as { browser: { assistant?: unknown } }).browser.assistant = {
+      status: () => ({ provider: {} })
+    }
+    expect((await priv.suggestions.suggest(q, null, priv.win)).some((r) => r.kind === 'ask')).toBe(
+      false
+    )
+  })
+})

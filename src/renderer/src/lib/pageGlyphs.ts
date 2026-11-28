@@ -2,6 +2,7 @@ import {
   Activity,
   BookOpen,
   Building2,
+  MessageCircle,
   Download,
   FileText,
   History,
@@ -65,5 +66,6 @@ export const PAGE_GLYPHS: Readonly<Record<InternalPageGlyph, LucideIcon>> = {
   activity: Activity,
   'book-open': BookOpen,
   'building-2': Building2,
+  'message-circle': MessageCircle,
   roll: Roll
 }

@@ -6,6 +6,7 @@ import {
   Globe,
   Info,
   Layers,
+  MessageCircle,
   PanelTop,
   Puzzle,
   Search,
@@ -39,7 +40,8 @@ const ROW_ICONS: Record<SuggestionKind, LucideIcon> = {
   entity: Info,
   omnibox: Puzzle,
   clipboard: Clipboard,
-  folder: Folder
+  folder: Folder,
+  ask: MessageCircle
 }
 
 /**

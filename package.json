@@ -36,6 +36,7 @@
     "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
     "@browsermt/bergamot-translator": "^0.4.9",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",

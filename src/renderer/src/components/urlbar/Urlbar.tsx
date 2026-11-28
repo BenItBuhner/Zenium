@@ -843,6 +843,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         case 'command':
           if (item.targetId) run('urlbar.runCommand', { action: item.targetId })
           break
+        case 'ask':
+          run('assistant.ask', { prompt: item.title, open: true })
+          break
         case 'engine': {
           // A keyword to complete: an engine's row enters keyword mode for it (the chip up, the
           // field emptied); a scope's (`@b` → `@bookmarks `) becomes the typed text. The bar
