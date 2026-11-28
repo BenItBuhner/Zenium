@@ -321,9 +321,9 @@ describe('the words', () => {
       'You can use Zenium any time you tap links in messages, documents and other apps'
     )
     expect(educationalTipCardButton('default-browser')).toBe('Set as default')
-    expect(educationalTipCardTitle('tab-groups')).toBe('Tidy up with tab groups')
+    expect(educationalTipCardTitle('tab-groups')).toBe('Tidy up with folders')
     expect(educationalTipCardDescription('tab-groups')).toBe(
-      'Create tab groups that save and update across your devices when sync is on'
+      'Create folders that save and update across your devices when sync is on'
     )
     expect(educationalTipCardButton('tab-groups')).toBe('Try it now')
     expect(educationalTipCardTitle('quick-delete')).toBe('Manage your browsing data')

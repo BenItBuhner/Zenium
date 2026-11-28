@@ -1,32 +1,18 @@
 import type { HostCapabilities, UIState } from '@shared/types'
-import type { ViewportInfo } from './formFactor'
 
 /**
  * Which steps the first run shows. Pure over the host's capabilities and the viewport, so the
  * tour can be reasoned about (and tested) without rendering it: a step about sync is only shown
- * where sync exists, keyboard shortcuts are only taught where a keyboard is likely, and the
- * phone's short flow only asks about the browser role where the host has one to give.
+ * where sync exists, and the phone's short flow only asks about the browser role where the host
+ * has one to give.
  */
 
-export type TourStep =
-  'welcome' | 'look' | 'search' | 'import' | 'essentials' | 'features' | 'sync' | 'shortcuts'
+export type TourStep = 'welcome' | 'look' | 'search' | 'import' | 'essentials' | 'sync'
 
 export type PhoneStep = 'welcome' | 'look' | 'search' | 'default'
 
-export type TourFeature = 'spaces' | 'compact' | 'glance' | 'boosts' | 'livefolders' | 'sync'
-
 /** Capabilities that shape the tour (a subset of `HostCapabilities`). */
 export type TourCapabilities = Pick<HostCapabilities, 'sync'>
-
-/**
- * A host driven by fingers alone: coarse pointer and nothing that hovers. A tablet with a
- * trackpad or a phone in DeX brings hover back and counts as keyboard-equipped; a hardware
- * keyboard on its own cannot be detected from the web platform, so a keyboard-only tablet is
- * treated as touch-only and finds the shortcuts in Settings instead.
- */
-export function isTouchOnly(viewport: Pick<ViewportInfo, 'coarse' | 'hover'>): boolean {
-  return viewport.coarse && !viewport.hover
-}
 
 /**
  * Whether the tour is over this window's chrome – the terms `App.tsx` and `TabletShell.tsx`
@@ -60,34 +46,17 @@ export function phoneOnboardingCovers(state: Pick<UIState, 'settings'>): boolean
 }
 
 /**
- * The desktop tour: seven steps, minus sync without the capability, minus shortcuts on touch;
- * plus Chrome's first-run import offer after the search engine when another browser's profile
- * was found on this computer (`importable`; the probe is `import.sources`, so the step joins
- * the tour once it answers – files alone are no offer).
+ * The desktop tour, Zen's: welcome, look, search engine, Essentials, and sync where the host has
+ * it; plus the import offer after the search engine when another browser's profile was found on
+ * this computer (`importable`; the probe is `import.sources`, so the step joins the tour once it
+ * answers – files alone are no offer).
  */
-export function tourSteps(
-  caps: TourCapabilities,
-  touchOnly: boolean,
-  importable = false
-): TourStep[] {
+export function tourSteps(caps: TourCapabilities, importable = false): TourStep[] {
   const steps: TourStep[] = ['welcome', 'look', 'search']
   if (importable) steps.push('import')
-  steps.push('essentials', 'features')
+  steps.push('essentials')
   if (caps.sync) steps.push('sync')
-  if (!touchOnly) steps.push('shortcuts')
   return steps
-}
-
-/**
- * The feature cards of the tour. Compact Mode (hover to reveal) and Glance (a modifier click)
- * need a pointer and a keyboard; Sync needs the host to have it.
- */
-export function tourFeatures(caps: TourCapabilities, touchOnly: boolean): TourFeature[] {
-  const features: TourFeature[] = ['spaces']
-  if (!touchOnly) features.push('compact', 'glance')
-  features.push('boosts', 'livefolders')
-  if (caps.sync) features.push('sync')
-  return features
 }
 
 /**

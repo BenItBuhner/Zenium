@@ -5046,17 +5046,15 @@ async function scenarioWalkthrough() {
       return { before, captions, stripRows, checked }
     })
 
-    // A tab group's saved form (TAB-16's desktop half, tabs-15): a folder whose tabs were closed
-    // as one keeps their pages and stays in the sidebar as a SAVED group – the folder's row with
-    // "saved" in its description, its pages listed under the unfolded header – and its Open
-    // brings them back as its tabs. Driven the way a user does it, through the native menus the
-    // hook picks from: the second fixture tab's row menu puts the tab in a new folder (the group
-    // editor bubble opens on the new folder and Escape closes it), the folder's own menu closes
-    // the folder (the tab goes, the folder stays saved with the page), a press on the header
-    // unfolds the kept page and a press on the page opens the folder again (the tab is back in
-    // it); Unpack Folder then leaves the tab loose and the first fixture tab is made active
+    // A folder outlives its tabs (Zen's folder; Zenium has no saved groups any more): closing a
+    // folder closes its tabs and leaves the folder in the sidebar, folded and empty, and Reopen
+    // Closed Tab brings the tab back into it. Driven the way a user does it, through the native
+    // menus the hook picks from: the second fixture tab's row menu puts the tab in a new folder
+    // (the group editor bubble opens on the new folder and Escape closes it), the folder's own
+    // menu closes the folder (the tab goes, the folder stays), Accel+Shift+T reopens the tab in
+    // it; Unpack Folder then leaves the tab loose and the first fixture tab is made active
     // again, so the steps after find the sidebar with the rows it had.
-    await s.step('saved-group', async () => {
+    await s.step('closed-folder', async () => {
       await s.reset()
       const second = bootSite.second
       const rowsBefore = await s.sidebarTabCount()
@@ -5068,7 +5066,7 @@ async function scenarioWalkthrough() {
       const row = sidebarRow(s, second.title)
       await row.waitFor({ state: 'visible', timeout: 5000 })
       const tabIdBefore = await row.getAttribute('data-tab-id')
-      /** The folder as the app state has it: its live members and the pages it keeps. */
+      /** The folder as the app state has it: its live members. */
       const folderState = (folderId) =>
         s.chrome.evaluate(async (id) => {
           const state = await window.zen.invoke('app.getState')
@@ -5081,7 +5079,7 @@ async function scenarioWalkthrough() {
           return {
             name: folder.name,
             collapsed: folder.collapsed,
-            savedTabs: (folder.savedTabs ?? []).map((p) => ({ url: p.url, title: p.title })),
+            legacySaved: 'savedTabs' in folder,
             members,
             activeTabId: space?.activeTabId ?? null
           }
@@ -5115,85 +5113,54 @@ async function scenarioWalkthrough() {
       if (openDescription !== 'Folder, 1 tab') {
         throw new Error(`the open folder's description reads "${openDescription}"`)
       }
-      if (await header.getAttribute('data-saved')) {
-        throw new Error('the folder reads as saved while its tab is open')
-      }
 
-      // 2. The folder's menu: Close Folder (1 Tab) – the tab closes, the folder stays SAVED
-      // with the page, folded (Chrome's saved-group chip).
+      // 2. The folder's menu: Close Folder (1 Tab) – the tab closes, the folder stays, folded
+      // and empty, with no saved pages.
       await pickFromNextMenu(s, 'Close Folder (1 Tab)', () =>
         header.click({ button: 'right', timeout: 5000 })
-      )
-      await waitFor(
-        async () => ((await header.getAttribute('data-saved')) !== null ? true : null),
-        8000,
-        'the folder header marked saved'
       )
       await waitFor(
         async () => ((await s.sidebarTabCount()) === rowsBefore - 1 ? true : null),
         8000,
         `the closed tab's row gone (${rowsBefore} rows before)`
       )
-      const saved = await folderState(folderId)
-      if (
-        !saved ||
-        saved.members.length !== 0 ||
-        saved.savedTabs.length !== 1 ||
-        saved.savedTabs[0].url !== second.url ||
-        !saved.collapsed
-      ) {
-        throw new Error(`the closed folder is not saved with the page: ${JSON.stringify(saved)}`)
+      const closed = await folderState(folderId)
+      if (!closed || closed.members.length !== 0 || closed.legacySaved || !closed.collapsed) {
+        throw new Error(
+          `the closed folder is not an empty folded folder: ${JSON.stringify(closed)}`
+        )
       }
-      const savedDescription = await header.getAttribute('aria-description')
-      if (savedDescription !== 'Folder, saved, 1 tab') {
-        throw new Error(`the saved folder's description reads "${savedDescription}"`)
+      if ((await headers.count()) !== 1) {
+        throw new Error('the folder left the sidebar when its tabs closed')
       }
-      const kind = await shell.getAttribute('data-group-kind')
-      if (kind !== 'saved') throw new Error(`the folder's row kind is "${kind}", expected "saved"`)
       if ((await s.tabs()).some((t) => t.url.startsWith(second.url))) {
         throw new Error("the folder's tab is still open after Close Folder")
       }
-      await s.shot('08d-saved-group')
+      await s.shot('08d-closed-folder')
 
-      // 3. The header unfolds the kept page; the page opens the folder: the tab is back in it,
-      // active, the folder open again.
-      await header.click({ timeout: 5000 })
-      const pages = s.chrome.locator(`[data-saved-pages="${folderId}"] [data-saved-page]`)
-      await pages.first().waitFor({ state: 'visible', timeout: 5000 })
-      const pageTitle = (
-        (await pages.first().locator('[data-testid="saved-page-title"]').textContent()) ?? ''
-      ).trim()
-      if ((await pages.count()) !== 1 || pageTitle !== second.title) {
-        throw new Error(`the saved pages read ${await pages.count()} row(s), "${pageTitle}"`)
-      }
-      await s.shot('08e-saved-group-pages')
-      await pages.first().click({ timeout: 5000 })
+      // 3. Reopen Closed Tab: the tab comes back into the folder.
+      await s.press(`${ACCEL}+Shift+t`)
       const back = await s.waitForTab(second.url, 15000)
-      await waitFor(
-        async () => ((await header.getAttribute('data-saved')) === null ? true : null),
-        8000,
-        'the folder header open again'
-      )
       await waitFor(
         async () => ((await s.sidebarTabCount()) === rowsBefore ? true : null),
         8000,
         `the page's row back (${rowsBefore} rows before)`
       )
       const reopened = await folderState(folderId)
-      if (
-        !reopened ||
-        reopened.members.length !== 1 ||
-        reopened.members[0].url !== second.url ||
-        reopened.savedTabs.length !== 0 ||
-        reopened.activeTabId !== reopened.members[0].id
-      ) {
+      if (!reopened || reopened.members.length !== 1 || reopened.members[0].url !== second.url) {
         throw new Error(
-          `Open did not bring the page back as the folder's active tab: ${JSON.stringify(reopened)}`
+          `Reopen did not bring the tab back into the folder: ${JSON.stringify(reopened)}`
         )
       }
-      if ((await shell.locator(`[data-tab-id="${reopened.members[0].id}"]`).count()) !== 1) {
-        throw new Error("the reopened tab's row is not under the folder's header")
-      }
+      if (reopened.collapsed) await header.click({ timeout: 5000 })
+      await waitFor(
+        async () =>
+          (await shell.locator(`[data-tab-id="${reopened.members[0].id}"]`).count()) === 1
+            ? true
+            : null,
+        5000,
+        "the reopened tab's row under the folder's header"
+      )
 
       // 4. Unpack Folder: the folder goes, the tab stays loose; the first fixture tab active
       // again, as the step found it.
@@ -5221,7 +5188,7 @@ async function scenarioWalkthrough() {
         folderId,
         tabBefore: tabIdBefore,
         tabAfter: back.id,
-        saved,
+        closed,
         reopened,
         activeBefore,
         activeAfter: await s.activeTabId()

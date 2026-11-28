@@ -1361,23 +1361,14 @@ describe('SuggestionService: tab group rows (OMN-15)', () => {
     expect(mixed.indexOf('tab')).toBeLessThan(mixed.indexOf('folder'))
   })
 
-  it('offers a saved group by its kept pages, and no empty, unnamed or private one', async () => {
+  it('offers no empty, unnamed or private group', async () => {
     const s = setup()
     const m = s.state.model
     const space = m.spaces[0]
-    const saved = createFolder(m, space.id, 'Trip', '📁', 'green')
-    saved.savedTabs = [
-      { url: 'https://hotel.example/booking', title: 'Booking' },
-      { url: 'zen://newtab', title: 'New Tab' }
-    ]
     createFolder(m, space.id, 'Trip planning', '📁')
-    createFolder(m, space.id, '', '📁').savedTabs = [{ url: 'https://trip.example/', title: '' }]
+    createFolder(m, space.id, '', '📁')
     const secret = createFolder(m, space.id, 'Trip secrets', '📁')
     addTab(s, 'tab_private', 'https://secret.example/', 'Secret', secret.id, PRIVATE_CONTAINER_ID)
-    const rows = folderRows(await s.suggestions.suggest('trip', null, s.win))
-    expect(rows).toMatchObject([{ targetId: saved.id, title: 'Trip', subtitle: 'hotel.example' }])
-    // A group whose pages are internal ones alone has nothing to list.
-    saved.savedTabs = [{ url: 'zen://settings', title: 'Settings' }]
     expect(folderRows(await s.suggestions.suggest('trip', null, s.win))).toEqual([])
   })
 

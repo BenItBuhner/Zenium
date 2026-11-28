@@ -57,8 +57,8 @@ export function groupActions(
       label: OVERVIEW_LABELS.ungroup,
       run: () => run('folder.delete', { folderId: folder.id, unpack: true })
     },
-    // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
-    // ink, as on the saved card's sheet and the tablet's menu; Delete Group alone is danger.
+    // Close Group sends the tabs to Recently Closed and keeps the folder (`folder.close`): the
+    // plain ink, as on the tablet's menu; Delete Group alone is danger.
     {
       id: 'close',
       label: OVERVIEW_LABELS.closeGroup(count),

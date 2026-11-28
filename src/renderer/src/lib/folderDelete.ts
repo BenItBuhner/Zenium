@@ -11,46 +11,29 @@ import { browserStore, openFolderDeleteConfirm, uiStore } from './ui'
  * once, there being nothing to lose.
  */
 
-/** The host's word for the sidebar's tab group (v2 §6): the desktop says folder, the touch hosts group. */
-export type FolderNoun = 'folder' | 'group'
-
 /**
- * The prompt's words (the phone's group sheet's, in the host's vocabulary): the question with
- * the folder's name – or, for one with no name, the host's noun (the desktop's "Delete folder?",
- * the touch layouts' "Delete this group?", the phone sheet's own words; v2 §6 lets neither host
- * borrow the other's word) – and one line on what the deletion takes – an open folder's tabs
- * close with it, each to Recently Closed; a saved folder's pages are forgotten, with no way back.
+ * The prompt's words: the question with the folder's name ("Delete folder?" for one with no
+ * name), and one line on what the deletion takes – an open folder's tabs close with it, each to
+ * Recently Closed.
  */
-export function folderDeleteWords(
-  name: string,
-  count: number,
-  saved: boolean,
-  noun: FolderNoun = 'folder'
-): { title: string; detail: string } {
+export function folderDeleteWords(name: string, count: number): { title: string; detail: string } {
   const one = count === 1
-  const unit = saved ? `${count} saved page${one ? '' : 's'}` : `${count} tab${one ? '' : 's'}`
-  const nameless = noun === 'group' ? 'this group' : 'folder'
   return {
-    title: `Delete ${name.trim() || nameless}?`,
-    detail: saved
-      ? `Its ${unit} ${one ? 'is' : 'are'} forgotten with it. There is no undo.`
-      : `Its ${unit} close${one ? 's' : ''} with it; Recently Closed keeps ${one ? 'its page' : 'their pages'}.`
+    title: `Delete ${name.trim() || 'folder'}?`,
+    detail: `Its ${count} tab${one ? '' : 's'} close${one ? 's' : ''} with it; Recently Closed keeps ${one ? 'its page' : 'their pages'}.`
   }
 }
 
-/** Whether `folderId` holds anything a deletion would take: a live tab, or the pages it kept. */
+/** Whether `folderId` holds anything a deletion would take: a live tab. */
 export function folderHoldsAnything(folderId: string): boolean {
   const state = browserStore.get().state
   const folder = state?.folders[folderId]
   if (!state || !folder) return false
-  return (
-    Boolean(folder.savedTabs?.length) ||
-    Object.values(state.tabs).some((t) => t.folderId === folderId)
-  )
+  return Object.values(state.tabs).some((t) => t.folderId === folderId)
 }
 
 /**
- * Delete the folder, asking first when it holds tabs or pages. `keyboard` is whether a chrome
+ * Delete the folder, asking first when it holds tabs. `keyboard` is whether a chrome
  * control had the keyboard (the header, a focused row; the folder menu opened from it), so the
  * prompt's Cancel hands it back to the header rather than the page (§9.22); read off the focus
  * ring when not given.

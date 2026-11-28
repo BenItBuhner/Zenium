@@ -8,7 +8,6 @@ import type {
   Bookmark,
   BookmarkNode,
   BookmarkTreeData,
-  ArchivedTabEntry,
   Boost,
   ClosedEntry,
   ImportProgress,
@@ -39,7 +38,6 @@ import type {
   PageWindowsDeviceState,
   PasswordsDeviceState,
   PrivateDeviceState,
-  ReadingListEntry,
   ScreenCaptureRequest,
   ShareRequest,
   PasswordsStatus,
@@ -115,17 +113,22 @@ import {
   BookmarkTree,
   createBookmarkRoots,
   defaultBookmarkFolderId,
+  foldArchivedTabsIntoBookmarks,
+  foldPagesIntoBookmarks,
+  foldReadingListIntoBookmarks,
   migrateLegacyBookmarks,
   normalizeBookmarkNodes
 } from '../shared/bookmarks'
 import { sanitizeBookmarkRowDisplay, sanitizeBookmarkRowSortOrder } from '../shared/bookmarkRows'
-import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
 import {
   agentOwnedSpace,
   createSpace,
   createTabRecord,
   emptyModel,
+  getSpace,
+  insertTabIntoSpace,
+  regularFolderTabs,
   tabVisibleIn,
   userSpaceInstead,
   type Model
@@ -178,12 +181,7 @@ import {
 } from '../shared/newTab'
 import { EXTENSION_SETTING_KEYS, type ExtensionLayer } from '../shared/extensionSettings'
 import { defer, type StoreIO } from './platform'
-import {
-  sanitizeArchivedEntries,
-  sanitizeClosedEntries,
-  sanitizeSnapshot,
-  summarizeClosed
-} from './session'
+import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
 import { defaultScope } from './sync/records'
 import {
   closedNavigationOf,
@@ -249,11 +247,11 @@ export interface Persisted {
   /** v3: recently closed tabs and windows (newest first, 25 deep). */
   recentlyClosed?: ClosedEntry[]
   /**
-   * The Inactive tabs archive (TAB-20): the tabs the archive pass took out of the grid, newest
-   * first, each as a closed-tab entry with its `archivedAt`. Additive: a profile without it has
-   * none. Never with a stack's `hostState` (`navigation/`, as the recently closed entries).
+   * The Inactive tabs archive of phone profiles from before Zenium took Zen's shape: read once
+   * at load and folded into an "Inactive Tabs" bookmarks folder
+   * (`foldArchivedTabsIntoBookmarks`), never written again.
    */
-  archivedTabs?: ArchivedTabEntry[]
+  archivedTabs?: unknown
   /**
    * v3: the back/forward stack of every open tab, by tab id, so a restored tab has its history
    * and (through each entry's page state) its scroll position back. Refreshed on every commit
@@ -300,14 +298,11 @@ export interface Persisted {
    */
   pageWindowsDevice?: PageWindowsDeviceState
   /**
-   * The reading list (W6-1): every page saved for later, one entry per URL, at most
-   * `READING_LIST_CAP` of them READ (`trimReadingList`: the oldest by `readAt` go past the cap;
-   * an unread entry is never trimmed – the unread half is unbounded, as Chrome's list is). The
-   * profile's, independent of the session (a restart keeps it, a window closing leaves it
-   * alone); additive – a profile without it has none. Synced one `reading-list-entry` record per
-   * entry, every field but `favicon` (`sync/records.ts`).
+   * The reading list of profiles from before Zenium took Zen's shape: read once at load and
+   * folded into a "Reading List" bookmarks folder (`foldReadingListIntoBookmarks`), never
+   * written again.
    */
-  readingList?: ReadingListEntry[]
+  readingList?: unknown
 }
 
 /**
@@ -417,8 +412,6 @@ export class BrowserState {
   })
   /** Newest first; the `SessionService` owns the list, this is where it persists. */
   recentlyClosed: ClosedEntry[] = []
-  /** The Inactive tabs archive, newest first; the `InactiveTabsService` owns it, this is where it persists. */
-  archivedTabs: ArchivedTabEntry[] = []
   /**
    * What loading the profile changed under the user (a migration that moved settings): shown as
    * toasts once a window is ready, then forgotten. Never persisted.
@@ -471,14 +464,6 @@ export class BrowserState {
    * does. Written by the window's bounds report, persisted with the profile, never synced.
    */
   pageWindowsDevice: PageWindowsDeviceState = emptyPageWindows()
-  /**
-   * The reading list (W6-1), one entry per URL in no particular order (`sortReadingList` puts
-   * the unread first for the chrome). Written by the `ReadingListService` alone (the other
-   * devices' entries through its `applySynced` / `removeSynced`), replaced whole and committed;
-   * persisted with the profile and synced as `reading-list-entry` records under the
-   * `readingList` scope.
-   */
-  readingList: ReadingListEntry[] = emptyReadingList()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -782,17 +767,13 @@ export class BrowserState {
     // The blobs' folder hears which ids the session refers to; the documents of the others go at
     // the store's first fire (nothing is read here).
     this.navigationState.load(
-      new Set([
-        ...this.tabNavigation.keys(),
-        ...closedTabIds(this.recentlyClosed),
-        ...closedTabIds(this.archivedTabs)
-      ])
+      new Set([...this.tabNavigation.keys(), ...closedTabIds(this.recentlyClosed)])
     )
   }
 
   /**
    * What `navigation/<tabId>.json` is to hold: the open tab's stack (a private tab's never),
-   * else the stack a recently-closed or an Inactive tabs entry keeps for the id, else nothing.
+   * else the stack a recently-closed entry keeps for the id, else nothing.
    */
   private navigationFor(tabId: string): NavigationSnapshot | null {
     const tab = this.model.tabs[tabId]
@@ -800,9 +781,7 @@ export class BrowserState {
       if (tab.containerId === PRIVATE_CONTAINER_ID) return null
       return this.tabNavigation.get(tabId) ?? null
     }
-    return (
-      closedNavigationOf(this.recentlyClosed, tabId) ?? closedNavigationOf(this.archivedTabs, tabId)
-    )
+    return closedNavigationOf(this.recentlyClosed, tabId)
   }
 
   /** The app is shutting down gracefully: the next write marks the profile as cleanly exited. */
@@ -829,7 +808,6 @@ export class BrowserState {
   private applyPersisted(data: Persisted): void {
     // Before v3 the recently closed list was in memory only: it starts empty.
     this.recentlyClosed = data.version >= 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
-    this.archivedTabs = sanitizeArchivedEntries(data.archivedTabs)
     this.tabNavigation.clear()
     if (data.navigation && typeof data.navigation === 'object') {
       for (const [tabId, raw] of Object.entries(data.navigation)) {
@@ -978,7 +956,21 @@ export class BrowserState {
     this.updateDot = sanitizeUpdateDotRecord(data.updateDot)
     this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     this.pageWindowsDevice = sanitizePageWindows(data.pageWindowsDevice)
-    this.readingList = sanitizeReadingList(data.readingList)
+    // Zen has no reading list and no inactive-tabs archive: a profile that kept either gets
+    // its pages as bookmarks.
+    const foldInto = defaultBookmarkFolderId(this.platform)
+    this.bookmarks = foldReadingListIntoBookmarks(
+      this.bookmarks,
+      data.readingList,
+      foldInto,
+      Date.now()
+    )
+    this.bookmarks = foldArchivedTabsIntoBookmarks(
+      this.bookmarks,
+      data.archivedTabs,
+      foldInto,
+      Date.now()
+    )
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -1048,6 +1040,68 @@ export class BrowserState {
   /** Re-run the consistency checks after bulk changes (sync). */
   repair(): void {
     this.ensureValid()
+  }
+
+  /**
+   * Zen has no saved (closed) folders: a folder an older build kept as SAVED – its tabs closed,
+   * its pages in `Folder.savedTabs` – comes back as a folder, folded shut. When the session
+   * continues its pages return as the folder's tabs, unloaded until picked; when the session's
+   * tabs are forgotten at this launch (`forgetSession`), the pages go to a bookmarks folder of
+   * the folder's name instead, so nothing kept is lost. Runs once, after the startup choice;
+   * the field is never written again.
+   */
+  migrateSavedFolders(asTabs: boolean): void {
+    const m = this.model
+    const now = Date.now()
+    let changed = false
+    for (const folder of Object.values(m.folders)) {
+      if (!('savedTabs' in folder)) continue
+      const raw = folder.savedTabs
+      delete folder.savedTabs
+      changed = true
+      if (!Array.isArray(raw) || regularFolderTabs(m, folder.id).length > 0) continue
+      const space = getSpace(m, folder.spaceId)
+      if (!space) continue
+      const pages = raw
+        .filter(
+          (p): p is { url: string; title?: unknown; favicon?: unknown } =>
+            Boolean(p) && typeof p === 'object' && typeof (p as { url?: unknown }).url === 'string'
+        )
+        .filter((p) => p.url)
+      if (pages.length === 0) continue
+      folder.collapsed = true
+      const usedAt = folder.lastUsedAt ?? now
+      if (!asTabs) {
+        this.bookmarks = foldPagesIntoBookmarks(
+          this.bookmarks,
+          pages.map((p) => ({
+            url: p.url,
+            title: typeof p.title === 'string' ? p.title : '',
+            addedAt: usedAt
+          })),
+          folder.name.trim() || 'Folder',
+          defaultBookmarkFolderId(this.platform),
+          now
+        )
+        continue
+      }
+      for (const page of pages) {
+        const tab = createTabRecord({
+          url: page.url,
+          title: typeof page.title === 'string' && page.title ? page.title : undefined,
+          favicon: typeof page.favicon === 'string' ? page.favicon : null,
+          spaceId: space.id,
+          containerId: space.containerId,
+          folderId: folder.id,
+          discarded: true,
+          createdAt: usedAt,
+          lastActiveAt: usedAt
+        })
+        m.tabs[tab.id] = tab
+        insertTabIntoSpace(m, space, tab)
+      }
+    }
+    if (changed) this.commit()
   }
 
   /**
@@ -1311,7 +1365,6 @@ export class BrowserState {
       window: win.windowState(),
       ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
-      readingList: this.readingListFor(),
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabHiddenModules: this.newTabDevice.hiddenModules,
@@ -1322,7 +1375,6 @@ export class BrowserState {
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
-      archivedTabCount: this.archivedTabs.length,
       media: this.media,
       findResult: win.findResult,
       devtoolsOpenFor: [...this.devtoolsOpenFor],
@@ -1332,18 +1384,6 @@ export class BrowserState {
       resources: this.resources,
       pageEnvironment: this.pageEnvironment
     }
-  }
-
-  private sortedReadingList: ReadingListEntry[] = []
-  private sortedReadingListFor: ReadingListEntry[] | null = null
-
-  /** The list in the chrome's order, sorted once per write (every window's snapshot shares it). */
-  private readingListFor(): ReadingListEntry[] {
-    if (this.sortedReadingListFor !== this.readingList) {
-      this.sortedReadingList = sortReadingList(this.readingList)
-      this.sortedReadingListFor = this.readingList
-    }
-    return this.sortedReadingList
   }
 
   /** Broadcast + persist, coalesced to once per tick. */
@@ -1456,15 +1496,13 @@ export class BrowserState {
       windows: persistedWindows,
       // The stacks travel without their host-state blobs, which `navigation/` holds.
       recentlyClosed: withoutClosedHostState(this.recentlyClosed),
-      archivedTabs: withoutClosedHostState(this.archivedTabs),
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice,
       privateDevice: this.privateDevice,
       updateDot: this.updateDot,
       passwordsDevice: this.passwordsDevice,
-      pageWindowsDevice: this.pageWindowsDevice,
-      readingList: this.readingList
+      pageWindowsDevice: this.pageWindowsDevice
     }
   }
 

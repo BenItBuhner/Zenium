@@ -350,8 +350,6 @@ describe('the string table sweep (§9 item 10)', () => {
       if (entry.state) texts.push(['state.on', entry.state.on], ['state.off', entry.state.off])
       if (entry.count)
         texts.push(['count.one', entry.count.one], ['count.other', entry.count.other])
-      if (entry.noun)
-        texts.push(['noun.folder', entry.noun.folder], ['noun.group', entry.noun.group])
       if (entry.orientation)
         texts.push(
           ['orientation.horizontal', entry.orientation.horizontal],
@@ -387,8 +385,7 @@ describe('the string table sweep (§9 item 10)', () => {
           entry.count.one
         )
       }
-      if (/\{noun\}/.test(entry.menu))
-        expect(entry.noun, `${id} has a {noun} hole and no noun`).toBeDefined()
+      expect(/\{noun\}/.test(entry.menu), `${id} has a {noun} hole`).toBe(false)
       expect(entry.menu, `${id}.menu starts in lower case`).toMatch(/^(?:[A-Z{]|\d)/)
     }
   })

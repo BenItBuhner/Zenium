@@ -1,17 +1,9 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Group, Share2, Star, VenetianMask, X } from 'lucide-react'
-import type {
-  ArchivedTabSummary,
-  Folder,
-  PhoneBarPosition,
-  Rect,
-  SyncRemoteTab,
-  Tab,
-  UIState
-} from '@shared/types'
+import type { Folder, PhoneBarPosition, Rect, SyncRemoteTab, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
+import { NEW_FOLDER_NAME } from '@shared/groupNames'
 import {
   otherOverviewView,
   OVERVIEW_LABELS,
@@ -38,7 +30,6 @@ import { hintBubbleStore, hintBubbleTabId } from '@renderer/lib/iph'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
-import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
@@ -147,14 +138,12 @@ import { setQuickDeleteWipe, type QuickDeleteWipe } from './quickDelete'
 import { groupActions } from './groupActions'
 import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet } from './GroupSheets'
-import { InactiveTabsSheet } from './InactiveTabsSheet'
 import { CARD_ASPECT, CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OverviewTitle } from './OverviewHeader'
 import { OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
-import { SavedGroupCard } from './SavedGroupCard'
 import { SpacesSheet } from './SpacesSheet'
 import { PhoneEmptyNote } from './PhoneList'
 import { noteSheetOpener } from './phonePanel'
@@ -1142,7 +1131,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     try {
       const folderId = await cmd('folder.create', {
         spaceId: space.id,
-        name: TOUCH_GROUP_DEFAULT_NAME,
+        name: NEW_FOLDER_NAME,
         icon: DEFAULT_FOLDER_ICON,
         color: nextGroupColor(state, space.id),
         rename
@@ -1494,8 +1483,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     setSheet({ kind: 'recently-closed', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
-   * A tab brought back – a recently closed one into its place, an inactive one to the start of
-   * its space – is a new record, and the overview leaves on it once the browser shows it.
+   * A tab brought back – a recently closed one into its place – is a new record, and the overview leaves on it once the browser shows it.
    */
   const leaveOnRestored = (restore: () => void): void => {
     const known = new Set(Object.keys(state.tabs))
@@ -1508,19 +1496,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   /** A recently closed tab picked from the sheet comes back into its place. */
   const restoreClosed = (entry: ClosedEntrySummary): void =>
     leaveOnRestored(() => void historyAdapter.restoreClosed(entry.id))
-  /**
-   * The menu's Inactive Tabs (N) row (TAB-20; §4, §9: a ⋯ row, never a control of the header):
-   * it reads the archive first, so the sheet opens full; the private view has no such row, a
-   * private tab being never archived.
-   */
-  const openInactiveTabs = async (): Promise<void> => {
-    noteSheetOpener()
-    const entries = await inactiveTabsAdapter.list().catch(() => [])
-    setSheet({ kind: 'inactive-tabs', entries })
-  }
-  /** An inactive tab picked from the sheet comes back at the start of its space, in front. */
-  const restoreArchived = (entry: ArchivedTabSummary): void =>
-    leaveOnRestored(() => void inactiveTabsAdapter.restore(entry.id))
   /**
    * A search row from another device leaves the overview on the tab it brings to the front: the
    * device's page in a new tab of this space, or the tab this device already holds. Either way
@@ -1552,10 +1527,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (exit) depart([exit])
   }
   /**
-   * "Close Group" (TAB-16): the group's tabs close – with the one Undo, as any close here, the
-   * toast in the group's words, "<Name> tab group closed and saved" (the tablet's Close Group
-   * says the same through `folder.closeUndoable`) – and the group stays, SAVED with their pages,
-   * a card with the saved ring at the grid's end (§2); the core's `folder.close`.
+   * "Close Folder": the folder's tabs close – with the one Undo, as any close here (the tablet's
+   * Close Folder says the same through `folder.closeUndoable`) – and the folder stays, empty and
+   * folded; the core's `folder.close`.
    */
   const closeGroup = (folder: Folder): void => {
     departGroup(folder)
@@ -1567,18 +1541,15 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       group: folder
     })
   }
-  // The space's groups by state (TAB-16, `lib/groupRows.ts`): the SAVED ones – tabs closed,
-  // pages kept – stand as cards at the grid's end (§2, `SavedGroupCard`); a group's private
-  // members count for nothing (a group with pages saved and private tabs alone live is a saved
-  // group). The sheets read their group by its row, live.
+  // The space's groups by state (`lib/groupRows.ts`); a group's private members count for
+  // nothing. The sheets read their group by its row, live.
   const rows = groupRows(groups, liveOf)
   const rowOf = (folderId: string): GroupRow | null =>
-    [...rows.open, ...rows.saved].find((row) => row.folder.id === folderId) ?? null
+    rows.open.find((row) => row.folder.id === folderId) ?? null
   /**
    * "Delete Group": the group's record goes, its live tabs closing with it – each to Recently
    * Closed, with no Undo on a toast after the ask (TAB-13 / TAB-16, the Design Lead's option C:
-   * Undo for Close, a confirmation for Delete, never both) – or its saved pages forgotten. It
-   * asks first (§9.23, `DeleteGroupSheet`) when there is anything to lose; an empty group just
+   * Undo for Close, a confirmation for Delete, never both). It asks first (§9.23, `DeleteGroupSheet`) when there is anything to lose; an empty group just
    * goes.
    */
   const deleteGroupAsked = (row: GroupRow): void => {
@@ -1603,22 +1574,15 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     remove()
   }
   /**
-   * The saved card's tap, and its sheet's Open (§2; TAB-16): the group is reopened – its pages
-   * come back as tabs of the group (`folder.open`) – and shown expanded and scrolled to, the grid
-   * catching its card as the tabs arrive (`reveal`); an open group's card is already there, and
-   * is unfolded and scrolled to; an empty group has nothing to show.
+   * A group sheet's Show in Tabs: the group's card is unfolded and scrolled to (`reveal`); an
+   * empty group has nothing to show.
    */
   const reveal = useRef<Reveal | null>(null)
   const showGroup = (row: GroupRow): void => {
     if (row.kind === 'empty') return
-    if (row.kind === 'saved') void cmd('folder.open', { folderId: row.folder.id }).catch(() => null)
-    else if (row.folder.collapsed)
+    if (row.folder.collapsed)
       run('folder.update', { folderId: row.folder.id, patch: { collapsed: false } })
     reveal.current = revealOf(row.folder.id)
-  }
-  const reopenSaved = (folder: Folder): void => {
-    const row = rowOf(folder.id)
-    if (row) showGroup(row)
   }
   /**
    * "New Tab in Group" (§2): a tab at the group's end through the core (`folder.newTab`, which
@@ -1839,8 +1803,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       : [
           {
             id: 'group',
-            label: 'Group',
-            name: named('Group', groupable.length),
+            label: 'Folder',
+            name: `Move ${groupable.length} ${groupable.length === 1 ? 'tab' : 'tabs'} to folder`,
             glyph: <Group className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
             disabled: groupable.length === 0,
             run: () => setSheet({ kind: 'group-picker' })
@@ -1870,8 +1834,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    * render's, read through a ref so that the one subscription sees the latest grid. New Tab and
    * New Private Tab are the New Tab card's tap (`newTabOn`: the phone's new tab page over the
    * overview); Private Tabs (N) / Tabs (N) switches the view (§3); Select Tabs enters the mode;
-   * Search Tabs pins the field; Inactive Tabs and Recently Closed read their lists and open
-   * their sheets; Close All asks or closes as the setting says; the selection's three act on the
+   * Search Tabs pins the field; Recently Closed reads its list and opens its sheet; Close All asks or closes as the setting says; the selection's three act on the
    * picks.
    */
   const onCommand = (command: OverviewChromeCommand): void => {
@@ -1890,9 +1853,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
         return
       case 'search-tabs':
         openSearch()
-        return
-      case 'inactive-tabs':
-        void openInactiveTabs()
         return
       case 'recently-closed':
         void openRecentlyClosed()
@@ -2364,22 +2324,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                       ))}
                       {loose.map(card)}
                     </OverviewWindowContext.Provider>
-                    {/* The SAVED groups (§2): cards with the saved ring at the grid's end,
-                          before New Tab; off the grid with it while a query stands (§9.34: a
-                          saved page is no match) and while tabs are being selected they stand,
-                          no card to pick. */}
-                    {!searching &&
-                      rows.saved.map((row) => (
-                        <SavedGroupCard
-                          key={`saved:${row.folder.id}`}
-                          row={row}
-                          onOpen={reopenSaved}
-                          onMenu={(r) => {
-                            noteSheetOpener()
-                            setSheet({ kind: 'group-row', folderId: r.folder.id })
-                          }}
-                        />
-                      ))}
                     {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                   </div>
                   {searching && !privatePane && (
@@ -2464,14 +2408,6 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           initial={sheet.closed}
           onClose={() => leaveSheet('recently-closed')}
           onRestore={restoreClosed}
-        />
-      )}
-      {interactive && sheet?.kind === 'inactive-tabs' && (
-        <InactiveTabsSheet
-          initial={sheet.entries}
-          archiveDays={state.settings.inactiveTabsArchiveDays}
-          onClose={() => leaveSheet('inactive-tabs')}
-          onRestore={restoreArchived}
         />
       )}
     </>
@@ -2668,7 +2604,7 @@ function GroupPickerSheet({
   onPick: (folderId: string | null) => void
 }): JSX.Element {
   const actions: SheetAction[] = [
-    { id: 'new-group', label: 'New group', onPick: () => onPick(null) },
+    { id: 'new-group', label: 'New folder', onPick: () => onPick(null) },
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,
@@ -2678,7 +2614,7 @@ function GroupPickerSheet({
   ]
   return (
     <OverviewSheet
-      title={`Group ${count} ${count === 1 ? 'tab' : 'tabs'}`}
+      title={`Move ${count} ${count === 1 ? 'tab' : 'tabs'} to folder`}
       actions={actions}
       onClose={onClose}
     />
@@ -2760,7 +2696,7 @@ function TabSheet({
     { id: 'select', label: 'Select Tabs', onPick: () => onSelect(tab) }
   ]
   if (groupable && !tab.pinned && !tab.essential) {
-    actions.push({ id: 'new-group', label: 'New Group', onPick: () => onNewGroup(tab) })
+    actions.push({ id: 'new-group', label: 'New Folder', onPick: () => onNewGroup(tab) })
     for (const g of groups) {
       if (g.id === current) continue
       actions.push({
@@ -2773,7 +2709,7 @@ function TabSheet({
     if (current)
       actions.push({
         id: 'ungroup',
-        label: 'Remove from Group',
+        label: 'Remove from Folder',
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: null })
       })
   }

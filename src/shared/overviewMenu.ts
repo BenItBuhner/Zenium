@@ -7,8 +7,8 @@
  * on them and a test can read every rule; the clicks are the caller's.
  *
  * The rows, in §4's order and no other: New Tab; New Private Tab; Private Tabs (N) – only while
- * private tabs exist, "Tabs (N)" from the private view; Select Tabs; Search Tabs; Inactive Tabs
- * (N) – only while any; Recently Closed (N) – only while any; a hairline; Close All Tabs (N) /
+ * private tabs exist, "Tabs (N)" from the private view; Select Tabs; Search Tabs;
+ * Recently Closed (N) – only while any; a hairline; Close All Tabs (N) /
  * Close Private Tabs (N) in danger ink; Switch Space ▸ with the spaces as rows, the current one
  * checked. Title Case (§9.1), the counts in parentheses as the overview's sheet wrote them.
  * In SELECTION MODE (§5) the menu is Select All, Deselect All, a hairline, Close Selected (N)
@@ -40,8 +40,6 @@ export interface OverviewMenuCounts {
   regular: number
   /** The private session's tabs ("Private Tabs (N)" from the regular view). */
   private: number
-  /** Inactive (archived) tabs: TAB-20's sheet. */
-  inactive: number
   /** The recently closed list's tabs. */
   recentlyClosed: number
 }
@@ -70,7 +68,6 @@ export type OverviewMenuCommand =
   | 'switch-view'
   | 'select-tabs'
   | 'search-tabs'
-  | 'inactive-tabs'
   | 'recently-closed'
   | 'close-all'
   | 'switch-space'
@@ -94,7 +91,6 @@ const CHROME_COMMANDS: ReadonlySet<OverviewMenuCommand> = new Set<OverviewMenuCo
   'switch-view',
   'select-tabs',
   'search-tabs',
-  'inactive-tabs',
   'recently-closed',
   'close-all',
   'select-all',
@@ -192,22 +188,22 @@ export const OVERVIEW_LABELS = {
   /** The Spaces sheet's last row: the space editor follows. */
   newSpace: 'New Space…',
   /** The open group header's ⋯ (§2), its accessible name. */
-  groupOptions: 'Group options',
+  groupOptions: 'Folder options',
   /** The group's rename field (§2), its accessible name. */
-  groupName: 'Group name',
+  groupName: 'Folder name',
   /** The group sheet's colour palette (§2), the radio group's accessible name. */
   colour: 'Colour',
   /** The tab search's field (§4 Search Tabs; TAB-21), its accessible name. */
   searchTabs: 'Search tabs',
   /** The group sheets' rows (§2). */
   rename: 'Rename',
-  newTabInGroup: 'New Tab in Group',
-  ungroup: 'Ungroup',
-  deleteGroup: 'Delete Group',
+  newTabInGroup: 'New Tab in Folder',
+  ungroup: 'Unpack Folder',
+  deleteGroup: 'Delete Folder',
   /** An open group's card from its sheet: the grid scrolls to it, unfolded. */
   showInTabs: 'Show in Tabs',
-  /** "Close Group (2 Tabs)": its tabs close, the group stays saved with their pages (TAB-16). */
-  closeGroup: (count: number): string => `Close Group (${tabsUnit(count)})`,
+  /** "Close Folder (2 Tabs)": its tabs close, the folder stays saved with their pages (TAB-16). */
+  closeGroup: (count: number): string => `Close Folder (${tabsUnit(count)})`,
   /** The saved card's "Open (2 Tabs)": its pages come back as tabs. */
   openGroup: (count: number): string => `Open (${tabsUnit(count)})`
 } as const
@@ -252,8 +248,6 @@ export function overviewMenu(ctx: OverviewMenuContext): OverviewMenuEntry[] {
   if (view) rows.push(view)
   rows.push({ command: 'select-tabs', label: 'Select Tabs', disabled: ctx.counts.selectable === 0 })
   rows.push({ command: 'search-tabs', label: 'Search Tabs' })
-  if (!privateView && ctx.counts.inactive > 0)
-    rows.push({ command: 'inactive-tabs', label: counted('Inactive Tabs', ctx.counts.inactive) })
   if (!privateView && ctx.counts.recentlyClosed > 0)
     rows.push({
       command: 'recently-closed',

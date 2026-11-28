@@ -1141,9 +1141,9 @@ function MenuLevel({
                 {checkable && item.checked ? (
                   <Check />
                 ) : item.group ? (
-                  // A saved group's row (the Tab Folders submenu): the one group glyph (§9.37)
-                  // in the slot, the ring of its colour, or the folder's own icon.
-                  <GroupGlyph folder={item.group} saved={item.group.saved} />
+                  // A group's row: the one group glyph (§9.37) in the slot, the dot of its
+                  // colour, or the folder's own icon.
+                  <GroupGlyph folder={item.group} />
                 ) : item.device && deviceGlyphs ? (
                   // Another device's row (the Send to Your Devices submenu): the device's kind
                   // glyph, the stand-in for a kind it did not announce.

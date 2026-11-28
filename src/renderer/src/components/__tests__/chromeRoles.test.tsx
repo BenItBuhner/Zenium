@@ -370,9 +370,8 @@ describe('a row’s controls (§9.22)', () => {
     expect(q('[data-tab-id="b"] .zen-tab-audio').getAttribute('aria-pressed')).toBe('false')
     expect(q('[data-tab-id="c"] .zen-tab-audio').getAttribute('aria-pressed')).toBe('true')
     expect(q('[data-tab-id="c"] .zen-tab-audio').getAttribute('data-tooltip')).toBe('Unmute tab')
-    expect(q('[data-tab-id="d"] .zen-tab-sleeping').getAttribute('aria-label')).toBe(
-      'Sleeping – click to wake'
-    )
+    // A sleeping row only fades (Zen's pending tab): no extra control in its trailing slot.
+    expect(document.querySelector('[data-tab-id="d"] .zen-tab-sleeping')).toBeNull()
   })
 
   it('take their own clicks: the close closes and the mute mutes, and neither activates the row', () => {

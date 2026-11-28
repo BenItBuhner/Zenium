@@ -696,13 +696,13 @@ describe('the tab search (TAB-21)', () => {
     expect(of('folder.close')).toEqual([])
 
     // The group's own sheet counts the view's members, as its Close Group closes them.
-    const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
+    const header = document.querySelector<HTMLElement>('[aria-label^="Research, folder"]')!
     act(() => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
     await settle()
     await land()
-    expect(sheetRows()).toContain('Close Group (2 Tabs)')
+    expect(sheetRows()).toContain('Close Folder (2 Tabs)')
   })
 
   it('keeps the field and its query across a view switch (§3): the private view is narrowed by the same words', async () => {
@@ -745,7 +745,7 @@ describe('the tab search (TAB-21)', () => {
     type('vault')
     expect(cellsOn('tabs')).toEqual([])
     expect(cellKeys()).not.toContain('group:vault')
-    expect(document.querySelector('[aria-label^="Vault, tab group"]')).toBeNull()
+    expect(document.querySelector('[aria-label^="Vault, folder"]')).toBeNull()
     expect(document.body.textContent).not.toContain('Vault')
     expect(document.body.textContent).not.toContain('Keys')
     expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')

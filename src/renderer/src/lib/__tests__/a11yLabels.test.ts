@@ -65,9 +65,9 @@ describe('the overview labels', () => {
     expect(closeTabLabel('Zenium')).toBe('Close Zenium')
   })
 
-  it('names a group with its count, or "Tab group" when it has no name', () => {
-    expect(groupCardLabel('Research', 3)).toBe('Research, tab group, 3 tabs')
-    expect(groupCardLabel('Research', 1)).toBe('Research, tab group, 1 tab')
-    expect(groupCardLabel('  ', 2)).toBe('Tab group, 2 tabs')
+  it('names a folder with its count, or "Folder" when it has no name', () => {
+    expect(groupCardLabel('Research', 3)).toBe('Research, folder, 3 tabs')
+    expect(groupCardLabel('Research', 1)).toBe('Research, folder, 1 tab')
+    expect(groupCardLabel('  ', 2)).toBe('Folder, 2 tabs')
   })
 })

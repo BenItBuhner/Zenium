@@ -235,12 +235,6 @@ export interface HostCapabilities {
    * windows. Desktop hosts offer private windows instead (`windows`).
    */
   privateTabs: boolean
-  /**
-   * Chrome for Android's Inactive tabs (TAB-20): idle tabs leave the grid for the archive the
-   * overview lists, and the Tabs settings screen carries the threshold. Off, no pass runs and
-   * nothing is archived (the desktop, whose Chrome has no archive).
-   */
-  inactiveTabs: boolean
   /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
   secureDns: boolean
   /**
@@ -954,13 +948,6 @@ export type FolderColor =
  */
 export type FolderColorScheme = Exclude<ColorScheme, 'system'>
 
-/** A page of a saved (closed) group: what "Open" brings back (Chrome's saved tab groups). */
-export interface SavedGroupTab {
-  url: string
-  title: string
-  favicon?: string | null
-}
-
 /**
  * The mark an MCP agent's group carries (`Folder.agent`): whose it is, and since when. `name` is
  * the display name of the session that made the group, kept current while that session lives
@@ -974,11 +961,12 @@ export interface FolderAgentMark {
 }
 
 /**
- * The mark a space of the agents' carries (`Space.agent`): the one shared `Agents` space every
- * agent's home group is made in (`shared`), or a space one agent made for itself (`own`, with
- * that session's display name at the time and when).
+ * The mark the agents' space carries (`Space.agent`): the one shared `Agents` space every
+ * agent's folders are made in. Agents have no spaces of their own – each works in its folders
+ * there, isolated from the user's spaces; builds before that also wrote an `own` mark, which
+ * `AgentService.foldOwnSpaces` folds into the shared space once.
  */
-export type SpaceAgentMark = { kind: 'shared' } | { kind: 'own'; name: string; createdAt: number }
+export type SpaceAgentMark = { kind: 'shared' }
 
 export interface Folder {
   id: string
@@ -997,15 +985,11 @@ export interface Folder {
    */
   agent?: FolderAgentMark | null
   /**
-   * Chrome's saved tab groups (Android's Tab groups pane, TAB-16): the group's pages as they
-   * were when its last live member closed – the whole group on "Close group" (`folder.close`),
-   * the last member alone when the members were closed one by one, as Chrome's saved group
-   * mirrors its live tabs – so the group stays listed as SAVED with its pages, and "Open"
-   * (`folder.open`) brings them back into it, in order. Meaningful only while the group has no
-   * live member: a group with members is open, and this is cleared as it opens or a tab joins
-   * it. Additive and local: a folder without it is as before, and the sync record ignores it.
+   * @deprecated The pages of a closed ("saved") group, from builds before folders took Zen's
+   * shape. Read once at startup, where they come back as the folder's tabs
+   * (`BrowserState.migrateSavedFolders`), and never written again.
    */
-  savedTabs?: SavedGroupTab[] | null
+  savedTabs?: unknown
   /**
    * When the group was last used – a member activated, a tab joining, the group closed or
    * opened – as ms since the epoch; the Tab groups pane's "last used". Local, never synced.
@@ -1029,9 +1013,8 @@ export interface Space {
   windowId?: string
   /**
    * The space is the agents' (S3 of the MCP program): the shared `Agents` space, found by this
-   * mark and never by its name – a space the user calls "Agents" is theirs – or a space one
-   * agent made for itself. Stamped by the agent service when it makes the space; read by it
-   * alone. Additive: a space without it is the user's. Travels with the space's sync record
+   * mark and never by its name – a space the user calls "Agents" is theirs. Stamped by the
+   * agent service when it makes the space; read by it alone. Additive: a space without it is the user's. Travels with the space's sync record
    * when set.
    */
   agent?: SpaceAgentMark | null
@@ -1383,17 +1366,6 @@ export interface SyncScope {
    * publishes its visits nor takes the others' in. Absent on a `sync.json` older than the key.
    */
   history: boolean
-  /**
-   * The reading list (Chrome's "Reading list" type; W6-1's model, one `reading-list-entry`
-   * record per entry carrying every field but `favicon`), on by default as the bookmarks are.
-   * While off, the device neither publishes the type nor takes it in, and its metadata for the
-   * type is FROZEN (`frozenRecords`): a removal made while off tombstones the peers' copies when
-   * the scope returns, and an edit made while off is stamped at the return, not at the edit –
-   * as with every scoped type. Absent on a `sync.json` older than the key, where the engine
-   * completes it with the default; a scope object from an older build says nothing for it, so
-   * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
-   */
-  readingList: boolean
   /**
    * The Mods (`Mod`: the browser chrome's CSS mods, Settings › Mods), one `mod` record per Mod
    * under the Mod's own id (services pass 15, ID-43); on by default, as Chrome's Themes type is
@@ -2222,41 +2194,6 @@ export interface Bookmark {
 }
 
 export type BookmarkNodeType = 'url' | 'folder'
-
-/**
- * One page saved for later (Chrome's reading list, bookmarks-33; W6-1). Kept in the profile's
- * state as `readingList` (`BrowserState.readingList`, `shared/readingList.ts` for the pure
- * helpers, `core/readingList.ts` for the writes), one entry per URL: re-adding a page marks it
- * unread and brings it to the top. Local to the profile until the services slice replicates it
- * as one `reading-list-entry` record per entry carrying every field but `favicon`
- * (`internal/desktop-parity/reading-list-interface.md`, services' read beside it). The shape is
- * frozen: the field order below is the normal form every write and `sanitizeReadingEntry`
- * produce, so a load rewrites nothing the sync engine could take for an edit.
- */
-export interface ReadingListEntry {
-  /** `rl_<uuid>`, stable across renames and read/unread flips; the sync record's key. */
-  id: string
-  /** The page's address as it was added; the dedupe key (exact string, as `chrome.readingList`). */
-  url: string
-  /** The page's title at the time it was added (the URL's host when the page had none). */
-  title: string
-  /** When the page was added, or added again (an add of a page already in the list refreshes it). */
-  addedAt: number
-  /**
-   * The last write to the entry of any kind: information for the chrome and the record's
-   * payload. The conflict clock is the sync engine's own `modified` stamp, set at the same
-   * commit (the two agree to the millisecond); nothing reads this field to resolve a conflict.
-   */
-  updatedAt: number
-  /**
-   * The page's favicon (a data URL or an address) when the tab had one. This device's alone,
-   * never in the sync record: a data URL is bytes across the boundary and an address may be
-   * host-local; the receiving side resolves the icon from its favicon cache by `url`.
-   */
-  favicon?: string
-  /** When the entry was last marked read; absent while it is unread. */
-  readAt?: number
-}
 
 /** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */
 export type BookmarksBarMode = 'always' | 'newtab' | 'never'
@@ -3495,21 +3432,6 @@ export interface Settings {
    */
   hoverCardMemoryUsage: boolean
   /**
-   * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
-   * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
-   * keeps one (`InactiveTabsService`). Chrome's ladder: 0 (Never), 7, 14 or 21, 21 by default
-   * (`TabArchiveSettings.DEFAULT_ARCHIVE_TIME_HOURS`). Distinct from the sleeping-tabs timeout
-   * above, which only unloads a page and leaves its card where it is. Absent in profiles from
-   * before it existed (read as the default).
-   */
-  inactiveTabsArchiveDays: InactiveTabsArchiveDays
-  /**
-   * Inactive tabs the user never came back for are closed for good after `INACTIVE_TAB_AUTO_CLOSE_DAYS`
-   * (Chrome's `DEFAULT_AUTODELETE_TIME_HOURS`, worded as months). Absent in older profiles
-   * (read as on: Chrome's steady state once its promo has been answered).
-   */
-  inactiveTabsAutoClose: boolean
-  /**
    * @deprecated Where "Mute Site" kept its hosts (lower-case hostnames without `www.`) before
    * the `sound` content setting became the one source of a site's mute. Migrated into `sound`
    * blocks on load (`TabManager.migrateMutedHosts`) and empty from then on; kept so an older
@@ -4439,8 +4361,6 @@ export type OverlayKind =
   | 'history'
   | 'bookmarks'
   | 'downloads'
-  /** The reading list (`zen://reading-list`) as the phone's panel (HB-20). */
-  | 'reading-list'
   | 'theme'
   | 'onboarding'
   | 'shortcuts'
@@ -5190,14 +5110,6 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
-  /**
-   * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
-   * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
-   * unread count (`unreadReadingCount`). At most `READING_LIST_CAP` of the entries are READ
-   * (`trimReadingList` drops the oldest by `readAt` past it); the unread half is unbounded – an
-   * unread entry is never trimmed.
-   */
-  readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
   newTabShortcuts: NewTabShortcut[]
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
@@ -5233,11 +5145,6 @@ export interface UIState {
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
-  /**
-   * How many tabs the Inactive tabs archive holds (TAB-20): the count on the overview's entry
-   * row. The rows themselves come through `inactiveTabs.list`, read again on `inactiveTabs.changed`.
-   */
-  archivedTabCount: number
   media: MediaState[]
   findResult: FindResult | null
   /** Tab id whose devtools are open (for the toolbar indicator). */
@@ -5451,8 +5358,6 @@ export interface CommandDescriptor {
     | 'space.new'
     | 'history.open'
     | 'bookmarks.open'
-    | 'readingList.add'
-    | 'readingList.open'
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
@@ -5482,17 +5387,14 @@ export interface CommandDescriptor {
 export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
 /**
- * A tab group's mark before a row's label (the app menu's Tab Folders submenu, where every row
- * is a saved group; shortcuts-menus-111): the one group glyph (`GroupGlyph`, design language
- * v2 §9.37) drawn from the group's colour and its own icon – the 10 ring at a 2 stroke for a
- * SAVED group, the 10 dot for an open one – in the favicon's 16 box, so the row reads as the
+ * A tab group's mark before a row's label: the one group glyph (`GroupGlyph`, design language
+ * v2 §9.37) drawn from the group's colour and its own icon – the 10 dot – in the favicon's 16 box, so the row reads as the
  * sidebar's header and the strip's chip do. A native menu host has no such glyph and draws
  * the row as text.
  */
 export interface MenuGroupMark {
   color: FolderColor | null
   icon: string
-  saved: boolean
 }
 
 /**
@@ -5642,7 +5544,6 @@ export interface MenuDescriptor {
     | 'bookmark'
     | 'history'
     | 'download'
-    | 'readingList'
     | 'urlbar'
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
@@ -6050,24 +5951,19 @@ export interface Commands {
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   /**
-   * Chrome's "Close group" on a host with saved groups (Android, TAB-16): the group's tabs close
-   * (to the recently closed list, so the close has an undo) and the group stays as a saved one
-   * holding their pages (`Folder.savedTabs`). Nothing happens to a group with no live member.
+   * Close Folder: the folder's tabs close (to the recently closed list, so the close has an
+   * undo) and the folder stays, folded. Nothing happens to a folder with no live member.
    */
   'folder.close': { args: { folderId: string }; result: void }
   /**
-   * "Open" a saved group: its pages come back as tabs of the group, in their order, at the end
-   * of the space's tabs, the first one active; an open group is expanded and its first tab
-   * activated instead. Resolves with the tab made active, or null when there was nothing to
-   * open.
+   * Open a folder: it is expanded and its first tab activated. Resolves with that tab, or null
+   * when there was nothing to open.
    */
   'folder.open': { args: { folderId: string }; result: string | null }
   'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
-   * folder's space and the container of its last member. A SAVED folder opens first – its pages
-   * back as its tabs, as `folder.open` brings them – and the new tab joins behind them.
-   * Resolves with the new tab's id.
+   * folder's space and the container of its last member. Resolves with the new tab's id.
    */
   'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: MenuAnchor | void; result: void }
@@ -6536,39 +6432,6 @@ export interface Commands {
    */
   'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
 
-  /**
-   * The Inactive tabs archive (TAB-20): the archived tabs, the newest archived first – what the
-   * overview's Inactive tabs sheet lists. Every window hears `inactiveTabs.changed` when the
-   * list changes.
-   */
-  'inactiveTabs.list': { args: void; result: ArchivedTabSummary[] }
-  /**
-   * Bring an archived tab back into its space – at the start of its regular tabs, as Chrome
-   * restores one ("Restore tab at the 'start' of the list") – to the front, its last use read
-   * as now.
-   */
-  'inactiveTabs.restore': { args: { id: string }; result: void }
-  /** Every archived tab back into its space, the first of them to the front. */
-  'inactiveTabs.restoreAll': { args: void; result: void }
-  /** Close one archived tab: it goes to the recently closed list, where History finds it. */
-  'inactiveTabs.close': { args: { id: string }; result: void }
-  /**
-   * The sheet's "Close all" (behind its confirmation): every archived tab closed for good, as
-   * Chrome's. None goes to the recently closed list – a bulk close would flush that 25-entry undo
-   * list – and History keeps their pages, which is what the prompt promises.
-   */
-  'inactiveTabs.closeAll': { args: void; result: void }
-  /**
-   * Run the archive pass and the auto-close sweep now, as if the clock read `now` (the default is
-   * the real clock). The passes run on their own after the chrome has started and on their
-   * cadence; this is the instrumentation drivers' hook, so a threshold of days is crossed
-   * without a wait. Resolves with what the passes did.
-   */
-  'inactiveTabs.runPasses': {
-    args: { now?: number }
-    result: { archived: number; closed: number }
-  }
-
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   /**
    * Bring back a recently closed entry. `background` (a middle or Ctrl click on the History
@@ -6788,34 +6651,6 @@ export interface Commands {
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */
   'bookmark.export': { args: void; result: boolean }
-
-  // --- reading list (W6-1; `core/readingList.ts`) ---------------------------------------------
-  /**
-   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row); a page
-   * already listed is marked unread and brought to the top. Null when the tab has no page the
-   * list holds (`zen://`, blank).
-   */
-  'readingList.add': { args: { tabId: string | null }; result: ReadingListEntry | null }
-  /** The tab's page out of the list (the star menu's Remove row); false when it was not in it. */
-  'readingList.removeTab': { args: { tabId: string }; result: boolean }
-  'readingList.remove': { args: { id: string }; result: boolean }
-  'readingList.setRead': { args: { id: string; read: boolean }; result: boolean }
-  /** Every unread entry read; how many changed. */
-  'readingList.markAllRead': { args: void; result: number }
-  /**
-   * Open an entry's page and mark it read: a tab of this window already showing the page is
-   * brought forward; otherwise the page loads in `tabId` (the window's active tab when null) or,
-   * with `newTab`, in a new tab – behind this one with `background` (§10.1's middle click).
-   */
-  'readingList.open': {
-    args: { id: string; tabId: string | null; newTab?: boolean; background?: boolean }
-    result: void
-  }
-  /** The row's menu (Mark as read / unread, Open in New Tab, Copy Link, Remove) at a point. */
-  'readingList.contextMenu': {
-    args: { id: string } & MenuAnchor
-    result: void
-  }
 
   /** The browsers and files an import can come from, freshly probed (profiles, locks). */
   'import.sources': { args: void; result: ImportSource[] }
@@ -8031,8 +7866,8 @@ export interface Events {
   /**
    * Close the group's tabs with Undo on the toast (the touch hosts' group menu's "Close Group (N
    * Tabs)", TAB-16): the chrome runs `folder.close` through its one close-with-undo
-   * (`lib/closeUndo.ts`) so the toast reads "<Name> tab group closed and saved" and Undo brings
-   * the tabs back into the group, which re-opens. The desktop's folder menu never emits it: its
+   * (`lib/closeUndo.ts`) so the toast reads "<Name> closed" and Undo brings the tabs back into
+   * the folder. The desktop's folder menu never emits it: its
    * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
    */
   'folder.closeUndoable': { folderId: string }
@@ -8094,8 +7929,6 @@ export interface Events {
   /** The History page's hidden devices changed (`history.hideDevice`, `history.showHiddenDevices`): the ids now hidden. */
   'history.hiddenDevicesChanged': string[]
   'session.recentlyClosedChanged': void
-  /** The Inactive tabs archive changed (a pass, a restore, a close): read `inactiveTabs.list` again. */
-  'inactiveTabs.changed': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
    * from the Android host – whether the system bars are still on their way back from a page's
@@ -8290,31 +8123,6 @@ export interface ClosedTabEntry {
   windowId: string | null
   navigation: NavigationSnapshot | null
 }
-
-/**
- * A tab in the Inactive tabs archive (TAB-20): what a recently-closed entry keeps of a tab –
- * the record, its place and its back/forward stack – with the moment it left the grid, so the
- * auto-close sweep counts from the archiving and not from the last use (Chrome's `archivedTimeMs`).
- * `closedAt` is that same moment; an archived tab the user closes moves to the recently closed
- * list as a plain entry stamped with the close.
- */
-export interface ArchivedTabEntry extends ClosedTabEntry {
-  archivedAt: number
-}
-
-/** An archived tab as the Inactive tabs sheet lists it. */
-export interface ArchivedTabSummary {
-  id: string
-  title: string
-  url: string
-  favicon: string | null
-  /** When the tab was last in view, as ms since the epoch: the row's "last used". */
-  lastActiveAt: number
-  archivedAt: number
-}
-
-/** The archive threshold's ladder, in days; 0 is Never (Chrome's `ARCHIVE_TIME_DELTA_DAYS_OPTS`). */
-export type InactiveTabsArchiveDays = 0 | 7 | 14 | 21
 
 export interface ClosedWindowEntry {
   kind: 'window'

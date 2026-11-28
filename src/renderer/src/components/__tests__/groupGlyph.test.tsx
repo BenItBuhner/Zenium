@@ -118,17 +118,7 @@ describe('the one group glyph (§9.37)', () => {
     expect(glyph.querySelector('.zen-group-row-icon')).toBeNull()
   })
 
-  it('is the same 10 as a ring at a 2 stroke for a saved group, and the folder’s own icon at 14 where it has one', () => {
-    const ring = render(
-      <GroupGlyph folder={folder({ color: 'green' })} saved />
-    ).querySelector<HTMLElement>('.zen-group-row-glyph')!
-    expect(ring.hasAttribute('data-saved')).toBe(true)
-    expect(ring.querySelector('.zen-group-row-dot')).not.toBeNull()
-    expect(ring.style.getPropertyValue('--zen-group-rgb-light')).toBe(
-      channels(FOLDER_COLORS_LIGHT.green)
-    )
-    act(() => root?.unmount())
-    host?.remove()
+  it('is the folder’s own icon at 14 where it has one', () => {
     const own = render(<GroupGlyph folder={folder({ icon: '📚' })} />).querySelector<HTMLElement>(
       '.zen-group-row-glyph'
     )!
@@ -144,7 +134,7 @@ describe('the one group glyph (§9.37)', () => {
     )
   })
 
-  it('reads its sizes from one place in the stylesheet: 16 box, 10 dot, inset 2 ring, 14 icon over the text zoom', () => {
+  it('reads its sizes from one place in the stylesheet: 16 box, 10 dot, 14 icon over the text zoom', () => {
     const box = rule('.zen-group-row-glyph')
     expect(box).toContain('width: 16px')
     expect(box).toContain('height: 16px')
@@ -153,9 +143,6 @@ describe('the one group glyph (§9.37)', () => {
     expect(dot).toContain('height: 10px')
     expect(dot).toContain('border-radius: 50%')
     expect(dot).toContain('background: rgb(var(--zen-group-rgb))')
-    const ring = rule('.zen-group-row-glyph[data-saved] .zen-group-row-dot')
-    expect(ring).toContain('background: transparent')
-    expect(ring).toContain('box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb))')
     expect(rule('.zen-group-row-icon')).toContain('font-size: calc(14px / var(--zen-text-zoom, 1))')
     // No other glyph rule survives: the card's dot with its halo, its badge, the pane's 12 dot.
     for (const gone of ['.zen-group-dot', '.zen-group-badge', '.zen-overview-group-glyph']) {
@@ -169,7 +156,6 @@ describe('the one group glyph (§9.37)', () => {
       'phone/GroupCard.tsx',
       'phone/Departures.tsx',
       'phone/GroupStrip.tsx',
-      'phone/SavedGroupCard.tsx',
       'phone/TabOverview.tsx',
       'phone/TabSwitchStage.tsx'
     ]

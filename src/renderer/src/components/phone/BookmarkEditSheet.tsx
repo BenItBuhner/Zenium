@@ -10,11 +10,10 @@ import { useBackSurface } from '@renderer/lib/back'
 import { closeBookmarkEditor, type BookmarkEditRequest } from '@renderer/lib/bookmarkEdit'
 import { moveTargets } from '@renderer/lib/bookmarkList'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
-import { ListRow, SwitchRow } from '../siteControls/primitives'
+import { ListRow } from '../siteControls/primitives'
 import { BookmarkFolderList, NewFolderSheet } from './BookmarkFolderPicker'
 import { PhoneSheet } from './PhoneSheet'
 import { removeWithUndo, useBookmarkTree } from './phonePanel'
-import { readingListToggle } from './readingListToggle'
 
 /**
  * The bookmark editor on a phone (HB-16): a sheet in the frame's dialog host (`PhoneSheet`, the
@@ -25,8 +24,7 @@ import { readingListToggle } from './readingListToggle'
  * parent folder's name as its 13/69 % description and no chevron (Chrome's, l.268-290, is its
  * activity's navigation) – then Save as the one primary button and Delete beside it in the
  * danger ink, the two splitting the footer (v2 draft §9.11). It also creates either kind when
- * the request has no id. Under a bookmark's fields stands the page's Reading list switch
- * (HB-20, `readingListToggle`), the star's second save, flipped in place.
+ * the request has no id.
  *
  * The Folder row steps the sheet into its folder pane – the same sheet, its header now the
  * row's label with Back leading and `New folder` trailing, its body the shared folder picker
@@ -147,7 +145,7 @@ export function BookmarkEditSheet({
   // as Chrome's picker leaves the moved ids out of its rows (`BookmarkFolderPickerMediator`
   // l.182) and its drill-down reaches no row under them; Chrome's
   // `isValidFolderForMovedBookmarks` (l.296-305) greys the special folders instead – the root,
-  // managed and partner folders, the reading list – which `moveTargets` never lists.
+  // managed and partner folders – which `moveTargets` never lists.
   const targets = pane === 'folder' ? moveTargets(tree, node ? [node.id] : [], state.platform) : []
   const checked = targets.some((t) => t.node.id === parentId) ? parentId : null
   const folderLabel = folder ? 'Parent folder' : 'Folder'
@@ -250,7 +248,6 @@ export function BookmarkEditSheet({
               }
               folder={folder}
               waiting={waiting}
-              readingList={readingListToggle(state, node)}
               dismiss={(then) => sheet.current?.dismiss(then)}
             />
           )}
@@ -319,7 +316,6 @@ function EditorForm({
   folderRow,
   folder,
   waiting,
-  readingList,
   dismiss
 }: {
   node: BookmarkNode | null
@@ -332,8 +328,6 @@ function EditorForm({
   folder: boolean
   /** The node was asked for but is not here yet. */
   waiting: boolean
-  /** The page's Reading list switch (`readingListToggle`); none for a folder or a node not here. */
-  readingList: ReturnType<typeof readingListToggle>
   dismiss: (then?: () => void) => void
 }): JSX.Element {
   const nameId = useId()
@@ -380,18 +374,6 @@ function EditorForm({
         run('bookmark.remove', { ids: [id], quiet: true })
       )
     )
-  }
-
-  // The Reading list switch takes effect as it is flipped (§10.4), the sheet staying up: the
-  // page into the list by its tab (the core's toast says so), or its entry out by id. The
-  // switch's state is the list's as the core last pushed it – an entry that goes elsewhere
-  // turns the switch off on the next state.
-  const listed = readingList?.entry ?? null
-  const canAdd = readingList?.tabId !== null && readingList?.tabId !== undefined
-  const toggleReadingList = (): void => {
-    if (!readingList) return
-    if (listed) run('readingList.remove', { id: listed.id })
-    else if (readingList.tabId) run('readingList.add', { tabId: readingList.tabId })
   }
 
   return (
@@ -460,21 +442,6 @@ function EditorForm({
           disabled={waiting}
           onClick={folderRow.open}
           data-testid="bookmark-folder"
-        />
-      )}
-      {readingList && (
-        // The star sheet's Reading list row (HB-20): the toggle for this page, on while the
-        // list holds it. Disabled – laid out, at §9.30's one number – when nothing shows the
-        // page and the list lacks it, with the reason under the label.
-        <SwitchRow
-          label="Reading list"
-          description={
-            !listed && !canAdd ? 'Open the page to add it to your reading list' : undefined
-          }
-          checked={listed !== null}
-          disabled={!listed && !canAdd}
-          onChange={toggleReadingList}
-          data-testid="bookmark-reading-list"
         />
       )}
       {/* §9.11: two peers split the width at an 8 gap, the primary trailing. */}

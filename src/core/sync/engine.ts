@@ -370,7 +370,7 @@ export class SyncEngine implements SyncHost {
       consumedSends: [],
       ...(saved?.version === 1 ? saved : {})
     }
-    // A scope key this build added (`passwords`, `history`, `readingList`) starts at its default
+    // A scope key this build added (`passwords`, `history`) starts at its default
     // on a device set up before; the history state of an older `sync.json` is completed the same
     // way.
     this.data.scope = { ...defaultScope(), ...this.data.scope }
@@ -1422,7 +1422,6 @@ export class SyncEngine implements SyncHost {
       boosts: this.browser.boosts.all(),
       credentials: this.browser.passwords.syncSources(),
       siteData: this.browser.siteData.policy(),
-      readingList: state.readingList,
       mods: this.browser.mods.all(),
       extensions,
       removedExtensions

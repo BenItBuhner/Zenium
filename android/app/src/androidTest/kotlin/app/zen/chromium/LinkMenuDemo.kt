@@ -21,15 +21,12 @@ import kotlin.math.roundToInt
  *     group row since Chrome 140's swap, permanent by 144) – Open in new tab, Open in new tab in
  *     group, Open in Incognito tab (Open Link in Private Tab), Open in new window (multi-window
  *     devices; Zenium Android is one window, no row), Preview page (Open Link in Glance), Copy
- *     link address, Copy link text, Download link (Save Link As…), Add to reading list (Add Link
- *     to Reading List – HB-20, W6-D1, lifted the limit that stood here), Share link (Share
- *     Link…). The phone's order is the design lead's ruling on #492's (b) – Chrome 152's within
+ *     link address, Copy link text, Download link (Save Link As…), Add to reading list (no row:
+ *     Zenium has no reading list), Share link (Share Link…). The phone's order is the design lead's ruling on #492's (b) – Chrome 152's within
  *     Zenium's three groups, the hairlines kept: Open Link in New Tab · Open Link in New Tab in
- *     Group · Open Link in Private Tab (where the host offers it) · Open Link in Glance · Open
- *     Link in New Container Tab | Copy Link Address · Copy Link Text · Save Link As… · Add Link
- *     to Reading List · Share Link… | Boosts (the design gate on #551 seats the reading list's
- *     row before the share: the hand-off out of the app stays the group's last row, #492's
- *     rule, as Chrome 152 keeps Read later before Share link) – and the rows are checked
+ *     Folder · Open Link in Private Tab (where the host offers it) · Open Link in Glance · Open
+ *     Link in New Container Tab | Copy Link Address · Copy Link Text · Save Link As… · Share
+ *     Link… | Boosts (the hand-off out of the app stays the group's last row, #492's rule) – and the rows are checked
  *     against it. The private row is the host's to offer: the core draws it under
  *     `capabilities.privateTabs`, which Android sets only on a WebView with profiles (Chrome
  *     111+); the shared recipe's Google APIs image ships WebView 113 without them, so there the
@@ -154,10 +151,10 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         val own = items.filter { it !in mapped }
         finding("  Zenium's own rows, not in Chrome's list: $own")
         // The phone's order is the design lead's ruling on #492's (b): Chrome 152's rows in
-        // Chrome's order within Zenium's three groups – the plain row, then the group row, the
+        // Chrome's order within Zenium's three groups – the plain row, then the folder row, the
         // private row where the host offers it, Glance, Container | the two copies, Save Link As…,
-        // Add Link to Reading List (HB-20; before the share, the design gate on #551), Share
-        // Link… | Boosts. Judged here, row by row and as a whole.
+        // Share Link… | Boosts. Zenium has no reading list (Zen's model), so Chrome's Add to
+        // reading list has no row. Judged here, row by row and as a whole.
         val ruled = listOf(PLAIN_ROW, GROUP_ROW) + (if (privateTabs) listOf(PRIVATE_ROW) else emptyList()) + RULED_TAIL
         check("$act: the rows the ruling names stand in the lead's order – ${ruled.joinToString(" · ")}", items.filter { it in ruled } == ruled, "rows $items")
         check("$act: Open Link in New Tab is the first row (Chrome 152's first)", items.indexOf(PLAIN_ROW) == 0, "rows $items")
@@ -170,9 +167,8 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         )
         check("$act: every Chrome 152 row the host offers has its Zenium row (Open in new window the multi-window devices')", missing == 0, "$missing missing")
         check("$act: Open Link in Glance (Chrome's Preview page) follows the open pair${if (privateTabs) " and the private row" else ""}, Open Link in New Container Tab right after it", items.indexOf("Open Link in Glance") == (if (privateTabs) 3 else 2) && items.indexOf("Open Link in New Container Tab") == items.indexOf("Open Link in Glance") + 1, "rows $items")
-        check("$act: the two copies stand before Save Link As… (Chrome 152's Download link after its copies), Add Link to Reading List right after it, Share Link… last of the group", items.indexOf("Copy Link Address") < items.indexOf("Copy Link Text") && items.indexOf("Copy Link Text") < items.indexOf("Save Link As…") && items.indexOf(READING_ROW) == items.indexOf("Save Link As…") + 1 && items.indexOf("Share Link…") == items.indexOf(READING_ROW) + 1, "rows $items")
+        check("$act: the two copies stand before Save Link As… (Chrome 152's Download link after its copies), Share Link… right after it, last of the group", items.indexOf("Copy Link Address") < items.indexOf("Copy Link Text") && items.indexOf("Copy Link Text") < items.indexOf("Save Link As…") && items.indexOf("Share Link…") == items.indexOf("Save Link As…") + 1, "rows $items")
         check("$act: Boosts closes the list (the developer group last, as the ruling has it)", items.lastOrNull() == "Boosts", "rows $items")
-        check("$act: the reading list's row stands in the transfer group under its own words (HB-20: Add Link to Reading List, Chrome's Add to reading list; the limit that stood here lifted), once", items.count { it.contains("Read later", ignoreCase = true) || it.contains("Reading list", ignoreCase = true) } == 1 && READING_ROW in items, "rows $items")
         finding("  the rows' order is the design lead's ruling on (b) (#492): Chrome 152's within Zenium's three groups, the hairlines kept; Zenium's own rows – Open Link in New Container Tab among the open rows, Boosts last – where they were")
         shot("design-rows-$scheme")
         return items
@@ -265,10 +261,9 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         private const val OPENED_PATH = "/opened.html"
         private const val OPENED_URL = "$ORIGIN$OPENED_PATH"
         private const val LINK_TEXT = "A page to open in a new group"
-        private const val GROUP_ROW = "Open Link in New Tab in Group"
+        private const val GROUP_ROW = "Open Link in New Tab in Folder"
         private const val PLAIN_ROW = "Open Link in New Tab"
         private const val PRIVATE_ROW = "Open Link in Private Tab"
-        private const val READING_ROW = "Add Link to Reading List"
 
         private const val SHEET = ".zen-sheet"
         private const val SHEET_ITEM = ".zen-sheet .zen-sheet-item"
@@ -297,7 +292,7 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
             ChromeRow("Copy link address", "Copy Link Address"),
             ChromeRow("Copy link text", "Copy Link Text"),
             ChromeRow("Download link", "Save Link As…"),
-            ChromeRow("Add to reading list", READING_ROW),
+            ChromeRow("Add to reading list", null, "Zenium has no reading list (Zen's model): pages are saved as bookmarks"),
             ChromeRow("Share link", "Share Link…")
         )
 
@@ -311,7 +306,6 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
             "Copy Link Address",
             "Copy Link Text",
             "Save Link As…",
-            READING_ROW,
             "Share Link…"
         )
 

@@ -4,9 +4,8 @@ import type { UnusedPermissionsSweepResult } from './permissions'
 const DAY_MS = 24 * 3_600_000
 
 /**
- * The sweep's first run after start: armed for later, off the boot path, as the archive's first
- * pass is (TAB-20's `INACTIVE_TABS_FIRST_PASS_DELAY_MS`) – nothing of it runs at boot beyond the
- * arming itself. Chrome runs its first update as the service comes up; a browser that has been
+ * The sweep's first run after start: armed for later, off the boot path – nothing of it runs at
+ * boot beyond the arming itself. Chrome runs its first update as the service comes up; a browser that has been
  * closed for weeks catches up here, three quarters of a minute in.
  */
 export const UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS = 45_000

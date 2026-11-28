@@ -75,8 +75,7 @@ export function StarChip({
       data-filled={filled}
       data-open={open}
       // A right-click or the Menu key on the star opens the core's star menu (W6-1): the
-      // bookmark row beside Add to Reading List and the way to the list – then, on the desktop
-      // bar, the pinned control's rows.
+      // bookmark row – then, on the desktop bar, the pinned control's rows.
       data-zen-menu="star"
       data-zen-menu-tab={tab.id}
       data-zen-menu-control={control}

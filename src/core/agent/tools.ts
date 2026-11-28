@@ -1042,7 +1042,7 @@ const zenGroups: AgentTool = {
   definition: {
     name: 'zen_groups',
     title: 'Your tab groups',
-    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent ended its session and left it) with all its tabs – a named agent's groups are never adoptable, not even while it is away or with force (force only applies to an unnamed legacy session's group, when the user asked); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
+    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent ended its session and left it) with all its tabs – a named agent's groups are never adoptable, not even while it is away or with force (force only applies to an unnamed legacy session's group, when the user asked); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...GROUP_ACTIONS] },
@@ -1065,7 +1065,7 @@ const zenGroups: AgentTool = {
         space: {
           type: 'string',
           description:
-            'create: "agents" (default), "own" (a new space of yours), or a space id (the user\'s spaces need allowForeign: true)'
+            'create: "agents" (default) or a space id (the user\'s spaces need allowForeign: true)'
         },
         allowForeign: {
           ...ALLOW_FOREIGN,
@@ -1110,10 +1110,10 @@ const zenGroups: AgentTool = {
       const name = str(args, 'name') ?? `${s.name} · ${s.id.slice(-4)} · ${groups.length + 1}`
       const where = (str(args, 'space') ?? 'agents').trim()
       let space: Space
-      if (where.toLowerCase() === 'agents' || where.toLowerCase() === 'shared')
+      // "own" and "mine" asked for a space of the agent's own, which agents no longer get: their
+      // folders all live in the shared Agents space.
+      if (['agents', 'shared', 'own', 'mine', 'new'].includes(where.toLowerCase()))
         space = ctx.agents.agentsSpace()
-      else if (where.toLowerCase() === 'own' || where.toLowerCase() === 'mine' || where === 'new')
-        space = ctx.agents.createOwnSpace(s)
       else {
         const found =
           m.spaces.find((sp) => sp.id === where) ??
@@ -1121,12 +1121,12 @@ const zenGroups: AgentTool = {
         if (!found)
           throw new RpcError(
             -32602,
-            `Unknown space ${JSON.stringify(where)} – use "agents", "own", or an id from zen_spaces list:\n${listSpaces(ctx)}`
+            `Unknown space ${JSON.stringify(where)} – use "agents" or an id from zen_spaces list:\n${listSpaces(ctx)}`
           )
         if (!ctx.agents.isAgentSpace(found.id) && !bool(args, 'allowForeign'))
           throw new RpcError(
             UNAUTHORIZED,
-            `Space ${found.id} ${JSON.stringify(found.name)} is the user's: a group there is a foreign act. Pass allowForeign: true if the user asked for it, or use space "agents" (the shared Agents space) or "own" (a space of yours).`
+            `Space ${found.id} ${JSON.stringify(found.name)} is the user's: a group there is a foreign act. Pass allowForeign: true if the user asked for it, or use space "agents" (the shared Agents space).`
           )
         space = found
       }
@@ -1222,12 +1222,10 @@ const zenSpaces: AgentTool = {
   definition: {
     name: 'zen_spaces',
     title: 'Spaces',
-    description: `List, create or switch Zenium spaces (workspaces that group tabs). Your tabs live in your groups in the shared "Agents" space unless you make a space of your own (create – it is not shown to the user until they or you switch to it). switch changes what the user sees and needs the screen lease: foreground mode, with no other agent holding the screen. Changed: create no longer switches the user's window to the new space; switch requires the foreground lease.`,
+    description: `List or switch Zenium spaces (workspaces that group tabs). Your tabs live in your groups in the shared "Agents" space; agents do not make spaces. switch changes what the user sees and needs the screen lease: foreground mode, with no other agent holding the screen. Changed: create is gone – make a group with zen_groups create instead; switch requires the foreground lease.`,
     inputSchema: schema(
       {
-        action: { type: 'string', enum: ['list', 'create', 'switch'] },
-        name: { type: 'string', description: 'create: the new space name (default: your name)' },
-        icon: { type: 'string', description: 'create: an emoji for the space' },
+        action: { type: 'string', enum: ['list', 'switch'] },
         spaceId: { type: 'string', description: 'switch: the space to show (id or name)' }
       },
       ['action']
@@ -1235,19 +1233,15 @@ const zenSpaces: AgentTool = {
     annotations: { openWorldHint: false }
   },
   async run(ctx, args) {
-    const action = need(args, 'action', 'use "list", "create" or "switch"').toLowerCase()
+    const action = need(args, 'action', 'use "list" or "switch"').toLowerCase()
     const win = ctx.agents.agentWindow()
     const m = ctx.browser.state.model
     if (action === 'list') return text(`Spaces:\n${listSpaces(ctx)}`)
-    if (action === 'create' || action === 'new') {
-      const space = ctx.agents.createOwnSpace(ctx.session, {
-        name: str(args, 'name'),
-        icon: str(args, 'icon')
-      })
-      return text(
-        `Created space ${space.id} ${JSON.stringify(space.name)} (yours; the user's window was not switched to it). zen_groups {"action":"create","space":"${space.id}"} makes a group in it.\n\nSpaces:\n${listSpaces(ctx)}`
+    if (action === 'create' || action === 'new')
+      throw new RpcError(
+        -32602,
+        'Agents do not make spaces: your tabs live in your groups in the shared "Agents" space. zen_groups {"action":"create","name":"…"} makes a new group there.'
       )
-    }
     if (action === 'switch' || action === 'select' || action === 'activate') {
       const wanted = need(args, 'spaceId', 'the id (or name) of the space to show')
       const space =
@@ -1445,7 +1439,7 @@ const browserTabs: AgentTool = {
           if (!foreign)
             throw new RpcError(
               UNAUTHORIZED,
-              `Opening a tab in the user's space ${JSON.stringify(space.name)} is a foreign act – pass allowForeign: true if the user asked for it; otherwise omit spaceId (your tabs live in your groups in the "Agents" space) or make a space of your own with zen_groups {"action":"create","space":"own"}.`
+              `Opening a tab in the user's space ${JSON.stringify(space.name)} is a foreign act – pass allowForeign: true if the user asked for it; otherwise omit spaceId (your tabs live in your groups in the "Agents" space).`
             )
           tab = tabs.createTab(
             {
@@ -3019,7 +3013,7 @@ export function agentInstructions(
     "You are controlling the user's Zenium browser (Chromium) through its built-in MCP server. The user and other agents share this browser, and every agent works in tab groups of its own, so:",
     `- Name yourself first. zen_session {"action":"start","name":"…"} with a specific name for your task (e.g. "Invoice reconciliation", "PR 741 review"; "Agent", "Claude" or your client's name are refused) – nothing but zen_status works before. Your session is then durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections until you end it. Keep the session key the answer gives you for the whole task; if a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"…"} brings them back – never start a new session instead. Lost the key? zen_session {"action":"start"} under exactly the same name gives you the same session, groups and tabs back.`,
     '- Address everything by id. Every page tool takes tabId – a tab id from browser_tabs (a unique prefix is enough); there is no current tab, and list positions are refused because they shift whenever another agent or the user opens or closes a tab. Only while you own exactly one tab may you omit tabId.',
-    '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
+    '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups; browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
     `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
     `${pageDialogsLine(agentDialogs, dialogPolicy)}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
@@ -3030,7 +3024,7 @@ export function agentInstructions(
     '- Navigation: browser_navigate (also changes the URL of a tab of yours via tabId; opens a tab in your home group when you have none), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / close / move. Groups: zen_groups list / create / rename / close / adopt (browser_tabs group / ungroup are deprecated aliases).',
     '- browser_read_page is the cheap way to read an article; browser_take_screenshot (viewport, fullPage: true, or target for one element) only when the layout or an image matters.',
     `- You start in ${mode.toUpperCase()} mode. Foreground: your actions happen in front of the user on a tab they are looking at – a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Your tab is brought in front first only when you took the screen – zen_mode {"mode":"foreground","takeScreen":true}, which switches the user's space and active tab, so only when the user wants your work on screen – or the user made foreground the default; otherwise an action on a tab the user is not looking at runs in the background and the result says so. The screen is a lease: your first foreground action takes it, and while another agent holds it (active within the last ${LEASE_SECONDS} s) your call runs in the background and the result says so. Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen or had not painted its first frame yet (then wait a moment and retry). Background is the recommended mode whenever other agents are connected or the user is browsing; switch with zen_mode.`,
-    '- browser_navigate accepts URLs or search words. zen_spaces lists and creates spaces; switching the space the user sees (zen_spaces switch) needs the foreground lease.',
+    '- browser_navigate accepts URLs or search words. zen_spaces lists the spaces; switching the space the user sees (zen_spaces switch) needs the foreground lease.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'
       : `- ${SCRIPTING_DISABLED}`

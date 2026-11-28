@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
-  Folder,
   MediaState,
   MenuGlyph,
   Settings,
@@ -116,12 +115,9 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
-  'Bookmarks > Reading List',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
-  'Bookmarks > -',
-  'Bookmarks > Tab Folders',
   'History',
   'History > Show Full History',
   'History > -',
@@ -721,106 +717,6 @@ describe('the app menu', () => {
     })
   })
 
-  describe("Chrome's Tab groups submenu (shortcuts-menus-111)", () => {
-    /** A folder of the window's space, its tabs closed and `pages` kept: a SAVED group. */
-    const savedGroup = (
-      h: Harness,
-      name: string,
-      pages: string[],
-      patch: Partial<Folder> = {}
-    ): Folder => {
-      const folder = h.browser.createFolder(h.win.activeSpace().id, name, '📁', h.win, {
-        rename: false,
-        color: 'blue'
-      })
-      Object.assign(folder, {
-        savedTabs: pages.map((url) => ({ url, title: url, favicon: null })),
-        ...patch
-      })
-      return folder
-    }
-    /** The Tab Folders submenu of the window's app menu (Chrome's Tab groups ▸; the desktop's noun). */
-    const tabGroups = (h: Harness, win = h.win): MenuItemTemplate[] => {
-      h.browser.handleCommand(win, 'app.menu', {})
-      return item(item(h.shown(), 'Bookmarks').submenu!, 'Tab Folders').submenu!
-    }
-
-    it("closes the Bookmarks submenu as its last group – Chrome's seat for a list beside the bookmarks – listing the saved groups by name with their mark, the most recently used first", () => {
-      const h = pageHarness(DESKTOP)
-      savedGroup(h, 'Research', ['https://a.example/', 'https://b.example/'], { lastUsedAt: 10 })
-      savedGroup(h, 'Trip', ['https://c.example/'], { lastUsedAt: 20, color: 'green', icon: '✈️' })
-      // An OPEN group (a live member) is the sidebar's, an EMPTY one (nothing kept) neither's.
-      const open = h.browser.createFolder(h.win.activeSpace().id, 'Work', '📁', h.win, {
-        rename: false
-      })
-      h.browser.tabs.moveToFolder(h.tabId, open.id)
-      h.browser.createFolder(h.win.activeSpace().id, 'Empty', '📁', h.win, { rename: false })
-      appMenu(h)
-      const bookmarks = item(h.shown(), 'Bookmarks').submenu!
-      expect(topLabels(bookmarks).slice(-3)).toEqual(['Export Bookmarks…', '-', 'Tab Folders'])
-      expect(separators(bookmarks)).toBe(3)
-      const rows = tabGroups(h)
-      expect(rows.map((r) => r.label)).toEqual(['Trip', 'Research'])
-      expect(rows[0]).toMatchObject({ group: { color: 'green', icon: '✈️', saved: true } })
-      expect(rows[1]).toMatchObject({ group: { color: 'blue', icon: '📁', saved: true } })
-      for (const row of rows) expect(row.enabled).not.toBe(false)
-      // The mark rides the descriptor the renderer draws (`serialiseMenu`).
-      expect(serialiseMenu(rows, 'm').items.map((r) => r.group)).toEqual([
-        { color: 'green', icon: '✈️', saved: true },
-        { color: 'blue', icon: '📁', saved: true }
-      ])
-      // The top level keeps its resting shape – §6's three separators, no row of its own for
-      // the groups (twenty rows, 661 px, on the full host) – with groups saved: the list is
-      // the submenu's. (A page harness's zoom row carries its percentage.)
-      appMenu(h)
-      expect(topLabels(h.shown()).map((l) => l.replace(' (100%)', ''))).toEqual(
-        DESKTOP_APP_MENU_TOP
-      )
-      expect(separators(h.shown())).toBe(3)
-    })
-
-    it("a row's pick opens the group in this window: its pages back as its tabs, the first active; the group is then the sidebar's and leaves the list", () => {
-      const h = pageHarness(DESKTOP)
-      const research = savedGroup(h, 'Research', ['https://a.example/', 'https://b.example/'])
-      savedGroup(h, 'Trip', ['https://c.example/'], { lastUsedAt: 1 })
-      item(tabGroups(h), 'Research').click?.()
-      const m = h.browser.state.model
-      const members = Object.values(m.tabs).filter((t) => t.folderId === research.id)
-      expect(members.map((t) => t.url)).toEqual(['https://a.example/', 'https://b.example/'])
-      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://a.example/')
-      expect(m.folders[research.id].savedTabs).toBeNull()
-      expect(tabGroups(h).map((r) => r.label)).toEqual(['Trip'])
-    })
-
-    it("with nothing saved the submenu is §9.17's empty state: 'No saved tab folders' as the note row", () => {
-      const h = harness(DESKTOP)
-      expect(tabGroups(h)).toEqual([{ label: 'No saved tab folders', enabled: false, note: true }])
-      // A group open in the sidebar saves nothing yet: still the note.
-      const p = pageHarness(DESKTOP)
-      const open = p.browser.createFolder(p.win.activeSpace().id, 'Work', '📁', p.win, {
-        rename: false
-      })
-      p.browser.tabs.moveToFolder(p.tabId, open.id)
-      expect(tabGroups(p).map((r) => r.label)).toEqual(['No saved tab folders'])
-    })
-
-    it("is the desktop's alone, and no row of a private window's menu: the tablet's and the phone's Bookmarks keep their shape", () => {
-      const desktop = pageHarness(DESKTOP)
-      savedGroup(desktop, 'Trip', ['https://c.example/'])
-      const priv = desktop.browser.openWindow('private', desktop.win)!
-      desktop.browser.handleCommand(priv, 'app.menu', {})
-      expect(labels(desktop.shown())).not.toContain('Bookmarks > Tab Folders')
-      expect(labels(item(desktop.shown(), 'Bookmarks').submenu!).at(-1)).toBe('Export Bookmarks…')
-      const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
-      savedGroup(tablet, 'Trip', ['https://c.example/'])
-      expect(appMenu(tablet)).not.toContain('Bookmarks > Tab Folders')
-      const phone = pageHarness(ANDROID, { formFactor: 'phone' })
-      savedGroup(phone, 'Trip', ['https://c.example/'])
-      expect(appMenu(phone)).not.toContain('Bookmarks > Tab Folders')
-      expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Tab Folders')
-    })
-  })
-
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
@@ -1357,7 +1253,6 @@ describe('the app menu', () => {
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
         label !== 'More Tools > Task Manager' &&
-        label !== 'Bookmarks > Tab Folders' &&
         label !== 'Save and Share > Screenshot…' &&
         !label.startsWith('Passwords and Autofill >') &&
         !label.startsWith('Find and Edit >')
@@ -1368,7 +1263,6 @@ describe('the app menu', () => {
           ? 'Find in Page…'
           : label
     )
-    tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)
     tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
   })
@@ -2094,9 +1988,6 @@ describe('the app menu', () => {
       'Bookmarks > -',
       'Bookmarks > Import Bookmarks…',
       'Bookmarks > Export Bookmarks…',
-      // The phone's reading list (HB-20): the list as a library row after Bookmarks, the page's
-      // verb among the saves after Share… (before Add to Home Screen where the host has it).
-      'Reading List',
       'History',
       'Downloads',
       'Passwords',
@@ -2107,7 +1998,6 @@ describe('the app menu', () => {
       'Find in Page…',
       'Reader View',
       'Share…',
-      'Add to Reading List',
       'Print…',
       'Take Screenshot',
       'Capture Full Page',
@@ -3182,7 +3072,6 @@ describe('the page context menu', () => {
       'Save Link As…',
       'Copy Link Address',
       'Copy Link Text',
-      'Add Link to Reading List',
       '-',
       'Boosts',
       'Inspect Element'
@@ -5404,7 +5293,7 @@ describe('the chrome context menus', () => {
     it('on the star follows its own rows behind a hairline (Chrome seats an action’s children over its pin rows); without the control mark the star’s menu is as it was', async () => {
       const h = pageHarness({ ...DESKTOP, pageTabs: true })
       const plain = await show(h, chromeParams({ target: 'star', tabId: h.tabId }))
-      expect(plain).toEqual(['Bookmark This Page', 'Add to Reading List', '-', 'Show Reading List'])
+      expect(plain).toEqual(['Bookmark This Page'])
       const marked = await show(
         h,
         chromeParams({ target: 'star', tabId: h.tabId, control: 'star' })
@@ -5418,7 +5307,7 @@ describe('the chrome context menus', () => {
       const tablet = pageHarness({ ...DESKTOP, pageTabs: true }, { formFactor: 'tablet' })
       expect(
         await show(tablet, chromeParams({ target: 'star', tabId: tablet.tabId, control: 'star' }))
-      ).toEqual(['Bookmark This Page', 'Add to Reading List', '-', 'Show Reading List'])
+      ).toEqual(['Bookmark This Page'])
       await show(
         tablet,
         chromeParams({ target: 'toolbar', tabId: tablet.tabId, control: 'reader' })
@@ -6344,22 +6233,8 @@ describe('a menu asked for from the keyboard', () => {
       source: 'newtab',
       rect: { x: 0, y: 60, width: 240, height: 600 }
     })
-    h.browser.readingList.add('https://read.example/long', 'Long read')
-    const entry = h.browser.readingList.list()[0]!
-    h.browser.handleCommand(h.win, 'readingList.contextMenu', {
-      id: entry.id,
-      x: 900,
-      y: 300,
-      keyboard: true,
-      rect: { x: 880, y: 280, width: 20, height: 20 }
-    })
-    expect(h.where()).toMatchObject({
-      source: 'readingList',
-      keyboard: true,
-      rect: { x: 880, y: 280, width: 20, height: 20 }
-    })
     // Without a box, the point alone – a pointer's menu, or a phone's command.
-    h.browser.handleCommand(h.win, 'readingList.contextMenu', { id: entry.id, x: 900, y: 300 })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', { x: 900, y: 300 })
     expect(h.where()).toMatchObject({ x: 900, y: 300 })
     expect(h.where()).not.toHaveProperty('rect')
     expect(h.where()).not.toHaveProperty('keyboard')
@@ -6581,13 +6456,12 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1); Unload and Freeze are one Sleep row. */
+    /** Zen's skeleton for a regular row: five groups, four separators, seventeen rows; Unload and Freeze are one Sleep row. */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
       'Reload Tab',
       'Mute Tab',
-      'Mute Site',
       'Sleep',
       'Duplicate Tab',
       'Pin Tab',
@@ -6596,12 +6470,9 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Change Icon…',
       '-',
       'Bookmark Tab',
-      'Bookmark All Tabs…',
-      'Add Tab to Reading List',
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
-      'Proxy',
       'Share',
       '-',
       'Close Multiple Tabs',
@@ -6610,26 +6481,25 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reopen Closed Tab'
     ]
 
-    it('a regular row: twenty-two rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+    it('a regular row: seventeen rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      // Firefox's twenty with Unload and Freeze as one Sleep row, Chrome's Add tab to reading
-      // list, and the in-app Proxy submenu.
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(21)
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(17)
       expect(separators(shown)).toBe(4)
-      // The state group in Firefox's order – Reload, Mute, Unload, Duplicate, Pin: sleep is the
-      // tab's state, as its mute is, not its place.
+      // The state group in Firefox's order – Reload, Mute, Sleep, Duplicate, Pin: sleep is the
+      // tab's state, as its mute is, not its place. No site mute, no proxy.
       const top = topLabels(shown)
       expect(top.slice(top.indexOf('Reload Tab'), top.indexOf('Pin Tab') + 1)).toEqual([
         'Reload Tab',
         'Mute Tab',
-        'Mute Site',
         'Sleep',
         'Duplicate Tab',
         'Pin Tab'
       ])
+      for (const gone of ['Mute Site', 'Proxy', 'Bookmark All Tabs…'])
+        expect(top).not.toContain(gone)
       expect(topLabels(item(h, 'Sleep').submenu!)).toEqual([
         'Put Tab to Sleep',
         'Freeze Tab',
@@ -6639,8 +6509,6 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       ])
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
-        'Bookmark All Tabs…',
-        'Add Tab to Reading List',
         'Move Tab'
       ])
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
@@ -6660,11 +6528,6 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Copy Link',
         'Copy Link as Markdown',
         'Email Link…'
-      ])
-      expect(topLabels(item(h, 'Proxy').submenu!)).toEqual([
-        'Use default connection',
-        'Direct connection',
-        'System proxy'
       ])
     })
 
@@ -6691,56 +6554,16 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(h.browser.state.settings.unloadExcludedDomains).not.toContain('example.com')
     })
 
-    it('lists configured proxies in the Proxy submenu and writes the tab override', () => {
-      const h = pageHarness()
-      h.browser.handleCommand(h.win, 'settings.update', {
-        proxy: {
-          profiles: [
-            {
-              id: 'office',
-              name: 'Office',
-              kind: 'http',
-              host: 'proxy.office.test',
-              port: 8080,
-              username: '',
-              password: '',
-              pacUrl: '',
-              pacData: '',
-              bypassList: []
-            }
-          ],
-          defaultTarget: 'system',
-          routes: [],
-          agentGrants: []
-        }
-      })
-      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
-      expect(topLabels(item(h, 'Proxy').submenu!)).toEqual([
-        'Use default connection',
-        'Direct connection',
-        'System proxy',
-        '-',
-        'Office'
-      ])
-      item(h, 'Office').click!()
-      expect(h.browser.tabs.tab(h.tabId)?.proxyId).toBe('office')
-      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
-      item(h, 'Use default connection').click!()
-      expect(h.browser.tabs.tab(h.tabId)?.proxyId ?? null).toBeNull()
-    })
-
-    it('nothing the flat menu did is gone: every one of its rows is in the regrouped menu, at the top or in a submenu', () => {
+    it("every one of Zen's rows is in the regrouped menu, at the top or in a submenu", () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const all = allItems(h.shown())
         .map((i) => i.label)
         .filter((l): l is string => Boolean(l))
-      // The flat menu's rows for a regular tab (#263, before this regrouping).
       for (const label of [
         'New Tab Below',
         'Reload Tab',
         'Mute Tab',
-        'Mute Site',
         'Duplicate Tab',
         'Rename Tab…',
         'Change Icon…',
@@ -6753,9 +6576,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Move Tab to New Window',
         'Move Tab to Another Window',
         'Open in New Container Tab',
-        'Proxy',
         'Bookmark Tab',
-        'Bookmark All Tabs…',
         'Share',
         'Copy Link',
         'Copy Link as Markdown',

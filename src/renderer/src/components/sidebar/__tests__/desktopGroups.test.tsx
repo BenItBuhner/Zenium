@@ -20,16 +20,11 @@ import { SpacePanel } from '../SpacePanel'
 
 /*
  * The desktop sidebar's folder as a tab group (TAB-16's desktop half, matrix rows tabs-15 and
- * split-33; Chrome's saved tab groups and group colours): a folder whose tabs all closed but
- * which kept their pages stays in the strip as a SAVED group – a disclosure header with the
- * saved ring in the glyph slot and the saved count, folded by default, its pages as rows under
- * it while it is unfolded (deemphasised: a page, not a live tab) whose press opens the folder;
- * the group's colour in the header's glyph alone, the rows' indent the bracket that says which
+ * split-33; group colours): the group's colour in the header's glyph alone, the rows' indent the bracket that says which
  * rows are the group's (§9.36: no bar down the block, no fill across the row); the count as
  * the tablet row's 13 tabular aside at 69%, folded and open alike – never a badge (§9.36) – the
- * tabs the folder holds or the pages a saved one keeps; the header a disclosure
- * for the keyboard (aria-expanded; Enter, Space fold it through the strip), the page rows in
- * the roving tab order, Shift+F10 and the Menu key opening the folder's menu in keyboard mode.
+ * tabs the folder holds; the header a disclosure
+ * for the keyboard (aria-expanded; Enter, Space fold it through the strip), Shift+F10 and the Menu key opening the folder's menu in keyboard mode.
  */
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -91,12 +86,6 @@ function folder(over: Partial<Folder> = {}): Folder {
     ...over
   } as Folder
 }
-
-const PAGES = [
-  { url: 'https://alpha.example/path', title: 'Alpha' },
-  { url: 'https://beta.example/', title: '' },
-  { url: 'https://gamma.example/', title: '  Gamma  ' }
-]
 
 let root: Root | null = null
 let mount: HTMLElement | null = null
@@ -163,227 +152,11 @@ afterEach(() => {
 const q = <T extends HTMLElement>(selector: string): T | null => document.querySelector<T>(selector)
 const header = (): HTMLElement => q<HTMLElement>('[data-tab-folder="g"]')!
 const shell = (): HTMLElement => header().parentElement!
-const pageRows = (): HTMLElement[] => [
-  ...document.querySelectorAll<HTMLElement>('[data-saved-page]')
-]
 
-const key = (el: HTMLElement, k: string): void => {
-  act(() => {
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
-  })
-}
-
-describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () => {
-  it('stays in the strip as a folded disclosure header with the saved ring, the saved count as the aside and no page rows', () => {
-    // As the core leaves it: folded shut when it saved the group.
-    panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })])
-    const row = header()
-    expect(row.className).toContain('zen-tab')
-    expect(row.className).not.toContain('zen-group-row')
-    expect(row.getAttribute('role')).toBe('button')
-    expect(row.hasAttribute('aria-haspopup')).toBe(false)
-    expect(row.getAttribute('aria-label')).toBe('Trip')
-    expect(row.getAttribute('aria-description')).toBe('Folder, saved, 3 tabs')
-    expect(row.getAttribute('aria-expanded')).toBe('false')
-    expect(row.hasAttribute('data-saved')).toBe(true)
-    expect(shell().dataset.groupKind).toBe('saved')
-    const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.hasAttribute('data-saved')).toBe(true)
-    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
-    expect(row.textContent).not.toContain('📁')
-    const aside = row.querySelector<HTMLElement>('[data-testid="group-count"]')!
-    expect(aside.textContent).toBe('3')
-    expect(aside.className).toContain('text-[13px]')
-    expect(aside.className).toContain('tabular-nums')
-    expect(aside.className).toContain('text-[var(--v2-control-text-deemphasized)]')
-    expect(row.querySelector('.zen-v2-badge')).toBeNull()
-    expect(row.querySelector('svg.lucide-chevron-right')).not.toBeNull()
-    expect(pageRows()).toEqual([])
-    expect(shell().querySelectorAll('[data-tab-id]')).toHaveLength(0)
-    // Not a live tab's row: nothing to close, nothing audible.
-    expect(row.querySelector('.zen-tab-close')).toBeNull()
-  })
-
-  it('lists the pages it kept as deemphasised rows under the unfolded header – favicon and title, no close – in the strip’s tab order', () => {
-    panel([tab('home')], [folder({ savedTabs: PAGES })])
-    expect(header().getAttribute('aria-expanded')).toBe('true')
-    expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('3')
-    expect(header().querySelector('.zen-v2-badge')).toBeNull()
-    const rows = pageRows()
-    expect(rows).toHaveLength(3)
-    expect(rows.map((r) => r.dataset.savedPage)).toEqual(['0', '1', '2'])
-    expect(rows.map((r) => r.dataset.stripItem)).toEqual(['saved:g:0', 'saved:g:1', 'saved:g:2'])
-    for (const r of rows) {
-      expect(r.className).toContain('zen-tab')
-      expect(r.className).toContain('zen-saved-page')
-      expect(r.className).toContain('ml-5')
-      expect(r.getAttribute('role')).toBe('button')
-      expect(r.dataset.stripParent).toBe('folder:g')
-      expect(r.tabIndex).toBe(-1)
-      expect(r.querySelector('.zen-tab-favicon')).not.toBeNull()
-      expect(r.querySelector('.zen-tab-close')).toBeNull()
-      expect(r.querySelector('.zen-tab-audio')).toBeNull()
-      expect(r.hasAttribute('data-tab-id')).toBe(false)
-      // The live row's trailing slot – its close control's 24 – reserved and empty, last in the
-      // row, so the title's edge holds as the folder closes and opens (no control in it).
-      const slot = r.querySelector<HTMLElement>('[data-testid="saved-page-slot"]')!
-      expect(slot).not.toBeNull()
-      expect(r.lastElementChild).toBe(slot)
-      expect(slot.className.split(' ')).toEqual(expect.arrayContaining(['h-6', 'w-6', 'shrink-0']))
-      expect(slot.getAttribute('aria-hidden')).toBe('true')
-      expect(slot.children).toHaveLength(0)
-      expect(r.querySelectorAll('button, [role="button"]')).toHaveLength(0)
-    }
-    // The title, or the host where the page had none; trimmed.
-    expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual([
-      'Alpha',
-      'beta.example',
-      'Gamma'
-    ])
-    expect(rows[0]!.querySelector('[data-testid="saved-page-title"]')?.textContent).toBe('Alpha')
-    expect(rows[1]!.getAttribute('aria-description')).toBe('Saved page 2 of 3, opens the folder')
-    // The rows are drawn inside the fold block after the header, indented as the folder's tabs
-    // are – as a run of their own, outside any tablist (a11y-02: a tablist holds tabs alone, and
-    // a saved page is a button that opens the folder).
-    expect(shell().firstElementChild).toBe(header())
-    const run = shell().querySelector<HTMLElement>('[data-saved-pages="g"]')!
-    expect(shell().children).toHaveLength(2)
-    expect(shell().lastElementChild).toBe(run)
-    expect(run.hasAttribute('role')).toBe(false)
-    expect(run.closest('[role="tablist"]')).toBeNull()
-    expect(shell().querySelector('[role="tablist"]')).toBeNull()
-    expect([...run.children]).toEqual(rows)
-    // The page, not a tab: the sleeping row's fade on the glyph and the title.
-    expect(rule('.zen-saved-page .zen-tab-favicon,\n.zen-saved-page .zen-tab-title')).toContain(
-      'opacity: 0.69'
-    )
-  })
-
-  it('opens the folder on a page row’s click, Enter or Space; its context menu is the folder’s', () => {
-    panel([tab('home')], [folder({ savedTabs: PAGES })])
-    const rows = pageRows()
-    act(() => rows[1]!.click())
-    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
-    expect(run).not.toHaveBeenCalledWith('tab.activate', expect.anything())
-    vi.mocked(run).mockClear()
-    act(() => rows[2]!.focus())
-    key(rows[2]!, 'Enter')
-    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
-    vi.mocked(run).mockClear()
-    key(rows[2]!, ' ')
-    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
-    vi.mocked(run).mockClear()
-    // Delete closes nothing on a page.
-    key(rows[2]!, 'Delete')
-    expect(run).not.toHaveBeenCalled()
-    // Its menu is the folder's, in keyboard mode when the keyboard asked (Chromium raises the
-    // event with no button for Shift+F10 and the Menu key).
-    act(() => {
-      rows[0]!.dispatchEvent(
-        new MouseEvent('contextmenu', {
-          bubbles: true,
-          cancelable: true,
-          button: 0,
-          clientX: 40,
-          clientY: 60
-        })
-      )
-    })
-    expect(run).toHaveBeenCalledWith('folder.contextMenu', {
-      folderId: 'g',
-      x: 40,
-      y: 60,
-      keyboard: true
-    })
-  })
-
-  it('folds and unfolds on the header’s click, Enter and Space; Down walks from the header to its first page and Left comes back', () => {
-    panel([tab('home')], [folder({ savedTabs: PAGES })])
-    act(() => header().click())
-    expect(run).toHaveBeenCalledWith('folder.update', { folderId: 'g', patch: { collapsed: true } })
-    expect(run).not.toHaveBeenCalledWith('folder.open', expect.anything())
-    vi.mocked(run).mockClear()
-    act(() => header().focus())
-    key(header(), 'Enter')
-    expect(run).toHaveBeenCalledWith('folder.update', { folderId: 'g', patch: { collapsed: true } })
-    vi.mocked(run).mockClear()
-    key(header(), 'ArrowDown')
-    expect(document.activeElement).toBe(pageRows()[0])
-    key(pageRows()[0]!, 'ArrowLeft')
-    expect(document.activeElement).toBe(header())
-    // Folded, Space unfolds it again.
-    panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })])
-    act(() => header().focus())
-    key(header(), ' ')
-    expect(run).toHaveBeenLastCalledWith('folder.update', {
-      folderId: 'g',
-      patch: { collapsed: false }
-    })
-    // Shift+F10 / the Menu key on the header: the folder's menu in keyboard mode.
-    vi.mocked(run).mockClear()
-    act(() => {
-      header().dispatchEvent(
-        new MouseEvent('contextmenu', {
-          bubbles: true,
-          cancelable: true,
-          button: 0,
-          clientX: 30,
-          clientY: 20
-        })
-      )
-    })
-    expect(run).toHaveBeenCalledWith('folder.contextMenu', {
-      folderId: 'g',
-      x: 30,
-      y: 20,
-      keyboard: true
-    })
-    // A right-click's is the pointer's.
-    vi.mocked(run).mockClear()
-    act(() => {
-      header().dispatchEvent(
-        new MouseEvent('contextmenu', {
-          bubbles: true,
-          cancelable: true,
-          button: 2,
-          clientX: 31,
-          clientY: 21
-        })
-      )
-    })
-    expect(run).toHaveBeenCalledWith('folder.contextMenu', { folderId: 'g', x: 31, y: 21 })
-  })
-
-  it('is a live folder again in place once opened: the same header with its tabs as rows, no page rows, not saved', () => {
-    panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })])
-    expect(header().hasAttribute('data-saved')).toBe(true)
-    // The core opened it: the pages are tabs of the folder, `savedTabs` cleared, the fold undone.
-    panel(
-      [
-        tab('home'),
-        tab('alpha', { folderId: 'g' }),
-        tab('beta', { folderId: 'g' }),
-        tab('gamma', { folderId: 'g' })
-      ],
-      [folder({ savedTabs: null, collapsed: false })]
-    )
-    const row = header()
-    expect(row.hasAttribute('data-saved')).toBe(false)
-    expect(row.getAttribute('aria-description')).toBe('Folder, 3 tabs')
-    expect(shell().dataset.groupKind).toBe('open')
-    expect(
-      row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!.hasAttribute('data-saved')
-    ).toBe(false)
-    expect(pageRows()).toEqual([])
-    expect(
-      [...shell().querySelectorAll<HTMLElement>('[data-tab-id]')].map((r) => r.dataset.tabId)
-    ).toEqual(['alpha', 'beta', 'gamma'])
-  })
-
-  it('reads an empty folder as one of no tabs, folded or not, never as a saved group', () => {
+describe('an empty folder on the desktop sidebar', () => {
+  it('reads an empty folder as one of no tabs, folded or not', () => {
     panel([tab('home')], [folder({ collapsed: true })])
     expect(header().getAttribute('aria-description')).toBe('Folder, 0 tabs')
-    expect(header().hasAttribute('data-saved')).toBe(false)
     expect(shell().dataset.groupKind).toBe('empty')
     expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('0')
   })

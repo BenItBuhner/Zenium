@@ -14,7 +14,6 @@ import type {
   Container,
   Folder,
   FolderColor,
-  SavedGroupTab,
   Space,
   SplitGroup,
   SplitLayout,
@@ -163,9 +162,8 @@ export function allSpaces(model: Model): Space[] {
 }
 
 /**
- * Whether the space is agents' territory by its persisted mark – the shared Agents space or one
- * an agent made for itself (`Space.agent`). The mark is the truth that outlives a run; the
- * agent service's `isAgentSpace` adds the spaces made this run, which carry the mark too.
+ * Whether the space is agents' territory by its persisted mark – the shared Agents space
+ * (`Space.agent`), the one space agents work in.
  */
 export function agentOwnedSpace(space: Pick<Space, 'agent'>): boolean {
   return Boolean(space.agent)
@@ -611,66 +609,34 @@ export function deleteFolder(model: Model, folderId: string, unpack: boolean): s
   return closed
 }
 
-/** What a saved group keeps of a member (`Folder.savedTabs`): the page, as the row names it. */
-export function savedGroupTab(tab: Tab): SavedGroupTab {
-  return {
-    url: tab.url,
-    title: tab.customTitle || tab.title,
-    favicon: tab.customIcon ?? tab.favicon ?? null
-  }
-}
-
 /**
  * The group's REGULAR live members: `folderTabs` less the private ones. A host that keeps
  * private browsing in tabs holds them in the space among the regular tabs, and one can be
  * dropped into a folder there; it is no member of the group for the regular profile – it does
- * not open a saved group or count as one of its tabs, marks it neither used nor kept, and
- * leaves no page in it – so a group's state (open, saved, empty; `isSavedFolder`) is read off
- * these. On the desktop a private window's tabs live in a space of their own: the same list.
+ * not count as one of its tabs and marks it neither used nor kept – so a group's state (open,
+ * empty) is read off these. On the desktop a private window's tabs live in a space of their own: the same list.
  */
 export function regularFolderTabs(model: Model, folderId: string): Tab[] {
   return folderTabs(model, folderId).filter((t) => t.containerId !== PRIVATE_CONTAINER_ID)
 }
 
 /**
- * A saved group (TAB-16): one that holds its closed pages and no live regular tab. A group with
- * live regular tabs is open whatever `savedTabs` still says (it is cleared as one joins).
- */
-export function isSavedFolder(model: Model, folder: Folder): boolean {
-  return Boolean(folder.savedTabs?.length) && regularFolderTabs(model, folder.id).length === 0
-}
-
-/**
- * A PRIVATE group: private tabs alone live in it – no regular member, nothing saved (saved pages
- * are never private, `closeFolderTabs` keeps none). Private browsing leaks nothing outside its
+ * A PRIVATE group: private tabs alone live in it – no regular member. Private browsing leaks nothing outside its
  * mode: such a group is no entry of a regular tab's folder menus (its existence and name are
  * the private session's), as the chrome lists it on no regular surface (`isPrivateGroup` in
  * the renderer). A private window's menus offer no folder, so the desktop is untouched by it.
  */
 export function isPrivateFolder(model: Model, folder: Folder): boolean {
-  return (
-    folderTabs(model, folder.id).length > 0 &&
-    regularFolderTabs(model, folder.id).length === 0 &&
-    !folder.savedTabs?.length
-  )
+  return folderTabs(model, folder.id).length > 0 && regularFolderTabs(model, folder.id).length === 0
 }
 
 /**
- * A tab joined the group (made in it, moved into it, restored to it): the group is open, so
- * whatever it still kept as a saved group is stale and goes, and it is unfolded – closing a group
- * folds it shut with its pages (`closeFolderTabs`, `saveFolderOnLastClose`), and the tab that
- * brings it back to life must not find it folded around itself, whichever way it came (a
- * reopened closed tab, a move, a new tab, as much as Open Folder); the group counts as used now.
- * The user's joins into a SAVED group bring its pages back as its tabs before the tab joins
- * (`TabManager.restoreSavedFolder`: New Tab in Folder, a move or a drop into it, Open Folder
- * itself), so they reach here with nothing left to let go; a tab restored into it from the
- * recently closed list is one of those pages come back on its own, and a live folder's refresh
- * repopulates it – those take the group as open and its kept pages go here.
+ * A tab joined the folder (made in it, moved into it, restored to it): the folder unfolds around
+ * it and counts as used now.
  */
 export function folderOpened(model: Model, folderId: string | null, now: number): void {
   const folder = folderId ? model.folders[folderId] : undefined
   if (!folder) return
-  if (folder.savedTabs) folder.savedTabs = null
   folder.collapsed = false
   folder.lastUsedAt = now
 }

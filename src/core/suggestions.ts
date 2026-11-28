@@ -623,8 +623,7 @@ export class SuggestionService {
    * Tab groups the typing names (OMN-15; Chrome for Android's `TabGroupProvider`, the "Open
    * tab group" row of its tab switcher's search): every term of the query starts a word of the
    * group's name or of a member page's address – Chrome's `ALWAYS_PREFIX_SEARCH`, the rule of
-   * `wordMatch.ts` – and the group has pages to open: its live regular tabs, else the pages a
-   * saved group keeps. Chrome's `Score` ({@link groupMatch}) ranks the groups against each
+   * `wordMatch.ts` – and the group has pages to open: its live regular tabs. Chrome's `Score` ({@link groupMatch}) ranks the groups against each
    * other and the best `limit` are rows, in the tabs' band just under them ({@link RELEVANCE}
    * `folder`). The row is the group's name over its pages' sites, the matching site first, as
    * Chrome lists a group's addresses with the matching one in front. An unnamed group is no row
@@ -642,7 +641,7 @@ export class SuggestionService {
       if (local ? folder.spaceId !== local.id : m.localSpaces[folder.spaceId]) continue
       if (!folder.name.trim()) continue
       const live = regularFolderTabs(m, folder.id)
-      const pages = (live.length > 0 ? live : (folder.savedTabs ?? []))
+      const pages = live
         .map((t) => t.url)
         .filter((url) => !isEmptyTabUrl(url) && !isInternalUrl(url))
       if (pages.length === 0) continue

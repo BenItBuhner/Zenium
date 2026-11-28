@@ -187,46 +187,40 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(before).not.toContain(after[at + 1])
   })
 
-  it("adds the tab to a group – Zenium's folder – from Move Tab: a new group while the space has none, the space's groups once it has", () => {
+  it("adds the tab to a folder from Move Tab: a new folder while the space has none, the space's folders once it has", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
-    expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Group')
-    deepItem(h.shown(), 'Add Tab to New Group').click?.()
+    expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Folder')
+    deepItem(h.shown(), 'Add Tab to New Folder').click?.()
     const folder = Object.values(h.browser.state.model.folders)[0]
     expect(folder).toBeDefined()
     expect(h.browser.tabs.tab(h.tabId)?.folderId).toBe(folder!.id)
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const menu = labels(h.shown())
-    expect(menu).toContain('Move Tab > Move to Group')
-    expect(deepItem(h.shown(), 'New Group…').click).toBeTypeOf('function')
-    expect(menu).toContain('Move Tab > Remove from Group')
-    expect(menu).not.toContain('Move Tab > Add Tab to New Group')
+    expect(menu).toContain('Move Tab > Move to Folder')
+    expect(deepItem(h.shown(), 'New Folder…').click).toBeTypeOf('function')
+    expect(menu).toContain('Move Tab > Remove from Folder')
+    expect(menu).not.toContain('Move Tab > Add Tab to New Folder')
   })
 
-  it('TABLET-22: the four folder rows say Group on the phone and the tablet – Chrome for Android speaks of groups, never folders – and Folder on the desktop, byte for byte', () => {
+  it('the four folder rows say Folder on every host, never Group', () => {
     const rows = (h: ReturnType<typeof pageHarness>): string[] => {
       h.browser.menus.showTabContextMenu(h.tabId, h.win)
       return labels(h.shown()).filter((l) => /Folder|Group/.test(l))
     }
-    for (const layout of ['phone', 'tablet'] as const) {
-      const h = pageHarness(ANDROID, { formFactor: layout })
-      // Before the space has a group: the one row. After: the move's submenu and the removal.
-      expect(rows(h)).toEqual(['Move Tab > Add Tab to New Group'])
-      deepItem(h.shown(), 'Add Tab to New Group').click?.()
+    for (const h of [
+      pageHarness(ANDROID, { formFactor: 'phone' }),
+      pageHarness(ANDROID, { formFactor: 'tablet' }),
+      pageHarness(DESKTOP)
+    ]) {
+      expect(rows(h)).toEqual(['Move Tab > Add Tab to New Folder'])
+      deepItem(h.shown(), 'Add Tab to New Folder').click?.()
       expect(rows(h)).toEqual(
-        expect.arrayContaining(['Move Tab > Move to Group', 'Move Tab > Remove from Group'])
+        expect.arrayContaining(['Move Tab > Move to Folder', 'Move Tab > Remove from Folder'])
       )
-      expect(deepItem(h.shown(), 'New Group…').click).toBeTypeOf('function')
-      expect(JSON.stringify(h.shown())).not.toContain('Folder')
+      expect(deepItem(h.shown(), 'New Folder…').click).toBeTypeOf('function')
+      expect(JSON.stringify(h.shown())).not.toContain('Group')
     }
-    const desktop = pageHarness(DESKTOP)
-    expect(rows(desktop)).toEqual(['Move Tab > Add Tab to New Folder'])
-    deepItem(desktop.shown(), 'Add Tab to New Folder').click?.()
-    expect(rows(desktop)).toEqual(
-      expect.arrayContaining(['Move Tab > Move to Folder', 'Move Tab > Remove from Folder'])
-    )
-    expect(deepItem(desktop.shown(), 'New Folder…').click).toBeTypeOf('function')
-    expect(JSON.stringify(desktop.shown())).not.toContain('Group')
   })
 
   it("keeps Chrome's window moves out where the host has no windows (capabilities.windows), and in on a host that has", () => {
@@ -256,14 +250,14 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(deepItem(h.shown(), 'Reopen Closed Tab').enabled).toBe(true)
   })
 
-  it("has Chrome's other strip rows too: Share, Duplicate, Pin, Mute site", () => {
+  it("has the strip's other rows too: Share, Duplicate, Pin – and no site mute or proxy", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const menu = labels(h.shown())
     expect(menu).toEqual(
-      expect.arrayContaining(['Share', 'Share > Share…', 'Duplicate Tab', 'Pin Tab', 'Mute Site'])
+      expect.arrayContaining(['Share', 'Share > Share…', 'Duplicate Tab', 'Pin Tab'])
     )
-    // In-app proxy is the desktop host's; Android's proxy is the network's.
+    expect(menu).not.toContain('Mute Site')
     expect(menu).not.toContain('Proxy')
   })
 

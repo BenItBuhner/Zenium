@@ -33,7 +33,8 @@ import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
 import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
-import { newFolderName, touchLayout } from '../shared/formFactor'
+import { touchLayout } from '../shared/formFactor'
+import { NEW_FOLDER_NAME } from '../shared/groupNames'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -52,7 +53,6 @@ import {
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
-  type Folder,
   type KeyBinding,
   type MenuAnchor,
   type MenuHeader,
@@ -85,8 +85,7 @@ import {
 import { MANAGED_MENU_LABEL } from '../shared/managed'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
-import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
-import { profileLabel } from '../shared/appProxy'
+import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
@@ -118,7 +117,6 @@ import { markUpdateMenuOpened } from './updateDot'
 import {
   folderTabs,
   isPrivateFolder,
-  isSavedFolder,
   regularFolderTabs,
   splitLinksToRight,
   tabVisibleIn
@@ -284,18 +282,6 @@ export function bookmarkPageLabel(bookmarked: boolean): string {
 }
 
 /**
- * The reading list's add/remove in the words of its subject (§9.1). The star's context menu is
- * the page's control and reads "Add to Reading List" / "Remove from Reading List" beside the
- * app menu's page verbs (the lead's C5 on #511); the tab row and the app menu's Reading List ▸
- * keep Chrome's "Add Tab to Reading List" / "Remove Tab from Reading List", their subject being
- * the tab. (The link row's "Add Link to Reading List" names its subject the same way.)
- */
-export function readingListLabel(listed: boolean, subject: 'page' | 'tab'): string {
-  if (subject === 'page') return listed ? 'Remove from Reading List' : 'Add to Reading List'
-  return listed ? 'Remove Tab from Reading List' : 'Add Tab to Reading List'
-}
-
-/**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
  * and the host shows them – Electron as native popups (the only thing that can draw above the tab
  * views), Android inside the chrome as sheets / popovers.
@@ -433,45 +419,6 @@ export class Menus {
     return this.browser.state.model.containers
       .filter((c) => c.id !== DEFAULT_CONTAINER_ID)
       .map((c) => ({ label: c.name, click: () => onPick(c.id) }))
-  }
-
-  /** Per-tab proxy override: follow the default, go direct, or pick a configured server. */
-  private tabProxySubmenu(tab: Tab, win: ZenWindow): MenuItemTemplate {
-    const proxy = this.browser.state.settings.proxy
-    const current = tab.proxyId ?? ''
-    const pick = (proxyId: string | null): void => {
-      this.browser.tabs.setProxy(tab.id, proxyId, win)
-    }
-    return {
-      label: 'Proxy',
-      submenu: [
-        {
-          label: 'Use default connection',
-          type: 'checkbox',
-          checked: current === '',
-          click: () => pick(null)
-        },
-        {
-          label: 'Direct connection',
-          type: 'checkbox',
-          checked: current === 'direct',
-          click: () => pick('direct')
-        },
-        {
-          label: 'System proxy',
-          type: 'checkbox',
-          checked: current === 'system',
-          click: () => pick('system')
-        },
-        ...(proxy.profiles.length > 0 ? [{ type: 'separator' as const }] : []),
-        ...proxy.profiles.map((profile) => ({
-          label: profileLabel(profile),
-          type: 'checkbox' as const,
-          checked: current === profile.id,
-          click: () => pick(profile.id)
-        }))
-      ]
-    }
   }
 
   private spaceSubmenu(exceptSpaceId: string | null, onPick: (spaceId: string) => void): Template {
@@ -869,7 +816,7 @@ export class Menus {
       const inGroup: MenuItemTemplate | undefined =
         group || groupable
           ? {
-              label: 'Open Link in New Tab in Group',
+              label: 'Open Link in New Tab in Folder',
               click: () =>
                 tabs.createTab(
                   {
@@ -977,22 +924,12 @@ export class Menus {
       })
     }
     if (save && touchLayout(win.formFactor)) transfer.push(save)
-    // The reading list's row (W6-1) joins the transfer group on every layout since HB-20
-    // (W6-D1): the phone reads the list from its panel, the tablet from its page; the touch
-    // hosts' link menus stay one menu (the lead's ruling after #492, `savedGroups.test.ts`).
-    // Its seat differs by host: the desktop's row closes the group after the share, where the
-    // link leaves the page for a list of the browser's; the touch hosts seat it BEFORE Share
-    // Link… (the design gate on #551 – the hand-off out of the app stays the group's last row,
-    // #492's rule, as Chrome for Android 152 keeps Read later before Share link).
-    const reading = navigable ? this.readingListLinkItem(url, linkText, win) : undefined
-    if (reading && touchLayout(win.formFactor)) transfer.push(reading)
     if (caps.share && navigable) {
       transfer.push({
         label: 'Share Link…',
         click: () => void this.browser.share({ url, tabId: tab.id }, win)
       })
     }
-    if (reading && !touchLayout(win.formFactor)) transfer.push(reading)
     return [open, transfer]
   }
 
@@ -1007,7 +944,7 @@ export class Menus {
   private groupAround(tab: Tab, win: ZenWindow): string {
     const folder = this.browser.createFolder(
       tab.spaceId ?? win.activeSpaceId,
-      newFolderName(win.formFactor),
+      NEW_FOLDER_NAME,
       '📁',
       win,
       { rename: false }
@@ -1914,19 +1851,10 @@ export class Menus {
       this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar', anchor)
   }
 
-  // ---------------------------------------------------------------------------
-  // Reading list (W6-1)
-  // ---------------------------------------------------------------------------
-
   /**
-   * The star's menu (a right-click or the Menu key on the pill's star; Chrome M89's star menu
-   * had these two): the bookmark row beside the reading list's – Add to Reading List, or Remove
-   * from Reading List once the page is in it – and the way to the list. Both rows are the app
-   * menu's page verbs (`bookmarkPageLabel`, `readingListLabel(…, 'page')`; the same toggles):
-   * the star is the page's control, so its menu says what the app menu says of the page (§9.1,
-   * one vocabulary), where the tab row says "Tab"; the star's own click keeps the bubble that
-   * names and files the bookmark. Keys: `row.bookmark`, `row.readingListAdd` /
-   * `row.readingListRemove`, `row.readingListShow`.
+   * The star's menu (a right-click or the Menu key on the pill's star): the bookmark row, in the
+   * app menu's page words (`bookmarkPageLabel`); the star's own click keeps the bubble that names
+   * and files the bookmark. Key: `row.bookmark`.
    */
   starItems(tab: Tab, win: ZenWindow): Template {
     return [
@@ -1936,10 +1864,7 @@ export class Menus {
         action: 'bookmark.add',
         enabled: this.browser.bookmarkable(tab.url),
         click: () => this.browser.toggleBookmark(tab.id, win)
-      },
-      this.readingListTabItem(tab, win, 'page'),
-      { type: 'separator' },
-      this.showReadingListItem(win)
+      }
     ]
   }
 
@@ -1977,87 +1902,6 @@ export class Menus {
           })
       }
     ]
-  }
-
-  /**
-   * "Add Tab to Reading List" for the tab's page – or "Remove Tab from Reading List" once the
-   * page is in the list (bookmarks-33: Chrome's row flips the same way in its Bookmarks and
-   * lists ▸ Reading list ▸); in the star's menu the same row in the page's words, "Add to
-   * Reading List" / "Remove from Reading List" (`readingListLabel`). Greyed for a page the list
-   * does not hold (`zen://`, a blank tab). Keys: `row.readingListAdd` / `row.readingListRemove`.
-   */
-  readingListTabItem(tab: Tab, win: ZenWindow, subject: 'page' | 'tab' = 'tab'): MenuItemTemplate {
-    const { readingList } = this.browser
-    const listed = readingList.has(tab.url)
-    return listed
-      ? {
-          label: readingListLabel(true, subject),
-          key: 'row.readingListRemove',
-          click: () => this.browser.removeTabFromReadingList(tab.id, win)
-        }
-      : {
-          label: readingListLabel(false, subject),
-          key: 'row.readingListAdd',
-          enabled: readingList.canAdd(tab.url),
-          click: () => this.browser.addTabToReadingList(tab.id, win)
-        }
-  }
-
-  /** "Show Reading List": the `zen://reading-list` page (key `row.readingListShow`). */
-  showReadingListItem(win: ZenWindow): MenuItemTemplate {
-    return {
-      label: 'Show Reading List',
-      key: 'row.readingListShow',
-      click: () => this.browser.pages.open('reading-list', undefined, win)
-    }
-  }
-
-  /**
-   * The link menu's "Add Link to Reading List" (context-menus-98; Safari's row – Chrome's link
-   * menu has none, its reading list takes tabs alone): the link's address under its text, or
-   * its host when the link has no text, through the browser's one add path, so it toasts as the
-   * tab's add does. Greyed for a link the list does not hold. Key: `row.readingListAddLink`.
-   */
-  readingListLinkItem(url: string, text: string, win: ZenWindow): MenuItemTemplate {
-    return {
-      label: 'Add Link to Reading List',
-      key: 'row.readingListAddLink',
-      enabled: this.browser.readingList.canAdd(url),
-      click: () => {
-        this.browser.addLinkToReadingList(url, text, win)
-      }
-    }
-  }
-
-  /**
-   * A reading list row's menu (the page's ⋮ and right-click): Open and Open in New Tab, the
-   * read flip, Copy Link Address, Remove – the Downloads page's row menu's shape.
-   */
-  showReadingListContextMenu(id: string, anchor: MenuAnchor, win: ZenWindow): void {
-    const { readingList, platform } = this.browser
-    const entry = readingList.get(id)
-    if (!entry) return
-    const unread = entry.readAt === undefined
-    this.popup(
-      [
-        { label: 'Open', click: () => this.browser.openReadingEntry(id, null, win) },
-        {
-          label: 'Open in New Tab',
-          click: () => this.browser.openReadingEntry(id, null, win, { newTab: true })
-        },
-        { type: 'separator' },
-        {
-          label: unread ? 'Mark as Read' : 'Mark as Unread',
-          click: () => readingList.setRead(id, unread)
-        },
-        { type: 'separator' },
-        { label: S.menu('link.copyAddress'), click: () => platform.clipboard.writeText(entry.url) },
-        { label: 'Remove', click: () => readingList.remove(id) }
-      ],
-      win,
-      'readingList',
-      anchor
-    )
   }
 
   /** Chrome's "Always show full URLs": the address pill's elision setting (`showFullUrls`). */
@@ -2484,11 +2328,6 @@ export class Menus {
         ...key('page.toggleMute'),
         click: () => tabs.toggleMute(tabId)
       },
-      {
-        label: tabs.siteMuted(tab.url) ? 'Unmute Site' : 'Mute Site',
-        enabled: Boolean(domain),
-        click: () => tabs.toggleMuteSite(tabId)
-      },
       // Sleep is the tab's state, as its mute is – Firefox's state group runs Reload, Mute,
       // Unload, Duplicate, Pin – and stands between the mutes and Duplicate: one row, its
       // submenu the ways to put the tab to sleep now and the two ways to keep it awake.
@@ -2578,19 +2417,12 @@ export class Menus {
     // overview cleanup spec §7): a touch host says GROUP, as Chrome for Android's tab menu does
     // and as the phone's own sheets do; the desktop says Folder, its labels byte for byte as
     // before. One block, so the string table absorbs it whole.
-    const folderRows = touchLayout(win.formFactor)
-      ? {
-          addToNew: 'Add Tab to New Group',
-          moveTo: 'Move to Group',
-          newOne: 'New Group…',
-          remove: 'Remove from Group'
-        }
-      : {
-          addToNew: 'Add Tab to New Folder',
-          moveTo: 'Move to Folder',
-          newOne: 'New Folder…',
-          remove: 'Remove from Folder'
-        }
+    const folderRows = {
+      addToNew: 'Add Tab to New Folder',
+      moveTo: 'Move to Folder',
+      newOne: 'New Folder…',
+      remove: 'Remove from Folder'
+    }
     const moveTab: Template = joinGroups([
       [
         {
@@ -2670,15 +2502,6 @@ export class Menus {
         enabled: !tab.url.startsWith('zen://'),
         click: () => this.browser.toggleBookmark(tabId, win)
       },
-      {
-        label: 'Bookmark All Tabs…',
-        action: 'bookmark.allTabs',
-        click: () => this.browser.bookmarkTabs(win)
-      },
-      // Chrome's "Add tab to reading list" (tabs-36, W6-1), under the bookmark rows as Chrome
-      // seats it; a page already listed offers the way out instead. The sidebar layouts' alone
-      // until the phone has a list to read it from.
-      ...when(panes, this.readingListTabItem(tab, win)),
       { label: 'Move Tab', submenu: moveTab },
       // The split rows are the desktop's and the tablet's (the phone draws no panes). Add Tab
       // to Split View (context-menus-92, Vivaldi's row) is offered while a split is on screen
@@ -2710,7 +2533,6 @@ export class Menus {
           tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
         )
       },
-      ...when(this.browser.state.platform !== 'android', this.tabProxySubmenu(tab, win)),
       {
         label: 'Share',
         submenu: [
@@ -2876,12 +2698,8 @@ export class Menus {
     const folders = Object.values(m.folders).filter(
       (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
     )
-    // The group rows' words by the window's layout, as the tab menu's (the overview cleanup
-    // spec §7; the Lead's fold on #731): a touch host says GROUP, the desktop says Folder, its
-    // labels byte for byte as before.
-    const groupRows = touchLayout(win.formFactor)
-      ? { addTo: `Add ${n} Tabs to Group`, newOne: 'New Group…' }
-      : { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
+    // One word on every host: Zen's Folder.
+    const groupRows = { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
     this.popup(
       [
         {
@@ -2935,12 +2753,7 @@ export class Menus {
                   {
                     label: groupRows.newOne,
                     click: () => {
-                      const folder = this.browser.createFolder(
-                        space.id,
-                        newFolderName(win.formFactor),
-                        '📁',
-                        win
-                      )
+                      const folder = this.browser.createFolder(space.id, NEW_FOLDER_NAME, '📁', win)
                       for (const t of nonEssential)
                         if (!t.pinned) tabs.moveToFolder(t.id, folder.id)
                     }
@@ -3070,15 +2883,12 @@ export class Menus {
         ...(local
           ? []
           : [
-              // The strip's group rows say GROUP on a touch host, as the tab menu's do (the
-              // overview cleanup spec §7; the Lead's fold on #731); the desktop's say Folder.
               {
-                label: touchLayout(win.formFactor) ? 'New Group' : 'New Folder',
-                click: () =>
-                  this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
+                label: 'New Folder',
+                click: () => this.browser.createFolder(space.id, NEW_FOLDER_NAME, '📁', win)
               },
               {
-                label: touchLayout(win.formFactor) ? 'New Live Group…' : 'New Live Folder…',
+                label: 'New Live Folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               {
@@ -3252,41 +3062,18 @@ export class Menus {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
-    if (win.formFactor !== 'desktop') {
-      this.popup(this.groupMenu(folder, win), win, 'folder', anchor)
-      return
-    }
     const live = this.browser.liveFolders.get(folderId)
-    // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
-    // desktop half of the shared groups). Its menu runs act / change / destroy in four groups:
-    // what the folder does (Open Folder while it is saved, then New Tab in Folder on either),
-    // what changes it (Edit Folder… – Chrome's group editor bubble, tabs-13: name, colour and
-    // the group's actions in one surface beside the header – the live folder's items or Make
-    // Live Folder…, and last, for an open folder with tabs on a host with windows to give, Move
-    // Folder to New Window – a change of place, filed with the verbs that change the folder as
-    // the tab menu files Move Tab to New Window with its place-changing verbs, not beside New
-    // Tab), what ends one half of an open folder and can be undone (Unpack Folder leaves the
-    // tabs loose to regroup, Close Folder closes them and the folder stays SAVED with their
-    // pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
-    // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
-    // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
-    // Tab in Folder on a saved folder opens it first – its pages back as its tabs – and adds the
-    // tab behind them (`newTabInFolder`), so the plain-ink verb loses nothing (§5, §9.1). Move
-    // Folder to New Window (Chrome's Move group to new window, context-menus-107) takes the
-    // folder's tabs and the folder to a window of their own beside this one
-    // (`moveFolderToNewWindow`); the saved folder keeps its three rows (Open Folder brings the
-    // pages back here). No Rename Folder… and no Expand or Collapse Folder: each duplicates a
-    // control the row already has (the editor's Name field, the header's own click). Zen's word
-    // is Folder; the touch hosts say Group.
+    // One folder menu on every host, Zen's word on every row: what the folder does (New Tab in
+    // Folder), what changes it (Edit Folder… – name, colour and icon in one bubble – and the live
+    // folder's two rows), what ends one half of a folder with tabs (Unpack Folder leaves the tabs
+    // loose; Close Folder closes them and the folder stays, folded – with Undo on a touch host's
+    // toast), then Delete Folder alone,
+    // which asks first when there is anything to lose (`folder.confirmDelete`). No Rename and no
+    // Expand or Collapse: the bubble and the header's own click are those.
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
-    const saved = isSavedFolder(state.model, folder)
-    const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
+    const count = regularFolderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
     const act: Template = [
-      ...when(saved, {
-        label: `Open Folder (${tabs})`,
-        click: () => this.browser.openFolder(folderId, win)
-      }),
       { label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }
     ]
     const change: Template = [
@@ -3294,51 +3081,28 @@ export class Menus {
         label: 'Edit Folder…',
         click: () => this.browser.emit('folder.edit', { folderId }, win)
       },
-      ...((live
-        ? [
-            {
-              label: 'Refresh Live Folder',
-              click: () => void this.browser.liveFolders.refresh(folderId, true)
-            },
-            {
-              label: 'Refresh Every',
-              submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
-                label:
-                  minutes < 60
-                    ? `${minutes} minutes`
-                    : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
-                type: 'radio' as const,
-                checked: live.intervalMinutes === minutes,
-                click: () => this.browser.liveFolders.setInterval(folderId, minutes)
-              }))
-            },
-            {
-              label: 'Live Folder Settings…',
-              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-            },
-            {
-              label: 'Stop Updating (make static)',
-              click: () => this.browser.liveFolders.remove(folderId)
-            }
-          ]
-        : [
-            {
-              label: 'Make Live Folder…',
-              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-            }
-          ]) as Template),
-      ...when(!saved && count > 0 && state.capabilities.windows, {
-        label: 'Move Folder to New Window',
-        click: () => void this.browser.tabs.moveFolderToNewWindow(folderId, win)
-      })
+      // A live folder refreshes on demand; its source, interval and the way back to a static
+      // folder are the Live Folder dialog's.
+      ...when(Boolean(live), {
+        label: 'Refresh Live Folder',
+        click: () => void this.browser.liveFolders.refresh(folderId, true)
+      }),
+      {
+        label: live ? 'Live Folder Settings…' : 'Make Live Folder…',
+        click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+      }
     ]
     const end: Template =
-      count && !saved
+      count > 0
         ? [
             { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
             {
               label: `Close Folder (${tabs})`,
-              click: () => this.browser.closeFolder(folderId, win)
+              // A touch host closes through the chrome's close-with-undo (`lib/closeUndo.ts`).
+              click: () =>
+                touchLayout(win.formFactor)
+                  ? this.browser.emit('folder.closeUndoable', { folderId }, win)
+                  : this.browser.closeFolder(folderId, win)
             }
           ]
         : []
@@ -3370,7 +3134,7 @@ export class Menus {
   }
 
   /**
-   * The desktop's "Delete Folder" and the touch host's "Delete Group" (`groupMenu`): a folder
+   * "Delete Folder": a folder
    * with tabs or saved pages is deleted only once the chrome's prompt (`folder.confirmDelete`,
    * a §9.23 dialog) is answered – the answer runs `folder.delete` – and an empty one goes at
    * once. Chrome for Android asks before a group is deleted on every form factor
@@ -3381,85 +3145,9 @@ export class Menus {
     const { model } = this.browser.state
     const folder = model.folders[folderId]
     if (!folder) return
-    const holds = folderTabs(model, folderId).length > 0 || Boolean(folder.savedTabs?.length)
-    if (holds) this.browser.emit('folder.confirmDelete', { folderId }, win)
+    if (folderTabs(model, folderId).length > 0)
+      this.browser.emit('folder.confirmDelete', { folderId }, win)
     else this.browser.deleteFolder(folderId, false)
-  }
-
-  /**
-   * A tab group's menu on a touch host (TABLET-04: the tablet sidebar chip's hold, a §9.36
-   * popover; the phone's groups have their sheets): Chrome's group header menu with the editor
-   * bubble's name and colour folded in, the bubble being the desktop's. Rename Group…, Colour
-   * (Chrome's nine as radio items, the group's checked), New Tab in Group, Collapse or Expand
-   * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
-   * group stays SAVED with their pages (TAB-16), with Undo on the toast: the item emits
-   * `folder.closeUndoable` for the chrome to run the close through its one close-with-undo
-   * (`lib/closeUndo.ts`, the phone's Close Group's path; the Design Lead's option C on
-   * TAB-16 / TAB-13), where the desktop's Close Folder calls `closeFolder` itself, toastless –
-   * and Delete Group, which asks first when the
-   * group holds anything (`deleteFolderAsking`: the chrome's §9.23 prompt, as the phone's sheet
-   * and the desktop's Delete Folder ask) and offers no Undo after the ask. A saved group (its
-   * tabs closed, its pages kept) leads
-   * with Open Group (N Tabs) and has nothing to fold, ungroup or close; Delete Group forgets its
-   * pages, asking first too. Title Case throughout (v2 §9.1). Delete Group alone
-   * takes the danger ink (§6: for what destroys the user's own; Close Group destroys nothing
-   * the saved group does not keep, and Chrome's "Close group" is plain), as the phone's group
-   * sheet writes them. The menu is a folder's and never the app menu's, whose renderer-drawn
-   * desktop form (#299) would draw a `danger` item red there too.
-   */
-  private groupMenu(folder: Folder, win: ZenWindow): Template {
-    const { browser } = this
-    const id = folder.id
-    // The group's tabs are its regular members (`regularFolderTabs`): a private tab in it is
-    // none of the count, and Close Group leaves it.
-    const live = regularFolderTabs(browser.state.model, id).length
-    const saved = isSavedFolder(browser.state.model, folder)
-    const count = saved ? (folder.savedTabs?.length ?? 0) : live
-    const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
-    const open: Template = saved
-      ? [{ label: `Open Group (${tabs})`, click: () => browser.openFolder(id, win) }]
-      : []
-    const fold: Template = live
-      ? [
-          {
-            label: folder.collapsed ? 'Expand Group' : 'Collapse Group',
-            click: () => browser.updateFolder(id, { collapsed: !folder.collapsed })
-          }
-        ]
-      : []
-    const closing: Template = live
-      ? [
-          { label: 'Ungroup', click: () => browser.deleteFolder(id, true) },
-          {
-            label: `Close Group (${tabs})`,
-            click: () => browser.emit('folder.closeUndoable', { folderId: id }, win)
-          }
-        ]
-      : []
-    return [
-      ...open,
-      {
-        label: 'Rename Group…',
-        // The pick mounts the row's rename field: the keyboard stays in the chrome for it.
-        keepsKeyboard: true,
-        click: () => browser.emit('folder.startRename', { folderId: id }, win)
-      },
-      {
-        label: 'Colour',
-        submenu: FOLDER_COLOR_ORDER.map((color) => ({
-          label: FOLDER_COLOR_NAMES[color],
-          type: 'radio' as const,
-          checked: (folder.color ?? null) === color,
-          click: () => browser.updateFolder(id, { color })
-        }))
-      },
-      { label: 'New Tab in Group', click: () => browser.newTabInFolder(id, win) },
-      ...fold,
-      { type: 'separator' },
-      ...closing,
-      ...this.releaseItems(id, win),
-      { label: 'Delete Group', danger: true, click: () => this.deleteFolderAsking(id, win) }
-    ]
   }
 
   // ---------------------------------------------------------------------------
@@ -4243,7 +3931,6 @@ export class Menus {
         selectable,
         regular: essentials.length + spaceTabs.length,
         private: privateTabs.length,
-        inactive: state.archivedTabs.length,
         recentlyClosed: state.recentlyClosed.filter((entry) => entry.kind === 'tab').length
       },
       spaces: m.spaces.map((s) => ({
@@ -4454,19 +4141,6 @@ export class Menus {
         // The sidebar layouts': the tablet's bar is the desktop's under the tablet's toolbar
         // (NTP-34), on the same three settings.
         ...sidebar({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
-        // Chrome's Reading list ▸ (sidepanel-54, W6-1), seated after Show Bookmarks as Chrome's
-        // Bookmarks and lists ▸ seats it: the tab's add (or its remove) and the list itself.
-        // The sidebar layouts' (the page is theirs); the phone's flat list carries the two as
-        // rows of its own (`readingListShow`, `readingListVerb`; HB-20).
-        ...sidebar({
-          label: 'Reading List',
-          submenu: [
-            ...(active
-              ? [this.readingListTabItem(active, win)]
-              : [{ label: 'Add Tab to Reading List', key: 'row.readingListAdd', enabled: false }]),
-            this.showReadingListItem(win)
-          ]
-        }),
         separator,
         // Chrome's entry opens Settings > Import with the dialog up; a phone has no other
         // browser's profile to read and keeps the bookmarks-file pick (Edge Android's).
@@ -4482,21 +4156,7 @@ export class Menus {
         {
           label: 'Export Bookmarks…',
           click: () => void this.browser.exportBookmarks(win)
-        },
-        // Chrome's Tab groups ▸ (shortcuts-menus-111) as "Tab Folders": the saved groups by name
-        // with their mark, seated as the submenu's last group – Chrome's own seat for a list
-        // beside the bookmarks (Reading list ▸ in Bookmarks and lists ▸), not its top-level row:
-        // a twenty-first row gives 692 at rest and 732 folded against the 718 of room on 800 px,
-        // the numbers #396 turned down, where this submenu has the room (258 for its seven rows).
-        // The noun is the desktop's Folder on every row (#398 F10; the #435 lead check), "Tab"
-        // telling them from the bookmark folders above; the touch hosts keep Chrome Android's
-        // Group – their pane is the overview's (TAB-16). A `local` window has no synced space.
-        ...desktop(
-          ...when(!local, separator, {
-            label: 'Tab Folders',
-            submenu: this.tabGroupsSubmenu(win)
-          })
-        )
+        }
       ]
     }
     /**
@@ -4516,24 +4176,6 @@ export class Menus {
       action: 'downloads.open',
       click: () => this.browser.pages.open('downloads', undefined, win)
     }
-    // The phone's reading list (HB-20, W6-D1), on the desktop's shared model: the list itself
-    // as a library row – the noun, as the phone's History and Downloads rows are, where the
-    // sidebar layouts fold Show Reading List into Bookmarks ▸ Reading List ▸ – and the page's
-    // verb, Add to Reading List or Remove from Reading List (`readingListLabel(…, 'page')`, the
-    // star's words: the phone's bookmark control is the icon row's star, so the verb stands
-    // among the page's saves, before Add to Home Screen). The two alternatives of the verb
-    // never stand together and share one key for the user's order (`homeScreenItems`' rule);
-    // the row is greyed, not gone, for a page the list does not hold (`zen://`, a blank tab),
-    // so the menu keeps its shape (§9.17).
-    const readingListShow = phone
-      ? [{ ...this.showReadingListItem(win), label: 'Reading List' }]
-      : []
-    const readingListVerb = when(
-      phone,
-      active
-        ? { ...this.readingListTabItem(active, win, 'page'), key: 'row.readingList' }
-        : { label: readingListLabel(false, 'page'), key: 'row.readingList', enabled: false }
-    )
     const passwords = when(caps.passwords, {
       label: 'Passwords',
       click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
@@ -4907,7 +4549,6 @@ export class Menus {
         ...keyed('row.newPrivateWindow', ...newPrivateWindow),
         ...hairline(),
         ...keyed('row.bookmarks', bookmarks),
-        ...keyed('row.readingListShow', ...readingListShow),
         ...keyed('row.history', showHistory('History')),
         ...keyed('row.downloads', downloads),
         ...keyed('row.passwords', ...passwords),
@@ -4925,7 +4566,6 @@ export class Menus {
         ...keyed('row.translate', ...translate),
         ...keyed('row.share', ...share),
         ...keyed('row.sendToDevices', ...sendToDevices),
-        ...keyed('row.readingList', ...readingListVerb),
         ...keyed('row.homeScreen', ...homeScreen),
         ...keyed('row.print', ...print),
         ...keyed('row.screenshot', screenshot),
@@ -5209,34 +4849,6 @@ export class Menus {
     if (next === state.updateDot) return
     state.updateDot = next
     state.commit()
-  }
-
-  /**
-   * Chrome's Tab groups submenu – "Tab Folders" on the desktop (shortcuts-menus-111;
-   * `IDS_SAVED_TAB_GROUPS_MENU`): the SAVED groups of the synced spaces – a folder whose tabs
-   * closed and whose pages are kept (TAB-16, `isSavedFolder`) – one row each, named by the group
-   * and marked by the one group glyph (`group`: the ring of its colour, or the folder's own icon;
-   * §9.37, #360's pair), the most recently used first as the Tab groups pane orders them
-   * (`groupRows`), the name breaking ties. A row's pick opens the group in this window – its
-   * pages back as its tabs at the end of their space, the first made active, the window switched
-   * to the space where it is another (`Browser.openFolder`). A blank or private window's local
-   * space has no saved group (its tabs keep no pages): the row is left out of its menu. With
-   * nothing saved, §9.17's empty state: "No saved tab folders" as the note row (the History
-   * submenu's "No recently closed tabs" form) – the desktop's noun is Folder (#398 F10; the touch
-   * hosts keep Group). An open group is the sidebar's, not this list's: Chrome's lists the rest.
-   */
-  private tabGroupsSubmenu(win: ZenWindow): Template {
-    const m = this.browser.state.model
-    const synced = new Set(m.spaces.map((space) => space.id))
-    const saved = Object.values(m.folders)
-      .filter((folder) => synced.has(folder.spaceId) && isSavedFolder(m, folder))
-      .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.name.localeCompare(b.name))
-    if (saved.length === 0) return [{ label: 'No saved tab folders', enabled: false, note: true }]
-    return saved.map((folder) => ({
-      label: folder.name,
-      group: { color: folder.color ?? null, icon: folder.icon, saved: true },
-      click: () => void this.browser.openFolder(folder.id, win)
-    }))
   }
 
   /**

@@ -247,9 +247,7 @@ const SYNC_SCOPE_ENCRYPTED_HINT = 'Encrypted with your sync passphrase.'
 
 /**
  * The data types in the page's own order: Chrome's types first – Bookmarks, History, Open tabs,
- * Passwords, Addresses, Payment methods, Reading list, Settings, Extensions; Chrome's "Manage
- * what you sync" seats Reading list directly after Bookmarks, ours sits after the vault's three,
- * as the lead seated it, and Extensions closes Chrome's list, after Settings and before Spaces
+ * Passwords, Addresses, Payment methods, Settings, Extensions; Extensions closes Chrome's list, after Settings and before Spaces
  * (the lead's seat, round 4) – then Zenium's own: Spaces, folders, pinned tabs, Essentials,
  * containers, shortcuts, Boosts, Mods. Every key of `SyncScope` is here once (the engine's
  * toggles are the page's). A row with `requires` shows on the hosts with that capability alone
@@ -275,10 +273,6 @@ export const SYNC_SCOPES: ReadonlyArray<{
   // with the lead's one hint on both.
   { key: 'addresses', label: 'Addresses', hint: SYNC_SCOPE_ENCRYPTED_HINT },
   { key: 'paymentMethods', label: 'Payment methods', hint: SYNC_SCOPE_ENCRYPTED_HINT },
-  // The reading list's row (services pass 11, the `reading-list-entry` record). No hint: a hint
-  // here carries a fact the name cannot (a behaviour, a protection, a scope), never a
-  // restatement – "Reading list" stands on its name as Bookmarks and History do (the lead's rule).
-  { key: 'readingList', label: 'Reading list' },
   { key: 'settings', label: 'Settings' },
   // The Extensions row (services pass 16, ID-44, the `extension` record): Chrome's type of the
   // same name, seated where the lead seated it – after Settings, before Spaces: the last of

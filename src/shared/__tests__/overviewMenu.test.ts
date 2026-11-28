@@ -22,7 +22,7 @@ function ctx(over: Partial<OverviewMenuContext> = {}): OverviewMenuContext {
   return {
     view: 'tabs',
     privateTabs: true,
-    counts: { closable: 3, selectable: 3, regular: 3, private: 0, inactive: 0, recentlyClosed: 0 },
+    counts: { closable: 3, selectable: 3, regular: 3, private: 0, recentlyClosed: 0 },
     spaces,
     selection: null,
     ...over
@@ -54,7 +54,7 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
           selectable: 5,
           regular: 5,
           private: 2,
-          inactive: 3,
+
           recentlyClosed: 6
         }
       })
@@ -65,7 +65,6 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
       'Private Tabs (2)',
       'Select Tabs',
       'Search Tabs',
-      'Inactive Tabs (3)',
       'Recently Closed (6)',
       '—',
       'Close All Tabs (4)',
@@ -88,7 +87,7 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
           selectable: 2,
           regular: 7,
           private: 2,
-          inactive: 3,
+
           recentlyClosed: 6
         }
       })
@@ -108,7 +107,7 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
     const row = switchViewRow({
       view: 'private',
       privateTabs: true,
-      counts: { closable: 1, selectable: 1, regular: 0, private: 1, inactive: 0, recentlyClosed: 0 }
+      counts: { closable: 1, selectable: 1, regular: 0, private: 1, recentlyClosed: 0 }
     })
     expect(row).toEqual({ command: 'switch-view', label: 'Tabs (0)' })
     expect(otherOverviewView('private')).toBe('tabs')
@@ -123,7 +122,7 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
           selectable: 0,
           regular: 0,
           private: 0,
-          inactive: 0,
+
           recentlyClosed: 0
         }
       })

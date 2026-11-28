@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { createFolder, createSpace, emptyModel, folderTabs, type Model } from '../../model'
+import {
+  createFolder,
+  createSpace,
+  createTabRecord,
+  emptyModel,
+  folderTabs,
+  type Model
+} from '../../model'
 import { AGENTS_SPACE_ICON, AGENTS_SPACE_NAME, homeGroupName, legacyGroupOwner } from '../service'
 import { fakeBrowser, textOf } from './fakeBrowser'
 
@@ -16,7 +23,7 @@ function model(): Model {
 }
 
 describe('the mark on what agents make', () => {
-  it("stamps the home group, the shared space, the agent's own spaces and its groups; the user's folders stay unmarked", async () => {
+  it("stamps the home group, the shared space and the agent's groups; the user's folders stay unmarked", async () => {
     const fake = fakeBrowser()
     const A = await fake.connect('A')
     const before = Date.now()
@@ -28,23 +35,18 @@ describe('the mark on what agents make', () => {
     expect(home.agent).toEqual({ name: 'A', createdAt: expect.any(Number) })
     expect(home.agent!.createdAt).toBeGreaterThanOrEqual(before)
 
-    // A space of its own, and the group that opened it.
+    // Agents have no spaces of their own: "own" (an older client's ask) makes the group in the
+    // shared space, and zen_spaces makes no space at all.
+    const spaces = fake.model.spaces.length
     const own = fake.createdGroup(
       await fake.call(A, 'zen_groups', { action: 'create', space: 'own', name: 'Reading' })
     )
     const ownFolder = fake.model.folders[own]
-    const ownSpace = fake.model.spaces.find((sp) => sp.id === ownFolder.spaceId)!
-    expect(ownSpace.name).toBe('A')
-    expect(ownSpace.agent).toEqual({ kind: 'own', name: 'A', createdAt: expect.any(Number) })
+    expect(ownFolder.spaceId).toBe(agents.id)
     expect(ownFolder.agent).toEqual({ name: 'A', createdAt: expect.any(Number) })
-    expect(fake.service.isAgentSpace(ownSpace.id)).toBe(true)
-
-    // zen_spaces create marks the space the same way.
-    const created = textOf(await fake.call(A, 'zen_spaces', { action: 'create', name: 'Lab' }))
-    const lab = fake.model.spaces.find((sp) => sp.name === 'Lab')!
-    expect(created).toContain(`Created space ${lab.id} "Lab"`)
-    expect(lab.agent).toEqual({ kind: 'own', name: 'A', createdAt: expect.any(Number) })
-    expect(fake.service.isAgentSpace(lab.id)).toBe(true)
+    const refused = await fake.call(A, 'zen_spaces', { action: 'create', name: 'Lab' })
+    expect(textOf(refused)).toContain('Agents do not make spaces')
+    expect(fake.model.spaces).toHaveLength(spaces)
 
     // A group in the user's space (allowForeign): the group is marked, the space is not.
     const foreign = fake.createdGroup(
@@ -115,7 +117,7 @@ describe('a restart', () => {
   it("keeps an agent's groups its own wherever they sit: orphaned, listed with the maker, adoptable", async () => {
     const fake = fakeBrowser()
     const A = await fake.connect('A')
-    // The home group in the shared space, a group in a space of A's own, and one in the
+    // The home group in the shared space, a second group there, and one in the
     // user's space because the user asked.
     const homeTab = fake.openedTab(
       await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/home' })
@@ -157,9 +159,7 @@ describe('a restart', () => {
       expect(next.commits).toBe(0) // nothing to upgrade: the marks were there
       // Nothing was touched by the boot: the marks are as they were written.
       expect(next.model.spaces.find((sp) => sp.id === ownSpaceId)?.agent).toEqual({
-        kind: 'own',
-        name: 'A',
-        createdAt: expect.any(Number)
+        kind: 'shared'
       })
       expect(next.model.folders[mine.id].agent).toBeUndefined()
       // Every group of A's is an orphan of A's, wherever it sits.
@@ -182,7 +182,7 @@ describe('a restart', () => {
       const groups = textOf(await next.call(B, 'zen_groups', { action: 'list', scope: 'all' }))
       expect(groups).toContain('Agent groups (3):')
       expect(groups).toContain(`Group "${homeGroupName(A)}" (${home}) [orphaned, was "A"]`)
-      expect(groups).toContain(`Group "Reading" (${own}) [orphaned, was "A"] in space "A"`)
+      expect(groups).toContain(`Group "Reading" (${own}) [orphaned, was "A"] in space "Agents"`)
       expect(groups).toContain(
         `Group "For the user" (${foreign}) [orphaned, was "A"] in space "Work"`
       )
@@ -423,6 +423,61 @@ describe('the one-time upgrade of S1 state', () => {
     expect(fake.service.isOrphan(inTwin.id)).toBe(false)
     expect(fake.service.findAgentsSpace()).toBe(shared)
     return Promise.all([fresh.stop(), fake.stop()])
+  })
+
+  it('folds a space an agent made for itself into the shared Agents space: its groups and tabs move, the space goes', () => {
+    const m = model()
+    const work = createSpace('Work', '')
+    m.spaces.push(work)
+    m.activeSpaceId = work.id
+    const shared = createSpace(AGENTS_SPACE_NAME, AGENTS_SPACE_ICON)
+    shared.agent = { kind: 'shared' }
+    const lab = createSpace('Lab', '')
+    // An older build's mark, which the type no longer names.
+    ;(lab as { agent: unknown }).agent = { kind: 'own', name: 'A', createdAt: 1 }
+    m.spaces.push(shared, lab)
+    const group = createFolder(m, lab.id, 'Reading', '')
+    group.agent = { name: 'A', createdAt: 1 }
+    const tab = createTabRecord({
+      url: 'https://a.example/',
+      spaceId: lab.id,
+      containerId: lab.containerId,
+      folderId: group.id
+    })
+    m.tabs[tab.id] = tab
+    lab.tabIds.push(tab.id)
+    const fake = fakeBrowser({}, { model: m })
+    fake.service.start()
+    try {
+      expect(m.spaces.map((sp) => sp.id)).toEqual([work.id, shared.id])
+      expect(group.spaceId).toBe(shared.id)
+      expect(group.agent).toEqual({ name: 'A', createdAt: 1 })
+      expect(tab.spaceId).toBe(shared.id)
+      expect(shared.tabIds).toEqual([tab.id])
+      expect(fake.commits).toBeGreaterThan(0)
+    } finally {
+      void fake.stop()
+    }
+  })
+
+  it('makes the first own space the shared one when there is none yet', () => {
+    const m = model()
+    const work = createSpace('Work', '')
+    m.spaces.push(work)
+    m.activeSpaceId = work.id
+    const lab = createSpace('A', '')
+    ;(lab as { agent: unknown }).agent = { kind: 'own', name: 'A', createdAt: 1 }
+    m.spaces.push(lab)
+    const fake = fakeBrowser({}, { model: m })
+    fake.service.start()
+    try {
+      expect(m.spaces).toHaveLength(2)
+      expect(lab.agent).toEqual({ kind: 'shared' })
+      expect(lab.name).toBe(AGENTS_SPACE_NAME)
+      expect(fake.service.findAgentsSpace()).toBe(lab)
+    } finally {
+      void fake.stop()
+    }
   })
 
   it('legacyGroupOwner reads the agent off the two shapes S1 wrote and nothing else', () => {

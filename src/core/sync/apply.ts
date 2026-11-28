@@ -1,4 +1,4 @@
-import type { Boost, Container, ReadingListEntry, Settings, Space } from '../../shared/types'
+import type { Boost, Container, Settings, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
 import { sanitizeMenuOrder } from '../../shared/menuOrder'
@@ -34,7 +34,6 @@ import {
   readFolderAgentMark,
   readModData,
   readPaymentMethodData,
-  readReadingListData,
   readSpaceAgentMark,
   syncedExtensionData,
   wireFavicon,
@@ -54,7 +53,6 @@ const ORDER: Record<SyncRecord['type'], number> = {
   folder: 2,
   tab: 3,
   bookmark: 4,
-  'reading-list-entry': 5,
   settings: 6,
   'site-data': 6,
   shortcuts: 7,
@@ -76,12 +74,7 @@ export type RecordOrigin = (record: SyncRecord) => string | null
 
 /**
  * Apply records that won the merge to the live browser state. Upserts run before deletes of the
- * same type so moved tabs are never closed by a stale tombstone; ordering records go last. The
- * reading list is the one exception, landed once per batch after the loop with its removals
- * first: a tombstone and a live record there are never the same entry (`newestByRecord` keeps
- * one record per id), and an entry a peer removed and saved again under a new id must be gone
- * before the new one meets the URL dedupe, or it could lose the URL to the very entry its
- * tombstone takes away.
+ * same type so moved tabs are never closed by a stale tombstone; ordering records go last.
  */
 export function applyRemote(
   browser: Browser,
@@ -93,8 +86,6 @@ export function applyRemote(
   const sorted = [...winners].sort(
     (a, b) => ORDER[a.type] - ORDER[b.type] || Number(a.deleted) - Number(b.deleted)
   )
-  const readingListLanded: ReadingListEntry[] = []
-  const readingListGone: string[] = []
   const extensionChanges: SyncedExtensionChange[] = []
   // The extensions land in the host's registry, not in `state`: a batch of them alone leaves
   // the state as it was and writes nothing (the engine hands the outstanding ones over every
@@ -272,18 +263,6 @@ export function applyRemote(
         }
         const data = readBookmarkData(r.data)
         if (data) browser.bookmarks.applySynced(r.id, data)
-        break
-      }
-      case 'reading-list-entry': {
-        // Gathered for one pass over the list after the loop (see above); the record goes
-        // through the apply side's sanitiser, which keeps a web address in the model's normal
-        // form under the record's id and drops a favicon a peer's build may have sent.
-        if (r.deleted) {
-          readingListGone.push(r.id)
-          break
-        }
-        const entry = readReadingListData(r.id, r.data)
-        if (entry) readingListLanded.push(entry)
         break
       }
       case 'settings': {
@@ -498,18 +477,6 @@ export function applyRemote(
       }
     }
   }
-
-  // The reading list, once: the peers' removals, then their entries through the URL dedupe and
-  // the cap (`ReadingListService.applySynced`; the cap bounds READ entries only, the oldest by
-  // `readAt` first – an unread entry is never trimmed). An entry the dedupe or the cap takes out
-  // is no edit of this device's – not because of the engine's `applying` guard (the commit
-  // below broadcasts a macrotask later, `BrowserState.schedule`, when the guard is already
-  // down) but because the engine re-snapshots SYNCHRONOUSLY right after this call (`run()`,
-  // `stamp: null`) and tombstones the vanished record at `now`, and because
-  // `readReadingListData ∘ readingListEntryData` is idempotent: a landed entry re-collects to
-  // the same bytes, so the deferred `onLocalChange` diff finds nothing to stamp.
-  if (readingListGone.length) browser.readingList.removeSynced(readingListGone)
-  if (readingListLanded.length) browser.readingList.applySynced(readingListLanded)
 
   // The extensions, once per batch, to the host that applies them – the desktop; a host without
   // the method (the phone) publishes its store installs and lands none. The work is the host's

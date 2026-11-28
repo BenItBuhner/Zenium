@@ -12,7 +12,6 @@ import { isPreviewSiteDataOrigins, type PreviewSiteDataOrigins } from './preview
 export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
   'history',
   'bookmarks',
-  'reading-list',
   'downloads',
   'theme',
   'onboarding',
@@ -367,7 +366,7 @@ export type PreviewState =
        * closed, their pages kept (TAB-16) – for the overview's Groups pane and the tablet
        * sidebar's saved row. `link` names a page: once the steps are taken, the active page's
        * context menu is raised for a link to it, the way a hold on a link raises it (TAB-15's
-       * Open Link in New Tab in Group is in it while the tab is in the group).
+       * Open Link in New Tab in Folder is in it while the tab is in the group).
        */
       kind: 'group'
       members: number
@@ -383,7 +382,7 @@ export type PreviewState =
        * `mailto:` link's bare number or address, with the contact items (PUI-22). With `image`,
        * the hold is on an image at `url` instead (`image=<url>`): the image sheet (CT-32's
        * Search Image row among its items). `then` steps run on the menu once it is up – a row
-       * taken (`then=tap:Open Link in New Tab in Group`: the group the link menu makes, its
+       * taken (`then=tap:Open Link in New Tab in Folder`: the group the link menu makes, its
        * strip in the bar band).
        */
       kind: 'link'

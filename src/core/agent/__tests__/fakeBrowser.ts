@@ -451,6 +451,12 @@ export function fakeBrowser(
       if (folder) Object.assign(folder, patch)
     },
     deleteFolder,
+    removeSpace: (spaceId: string) => {
+      const i = model.spaces.findIndex((sp) => sp.id === spaceId)
+      if (i < 0 || model.spaces.length <= 1) return
+      model.spaces.splice(i, 1)
+      if (win.activeSpaceId === spaceId) win.activeSpaceId = model.spaces[0].id
+    },
     governor: { thaw: async () => undefined },
     history: { search: () => [] },
     permissions: { forgetAgentTab: (tabId: string) => devicePicksForgotten.push(tabId) },

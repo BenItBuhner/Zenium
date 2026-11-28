@@ -23,8 +23,8 @@ import { browserStore, pushToast, type MessageAction } from './ui'
 /**
  * Undo for closing tabs on the phone (v2 draft §9.33; matrix TAB-05, TAB-07, GN-16): the close
  * goes through at once – the card leaves the grid as it always did – and the toast that follows
- * ("Closed <title>", "N tabs closed"; a group's close reads "<Name> tab group closed and saved",
- * TAB-16, on the phone and the tablet alike) offers to bring the tabs back from the core's own
+ * ("Closed <title>", "N tabs closed"; a folder's close reads "<Name> closed",
+ * on the phone and the tablet alike) offers to bring the tabs back from the core's own
  * "Recently closed" store, through `session.restoreClosed`, which puts each tab back into its
  * space, its group and its position with its back/forward stack. Nothing is deferred and no
  * closed-tab state is kept here beyond the entries' ids: the restore is the undo.
@@ -93,8 +93,8 @@ export interface CloseRequest {
   /**
    * The group the tabs close as ("Close Group (N Tabs)": the phone's sheet, the tablet's menu
    * through `folder.closeUndoable`; TAB-16): the toast takes the group's words
-   * ({@link groupClosedMessage}) in place of the tabs' – the group stays, saved with the pages,
-   * and Undo brings the tabs back into it. Left out, the toast counts the tabs.
+   * ({@link groupClosedMessage}) in place of the tabs' – the folder stays, and Undo brings the
+   * tabs back into it. Left out, the toast counts the tabs.
    */
   group?: { name: string }
 }
@@ -145,15 +145,12 @@ export function closedMessage(entries: readonly ClosedEntrySummary[]): string {
 
 /**
  * The toast's text for a group's close (TAB-16, the Design Lead's option C; the phone and the
- * tablet alike): a group the user named is called by that name, "<Name> tab group closed and
- * saved"; a group still wearing a default name (`isDefaultGroupName`: no name, the touch hosts'
- * default, a legacy "New Folder" – the Lead's addendum) is not called by it, "Tab group closed
- * and saved". The name is read through the shared module and nowhere else.
+ * tablet alike): a folder the user named is called by that name, "<Name> closed"; a folder
+ * still wearing a default name (`isDefaultGroupName`) is not called by it, "Folder closed". The
+ * name is read through the shared module and nowhere else.
  */
 export function groupClosedMessage(group: { name: string }): string {
-  return isDefaultGroupName(group.name)
-    ? 'Tab group closed and saved'
-    : `${group.name.trim()} tab group closed and saved`
+  return isDefaultGroupName(group.name) ? 'Folder closed' : `${group.name.trim()} closed`
 }
 
 /** An undo over `invoke` and `on`; the app uses {@link closeUndo}, tests build their own. */
@@ -321,7 +318,7 @@ let appCloseUndo: CloseUndo | null = null
  * The app's undo, over the chrome's bridge to the core and the message cards. Its toast offers
  * Undo, so it stands §9.33's Undo clock (`TOAST_UNDO_MS`, 8 s) – the one shared constant, never
  * the action default by omission – for the whole close family: "Closed <title>", "N tabs closed",
- * "<Name> tab group closed and saved".
+ * "<Name> closed".
  *
  * Built on the first close, not at import: `lib/back.ts` brings this module into every surface's
  * module graph, and the bridge is wanted only once a close goes through (the undo's own
@@ -419,7 +416,7 @@ function runUndoableClose(close: UndoableTabClose): void {
  * from the tablet's group row menu, the tablet's group editor bubble's Close row on the touch
  * layout, TABLET-22): the group's live members as the phone's overview reads them for its own
  * Close Group (the space's regular tabs in the group, a private one none of them), the close
- * the core's `folder.close` – the group stays, saved with their pages – and the toast the
+ * the core's `folder.close` – the folder stays – and the toast the
  * group's words.
  */
 export function closeGroupUndoable(folderId: string): void {

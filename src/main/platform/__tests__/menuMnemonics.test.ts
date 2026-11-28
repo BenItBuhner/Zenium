@@ -7,7 +7,6 @@ import {
   ANDROID,
   DESKTOP,
   NO_EDITS,
-  PAGE_URL,
   VIDEO_FLAGS,
   chromeParams,
   pageHarness,
@@ -514,9 +513,8 @@ const OPENINGS: Opening[] = [
       )
   },
   {
-    name: 'omnibox: the star as a pinnable control, bookmarked and in the reading list',
+    name: 'omnibox: the star as a pinnable control, bookmarked',
     open: (h) => {
-      h.browser.readingList.add(PAGE_URL, 'Article')
       h.browser.handleCommand(h.win, 'bookmark.toggle', { tabId: h.tabId })
       return h.browser.menus.showChromeContextMenu(
         chromeParams({ target: 'star', tabId: h.tabId, control: 'star' }),
@@ -653,13 +651,6 @@ const OPENINGS: Opening[] = [
       }).id
       h.browser.downloads.finish(id, 'completed')
       h.browser.handleCommand(h.win, 'download.contextMenu', { id })
-    }
-  },
-  {
-    name: 'reading list: an entry',
-    open: (h) => {
-      const entry = h.browser.readingList.add(LINK, 'Long Read')!
-      h.browser.handleCommand(h.win, 'readingList.contextMenu', { id: entry.id })
     }
   },
   {

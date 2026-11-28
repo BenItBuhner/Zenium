@@ -27,7 +27,7 @@ function acts(): OverviewMenuActs & {
 const AT_REST: OverviewMenuContext = {
   view: 'tabs',
   privateTabs: true,
-  counts: { closable: 3, selectable: 3, regular: 3, private: 2, inactive: 1, recentlyClosed: 4 },
+  counts: { closable: 3, selectable: 3, regular: 3, private: 2, recentlyClosed: 4 },
   spaces: [
     { id: 'work', label: 'Work', current: true },
     { id: 'home', label: 'Home', current: false }
@@ -48,7 +48,6 @@ describe('the overview menu template (§4)', () => {
       'Private Tabs (2)',
       'Select Tabs',
       'Search Tabs',
-      'Inactive Tabs (1)',
       'Recently Closed (4)',
       '—',
       'Close All Tabs (3)',
@@ -61,7 +60,6 @@ describe('the overview menu template (§4)', () => {
       'chrome:switch-view',
       'chrome:select-tabs',
       'chrome:search-tabs',
-      'chrome:inactive-tabs',
       'chrome:recently-closed',
       'chrome:close-all'
     ])

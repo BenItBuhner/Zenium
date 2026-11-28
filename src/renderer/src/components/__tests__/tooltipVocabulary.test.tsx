@@ -247,28 +247,23 @@ describe('the desktop chrome, rendered: one tooltip vocabulary (§9.31, a11y-26)
     )
     const carriers = expectOneVocabulary(el, 'expanded')
     const texts = carriers.map((c) => tooltipText(c))
-    // The swept controls are among them: the row's ×, reset, mute, the moon, the governor's
-    // snowflake and turtle, the alert, the Essentials tile, the bookmark chip's address, the
-    // folder's live dot.
+    // The swept controls are among them: the row's ×, reset, mute, the alert, the Essentials
+    // tile, the bookmark chip's address, the folder's live dot. A sleeping, frozen or throttled
+    // row draws no control of its own: it fades, as Zen's pending tab does.
     expect(texts).toContain('Close tab')
     expect(texts).toContain('Reset pinned tab to its original URL')
     expect(texts).toContain('Mute tab')
     expect(texts).toContain('Unmute tab')
-    expect(texts).toContain('Frozen by the resource governor – click to wake')
-    expect(texts).toContain('CPU throttled ×4 by the resource governor – click to lift')
+    expect(texts.some((t) => t.includes('resource governor'))).toBe(false)
     expect(texts).toContain('This tab is connected to a Bluetooth device')
     expect(texts).toContain('https://docs.example/')
     expect(texts).toContain('Live folder – updates automatically')
-    // A tile's and a sleeping row's tooltip is the title and its state on the one line (the
-    // lead's W5-1 ruling 4); what the sleeping page held is the hover card's line, not the
-    // tooltip's.
+    // A tile's tooltip is its title on the one line (the lead's W5-1 ruling 4); what a
+    // sleeping page held is the hover card's line, not a tooltip's.
     expect(texts).toContain('E1')
-    expect(texts).toContain('L4 · Sleeping – click to wake')
     expect(texts.some((t) => t.includes('\n'))).toBe(false)
     expect(texts.some((t) => t.includes('Memory saved'))).toBe(false)
-    // The sleeping moon is named for what it does, its tooltip saying more.
-    const moon = all('[data-tab-id="l4"] .zen-tab-sleeping')[0]!
-    expect(moon.getAttribute('aria-label')).toBe('Sleeping – click to wake')
+    expect(all('[data-tab-id="l4"] .zen-tab-sleeping')).toHaveLength(0)
     // A folder chip has no address to show and so no tooltip.
     expect(all('[data-bm-chip="folder"]')[0]!.hasAttribute(TOOLTIP_ATTR)).toBe(false)
   })

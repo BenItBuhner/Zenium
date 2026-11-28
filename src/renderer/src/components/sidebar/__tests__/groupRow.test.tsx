@@ -43,14 +43,13 @@ import { StripAxisContext, type StripAxis } from '../stripAxis'
 
 /*
  * The tablet sidebar's tab group rendered for real (TABLET-04; design language v2 §9.36 as
- * amended, §11.4): a full-width 44 row like Zen's folder – the colour dot or the saved ring in
+ * amended, §11.4): a full-width 44 row like Zen's folder – the colour dot in
  * the glyph slot, the name at 14, the count as the 13 aside, the chevron on the close column,
  * the tabs indented 24 beneath while open; a tap folds it, the block's height on SPRING_GENTLE
  * with the rows it had kept drawn until the spring rests; a hold brings the group's menu at the
- * finger; a SAVED group – its tabs closed, its pages kept (TAB-16) – as a row with the ring and
- * the count of its pages whose tap opens it; the desktop's row on its own contract (TAB-16's
+ * finger; the desktop's row on its own contract (TAB-16's
  * desktop half – desktopGroups.test.tsx), its fold the same spring (W4-2): the block's height
- * on SPRING_GENTLE with the rows it had – its tabs, or a saved folder's pages – kept drawn
+ * on SPRING_GENTLE with the tabs it had kept drawn
  * until the spring rests, and the cut under reduced motion (§11.3); the strip's chip (§9.37)
  * the same fold along `x`. The rows below the block are kept honest: the list's FLIP baseline
  * follows every frame of the fold, and the block holds the header's height at a shut rest until
@@ -76,13 +75,13 @@ const CHIP = 120
 const STRIP_TAB = 180
 
 // happy-dom lays nothing out: the fold reads the block's and the header's `offsetHeight`, so
-// the block answers with the rows it holds – its tabs, or a saved folder's pages – and the
+// the block answers with the tabs it holds and the
 // header with the row; along the strip's `x` the same by `offsetWidth`, the chip and the tabs.
 Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
   configurable: true,
   get(this: HTMLElement): number {
     if (this.classList.contains('zen-group-fold')) {
-      const rows = this.querySelectorAll('[data-tab-id], [data-saved-page]').length
+      const rows = this.querySelectorAll('[data-tab-id]').length
       return ROW + rows * (ROW + GAP)
     }
     if (this.classList.contains('zen-tab')) return ROW
@@ -226,18 +225,6 @@ const shell = (): HTMLElement => q<HTMLElement>('.zen-group-fold')!
 const progress = (): string => shell().style.getPropertyValue('--zen-fold-progress')
 const memberRows = (): string[] =>
   [...shell().querySelectorAll<HTMLElement>('[data-tab-id]')].map((el) => el.dataset.tabId!)
-/** A saved folder's page rows in the block (the desktop's, TAB-16), by title. */
-const pageRows = (): string[] =>
-  [...shell().querySelectorAll<HTMLElement>('[data-saved-page]')].map((el) =>
-    el.getAttribute('aria-label')!
-  )
-
-const PAGES = [
-  { url: 'https://alpha.example/', title: 'ALPHA' },
-  { url: 'https://beta.example/', title: 'BETA' },
-  { url: 'https://delta.example/', title: 'DELTA' }
-]
-
 const frames = new Map<number, (t: number) => void>()
 let nextFrame = 1
 let now = 10_000
@@ -325,9 +312,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(row.getAttribute('aria-label')).toBe('Research')
     expect(row.getAttribute('aria-description')).toBe('Tab group, 2 tabs')
     expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(row.hasAttribute('data-saved')).toBe(false)
     const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.hasAttribute('data-saved')).toBe(false)
     // §9.14's pair on the glyph; main.css picks `--zen-group-rgb` from it by the root's theme.
     expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
     expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
@@ -351,9 +336,6 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     const dot = rule('.zen-group-row-dot')
     expect(dot).toContain('width: 10px')
     expect(dot).toContain('background: rgb(var(--zen-group-rgb))')
-    const ring = rule('.zen-group-row-glyph[data-saved] .zen-group-row-dot')
-    expect(ring).toContain('background: transparent')
-    expect(ring).toContain('box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb))')
     const count = rule('.zen-group-row-count')
     expect(count).toContain('font-size: 13px')
     expect(count).toContain('font-variant-numeric: tabular-nums')
@@ -419,47 +401,6 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph.querySelector('.zen-group-row-icon')?.getAttribute('data-icon')).toBe('🔬')
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
-  })
-
-  it('draws a saved group in the strip as its chip alone (§9.37, TAB-16): the ring, the name, the count of its pages, and a press opens the folder', () => {
-    const saved = folder({
-      savedTabs: [
-        { url: 'https://alpha.example/', title: 'ALPHA' },
-        { url: 'https://beta.example/', title: 'BETA' }
-      ]
-    })
-    panel([tab('home'), tab('gamma')], [saved], 'desktop', 'synced', 'x')
-    const chip = header()
-    expect(chip.className).toContain('zen-strip-group-chip')
-    expect(chip.hasAttribute('data-saved')).toBe(true)
-    expect(shell().dataset.groupKind).toBe('saved')
-    // Nothing along the band to fold: no disclosure state, the description says saved.
-    expect(chip.hasAttribute('aria-expanded')).toBe(false)
-    expect(chip.getAttribute('aria-description')).toBe('Tab group, saved, 2 tabs')
-    // The shared glyph wears the ring (its dot drawn hollow by `[data-saved]`), then the name,
-    // then the count of the pages the group keeps as the 13 tabular aside.
-    const glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.hasAttribute('data-saved')).toBe(true)
-    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
-    expect(glyph.nextElementSibling?.getAttribute('data-testid')).toBe('group-chip-name')
-    const count = chip.querySelector<HTMLElement>('[data-testid="group-chip-count"]')!
-    expect(count.textContent).toBe('2')
-    expect(count.className).toContain('text-[13px]')
-    expect(count.className).toContain('tabular-nums')
-    expect(chip.querySelector('[data-testid="group-chip-name"]')?.nextElementSibling).toBe(count)
-    // No member rows and no page rows along the band; the group's line spans the chip alone.
-    expect(memberRows()).toEqual([])
-    expect(shell().querySelector('[data-saved-pages]')).toBeNull()
-    expect(shell().querySelector('[data-strip-group-line="g"]')).not.toBeNull()
-    // A press brings the pages back as the group's tabs; it folds nothing.
-    act(() => chip.click())
-    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
-    expect(run).not.toHaveBeenCalledWith('folder.update', expect.anything())
-    // An open group's chip carries no count: its members are along the band.
-    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
-    expect(header().querySelector('[data-testid="group-chip-count"]')).toBeNull()
-    expect(header().getAttribute('aria-expanded')).toBe('true')
-    expect(shell().dataset.groupKind).toBe('open')
   })
 
   it('folds on a tap: the block’s height runs on SPRING_GENTLE, the rows it had staying drawn until it rests', () => {
@@ -552,31 +493,6 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(run).not.toHaveBeenCalledWith('folder.contextMenu', expect.anything())
   })
 
-  it('lists a saved group as a row with the ring, the count of its pages and no chevron, whose tap opens it', () => {
-    const saved = folder({
-      savedTabs: [
-        { url: 'https://alpha.example/', title: 'ALPHA' },
-        { url: 'https://beta.example/', title: 'BETA' }
-      ]
-    })
-    panel([tab('home'), tab('gamma')], [saved])
-    const row = header()
-    expect(row.hasAttribute('data-saved')).toBe(true)
-    expect(row.hasAttribute('aria-expanded')).toBe(false)
-    expect(row.getAttribute('aria-description')).toBe('Tab group, saved, 2 tabs')
-    const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.hasAttribute('data-saved')).toBe(true)
-    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
-    expect(row.querySelector('[data-testid="group-row-count"]')?.textContent).toBe('2')
-    // Nothing to fold: the chevron's box stays, empty, so the counts share one edge.
-    expect(row.querySelector('svg.zen-group-row-chevron')).toBeNull()
-    expect(row.querySelector('span.zen-group-row-chevron')).not.toBeNull()
-    expect(memberRows()).toEqual([])
-    act(() => row.click())
-    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
-    expect(run).not.toHaveBeenCalledWith('folder.update', expect.anything())
-  })
-
   it('puts the name being edited in the name’s slot, the taps kept off the fold meanwhile', () => {
     uiStore.set({ renamingFolderId: 'g' })
     panel(grouped(), [folder()])
@@ -591,24 +507,15 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
   it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill is no row of the sidebar – its name nowhere in it – and a group’s private members are not its rows or its count', () => {
     const privateTab = (id: string, over: Partial<Tab> = {}): Tab =>
       tab(id, { containerId: PRIVATE_CONTAINER_ID, ...over })
-    // Ghost: private tabs alone, nothing saved – a PRIVATE group (`isPrivateGroup`), which the
+    // Ghost: private tabs alone – a PRIVATE group (`isPrivateGroup`), which the
     // sidebar itself can make on a host that keeps private browsing in tabs (the space holds
     // them among the regular tabs; `regularOf` lists both). Research: one regular member beside
-    // a private one. Trip: two pages saved and a private tab dropped in since. Vault: Ghost's
+    // a private one. Vault: Ghost's
     // case folded – `isPrivateGroup` is read before any fold, so a collapsed private-only group
     // is no row either (not a folded header with a count).
     const ghost = folder({ id: 'ghost', name: 'Ghost', color: 'red' })
     const vault = folder({ id: 'vault', name: 'Vault', color: 'orange', collapsed: true })
     const research = folder()
-    const trip = folder({
-      id: 'trip',
-      name: 'Trip',
-      color: 'green',
-      savedTabs: [
-        { url: 'https://t1.example/', title: 'T1' },
-        { url: 'https://t2.example/', title: 'T2' }
-      ]
-    })
     const tabs = [
       tab('home'),
       privateTab('g1', { folderId: 'ghost' }),
@@ -617,10 +524,9 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
       privateTab('v2', { folderId: 'vault' }),
       tab('alpha', { folderId: 'g' }),
       privateTab('p1', { folderId: 'g' }),
-      privateTab('t1', { folderId: 'trip' }),
       tab('gamma')
     ]
-    panel(tabs, [ghost, vault, research, trip])
+    panel(tabs, [ghost, vault, research])
     const panelEl = q<HTMLElement>('[data-tab-list="regular"]')!.parentElement!.parentElement!
     // No row of Ghost's or Vault's – no header, no fold, open or collapsed – and their names in
     // no text or attribute of the panel (the rows' labels, the descriptions for TalkBack, the
@@ -631,7 +537,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
       [...document.querySelectorAll<HTMLElement>('[data-tab-folder]')].map(
         (el) => el.dataset.tabFolder
       )
-    ).toEqual(['g', 'trip'])
+    ).toEqual(['g'])
     for (const name of ['Ghost', 'ghost', 'Vault', 'vault']) {
       expect(panelEl.textContent).not.toContain(name)
       expect(panelEl.innerHTML).not.toContain(name)
@@ -640,13 +546,6 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(header().getAttribute('aria-description')).toBe('Tab group, 1 tab')
     expect(header().querySelector('[data-testid="group-row-count"]')?.textContent).toBe('1')
     expect(memberRows()).toEqual(['alpha'])
-    // Trip is a SAVED group of its two pages (saved pages are regular), the private tab in it
-    // no part of its count and no row of it.
-    const tripRow = q<HTMLElement>('[data-tab-folder="trip"]')!
-    expect(tripRow.hasAttribute('data-saved')).toBe(true)
-    expect(tripRow.getAttribute('aria-description')).toBe('Tab group, saved, 2 tabs')
-    expect(tripRow.querySelector('[data-testid="group-row-count"]')?.textContent).toBe('2')
-    expect(tripRow.parentElement!.querySelectorAll('[data-tab-id]')).toHaveLength(0)
     // The private tabs themselves are no rows of the panel at all (W4-11: the sidebar's REGULAR
     // pose lists the space's regular tabs and never a private one; the private pose lists them,
     // `sidebarPrivate.test.tsx`): the loose rows are the regular ones alone.
@@ -654,8 +553,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
       ...document.querySelectorAll<HTMLElement>('[data-tab-list="regular"] > [data-tab-id]')
     ].map((el) => el.dataset.tabId)
     expect(loose).toEqual(['home', 'gamma'])
-    for (const id of ['g1', 'g2', 'v1', 'v2', 'p1', 't1'])
-      expect(q(`[data-tab-id="${id}"]`)).toBeNull()
+    for (const id of ['g1', 'g2', 'v1', 'v2', 'p1']) expect(q(`[data-tab-id="${id}"]`)).toBeNull()
 
     // The desktop's regular spaces hold no private tab, so the predicate touches nothing
     // there; in a PRIVATE window – private mode itself – the window's own groups stand whole,
@@ -676,21 +574,14 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
   })
 
   it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, its fold the same spring', () => {
-    // Stale `savedTabs` beside live members are no saved group: the row is an open folder's.
-    panel(
-      grouped(),
-      [folder({ savedTabs: [{ url: 'https://x.example/', title: 'X' }] })],
-      'desktop'
-    )
+    panel(grouped(), [folder()], 'desktop')
     const row = header()
     expect(row.className).not.toContain('zen-group-row')
-    expect(row.hasAttribute('data-saved')).toBe(false)
     expect(row.getAttribute('aria-description')).toBe('Folder, 2 tabs')
     expect(row.getAttribute('aria-expanded')).toBe('true')
     // The same glyph as the tablet's in the favicon slot – the dot for the default icon – and
     // no bar on the fold block (desktopGroups.test.tsx has the desktop's own contract).
     const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.hasAttribute('data-saved')).toBe(false)
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     expect(row.textContent).not.toContain('📁')
     expect(shell().hasAttribute('data-group-bar')).toBe(false)
@@ -781,63 +672,6 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     })
     expect(open).toEqual({ height: '', folding: false, rows: ['alpha', 'beta'] })
     expect(record.mock.calls.length).toBeGreaterThan(3)
-  })
-
-  it('keeps a saved folder’s pages through the desktop’s fold (W4-2, #360’s F5): the block measures whole as it shuts, the pages drawn until the spring rests, and back in the commit that unfolds', () => {
-    // A SAVED folder unfolded on the desktop: its pages under the header as rows of the block.
-    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES })], 'desktop')
-    const row = header()
-    expect(row.hasAttribute('data-saved')).toBe(true)
-    expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(shell().dataset.groupKind).toBe('saved')
-    expect(memberRows()).toEqual([])
-    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
-    expect(folds()).toEqual([])
-    // Folded: the pages stay for the folding commit – so the shell measures the whole block,
-    // header and three page rows, not the header alone – clipped, the height on SPRING_GENTLE
-    // from that whole to the header. (Before W4-2 the pages went with the state and the fold
-    // measured `whole == alone`: a cut shut and a spring open.)
-    const whole = ROW + PAGES.length * (ROW + GAP)
-    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES, collapsed: true })], 'desktop')
-    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
-    expect(shell().hasAttribute('data-folding')).toBe(true)
-    expect(shell().style.height).toBe(`${whole}px`)
-    expect(folds()).toEqual([{ from: whole, to: ROW }])
-    expect(header().getAttribute('aria-expanded')).toBe('false')
-    expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('3')
-    act(() => {
-      frame()
-      frame()
-    })
-    const mid = parseFloat(shell().style.height)
-    expect(mid).toBeLessThan(whole)
-    expect(mid).toBeGreaterThan(ROW)
-    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
-    // At rest the pages go and the clip lifts; the loose rows were never touched.
-    settle()
-    expect(pageRows()).toEqual([])
-    expect(shell().querySelector('[data-saved-pages]')).toBeNull()
-    expect(shell().hasAttribute('data-folding')).toBe(false)
-    expect(shell().style.height).toBe('')
-    expect(q('[data-tab-id="gamma"]')).not.toBeNull()
-    // Unfolded: the pages back in that commit, the height from the header to the whole.
-    starts.length = 0
-    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES })], 'desktop')
-    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
-    expect(shell().hasAttribute('data-folding')).toBe(true)
-    expect(shell().style.height).toBe(`${ROW}px`)
-    expect(folds()).toEqual([{ from: ROW, to: whole }])
-    act(() => {
-      frame()
-      frame()
-    })
-    expect(parseFloat(shell().style.height)).toBeGreaterThan(ROW)
-    expect(parseFloat(shell().style.height)).toBeLessThan(whole)
-    settle()
-    expect(shell().style.height).toBe('')
-    expect(shell().hasAttribute('data-folding')).toBe(false)
-    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
-    expect(header().getAttribute('aria-expanded')).toBe('true')
   })
 
   it('turns the chevron on the fold’s progress (§9.36 as amended, §11.1): one glyph, the shell’s --zen-fold-progress written from the height on every frame, off at the open rest, 0 through the shut hold and gone at release', () => {
@@ -1024,20 +858,6 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     // The chevron's cut is the same cut: the hook writes no progress – not the start's, not a
     // frame's, not the hold's – so the header's state binds the rest angle in the folding
     // commit itself (the ruled cut: no frame at a fractional angle).
-    expect(progress()).toBe('')
-    // …and its saved folder, the same cut over its pages (the unfold that opens it here is a
-    // jump of its own; the recorder is cleared after it).
-    panel([tab('home')], [folder({ savedTabs: PAGES })], 'desktop')
-    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
-    expect(frames.size).toBe(0)
-    expect(progress()).toBe('')
-    starts.length = 0
-    panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })], 'desktop')
-    expect(folds()).toEqual([{ from: ROW + PAGES.length * (ROW + GAP), to: ROW }])
-    expect(frames.size).toBe(0)
-    expect(pageRows()).toEqual([])
-    expect(shell().hasAttribute('data-folding')).toBe(false)
-    expect(shell().style.height).toBe('')
     expect(progress()).toBe('')
     // The tablet's row takes the same cut.
     panel(grouped(), [folder()])

@@ -15,7 +15,6 @@ import type {
   FolderColor,
   KeyBinding,
   MediaState,
-  ReadingListEntry,
   Rect,
   SearchEngine,
   Settings,
@@ -37,10 +36,8 @@ import { FaviconService } from './favicons'
 import { HistoryService } from './history'
 import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
-import { InactiveTabsService, sanitizeArchiveDays } from './inactiveTabs'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
-import { ReadingListService } from './readingList'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
 import { AUTOMATIC_DOWNLOADS_PERMISSION, DownloadLimiter } from './downloadLimiter'
@@ -177,7 +174,7 @@ import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { sanitizeGameBestScore } from '../shared/game/bridge'
 import { sanitizeAppProxySettings } from '../shared/appProxy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
-import { newFolderName } from '../shared/formFactor'
+import { NEW_FOLDER_NAME } from '../shared/groupNames'
 import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
@@ -287,8 +284,6 @@ export class Browser {
   readonly bookmarks: BookmarkService
   /** The user's bookmark edits that can be taken back (bookmarks-31). */
   readonly bookmarkUndo: BookmarkUndoStack
-  /** Pages saved for later (W6-1, Chrome's reading list; `core/readingList.ts`). */
-  readonly readingList: ReadingListService
   readonly downloads: DownloadService
   private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
@@ -319,8 +314,6 @@ export class Browser {
   readonly pages: PageService
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
-  /** Inactive tabs (TAB-20): the archive tabs idle past the threshold move into, and its passes. */
-  readonly inactiveTabs: InactiveTabsService
   readonly actions: Actions
   readonly keys: KeyboardHandler
   readonly menus: Menus
@@ -539,7 +532,6 @@ export class Browser {
     })
     this.bookmarks = new BookmarkService(this.state)
     this.bookmarkUndo = new BookmarkUndoStack(this.bookmarks)
-    this.readingList = new ReadingListService(this.state)
     this.downloads = new DownloadService(
       platform.io,
       platform.downloads,
@@ -607,7 +599,6 @@ export class Browser {
     this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
-    this.inactiveTabs = new InactiveTabsService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
       // The mac History menu lists the pages last visited: a visit, a deletion or a clear
@@ -1683,14 +1674,13 @@ export class Browser {
     // in the one window kept – Settings › On startup).
     this.launchStartup = this.startupPlan()
     if (this.launchStartup.mode !== 'continue') this.state.forgetSession()
+    this.state.migrateSavedFolders(this.launchStartup.mode === 'continue')
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
     // a launcher alias flipped back by an update); the persisted choice wins.
     this.platform.app.setAppIcon?.(this.state.settings.appIcon)
     this.governor.start()
-    // The archive's first pass is armed for later, off the boot path (TAB-20).
-    this.inactiveTabs.start()
     // The unused-sites permissions sweep's first run likewise (PS-41); then daily.
     this.unusedPermissions.start()
     this.liveFolders.start()
@@ -2199,103 +2189,6 @@ export class Browser {
     this.submitUrlbar(node.url, newTab || background, tabId, background, win)
   }
 
-  // ---------------------------------------------------------------------------
-  // Reading list (W6-1)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row, the
-   * command bar's Add to Reading List): the page's title and favicon as the tab has them (no
-   * favicon from a private tab, as a bookmark takes none), with a toast as Bookmark This Page
-   * gives one. A page already in the list is marked unread again and comes to the top. Null
-   * for a tab without a page the list holds (`zen://`, a blank tab).
-   */
-  addTabToReadingList(
-    tabId: string,
-    win: ZenWindow = this.tabs.windowFor(tabId)
-  ): ReadingListEntry | null {
-    const tab = this.tabs.tab(tabId)
-    if (!tab || !this.readingList.canAdd(tab.url)) return null
-    return this.saveToReadingList(
-      tab.url,
-      tab.customTitle ?? tab.title,
-      bookmarkFaviconOf(tab, this.tabs.isPrivate(tab)),
-      win
-    )
-  }
-
-  /**
-   * Save a link for later (the page menu's Add Link to Reading List): the link's address under
-   * its text, or its host when the link has none; no favicon – the page was never loaded, so
-   * the list's row resolves one from the favicon cache by address, as a closed page's row does.
-   * Null for a link the list does not hold (a file, a mail link).
-   */
-  addLinkToReadingList(url: string, text: string, win: ZenWindow): ReadingListEntry | null {
-    if (!this.readingList.canAdd(url)) return null
-    return this.saveToReadingList(url, text.trim() || displayHost(url) || url, null, win)
-  }
-
-  /**
-   * Every save goes through here: the entry, then the one toast – the user cannot see the list
-   * from a menu, so each add says what it did the same way, whichever menu it came from.
-   */
-  private saveToReadingList(
-    url: string,
-    title: string,
-    favicon: string | null,
-    win: ZenWindow
-  ): ReadingListEntry | null {
-    const entry = this.readingList.add(url, title, favicon)
-    if (entry) this.toast('Added to reading list', 'info', win)
-    return entry
-  }
-
-  /**
-   * The tab's page out of the list (the star's Remove from Reading List row, the tab row's and
-   * the app menu's Remove Tab from Reading List): the toast is the add's other half, since from
-   * a menu the user cannot see the entry go. The page's own rows say nothing – the row leaves
-   * in view.
-   */
-  removeTabFromReadingList(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): boolean {
-    const tab = this.tabs.tab(tabId)
-    const removed = tab ? this.readingList.removeUrl(tab.url) : false
-    if (removed) this.toast('Removed from reading list', 'info', win)
-    return removed
-  }
-
-  /**
-   * Open an entry's page and mark it read. A tab of this window that already shows the page is
-   * brought forward instead of a second copy (Firefox's `switchToTabHavingURI`); otherwise the
-   * page loads in `tabId` – the window's active tab when null, as a bookmark opens – or, with
-   * `newTab`, in a new tab, behind this one with `background` (§10.1's middle click). The entry
-   * is read the moment it is opened, whether the page shows now or loads behind: Chrome marks
-   * it on the open too.
-   */
-  openReadingEntry(
-    id: string,
-    tabId: string | null,
-    win: ZenWindow,
-    opts: { newTab?: boolean; background?: boolean } = {}
-  ): void {
-    const entry = this.readingList.get(id)
-    if (!entry) return
-    this.readingList.setRead(id, true)
-    const shown = Object.values(this.state.model.tabs).find(
-      (t) => t.url === entry.url && tabVisibleIn(t, win.id) && !this.tabs.isPrivate(t)
-    )
-    if (shown && !opts.background) {
-      this.tabs.activateTab(shown.id, win, { userSwitch: true })
-      return
-    }
-    this.submitUrlbar(
-      entry.url,
-      Boolean(opts.newTab || opts.background),
-      tabId,
-      Boolean(opts.background),
-      win
-    )
-  }
-
   /**
    * A row of the mac History menu's "Recently Visited" block (history-12): the page loads in
    * `win`'s current tab, as Chrome's rows do, or in a new tab when the window has none. Not a
@@ -2317,10 +2210,7 @@ export class Browser {
    * Chrome's "Open all in new tab group" (bookmarks-41): the bookmark folder's pages open as
    * the tabs of a new tab folder named after it, in the window's space (a private window's own
    * space: a private group there, as any folder its tabs make), wearing the next free colour as
-   * every new group. The folder model has no saved-or-plain choice to make at birth – a folder
-   * is open while it holds live regular tabs and becomes a saved one, its pages kept, when the
-   * last of them closes (`saveFolderOnLastClose`) – so this makes an open folder that lives on
-   * like any other. The name is given, so no editor opens (unlike "Add tab to new group"); the
+   * every new group: an ordinary folder that lives on like any other. The name is given, so no editor opens (unlike "Add tab to new group"); the
    * threshold's question is asked before anything is made, and a "no" makes no folder.
    */
   async openBookmarksInFolder(id: string, win: ZenWindow): Promise<void> {
@@ -2333,7 +2223,7 @@ export class Browser {
     const folder = createFolder(
       this.state.model,
       space.id,
-      node.title || newFolderName(win.formFactor),
+      node.title || NEW_FOLDER_NAME,
       '📁',
       nextFolderColor(this.state.model, space.id)
     )
@@ -2470,7 +2360,7 @@ export class Browser {
     const folder = createFolder(
       this.state.model,
       spaceId,
-      newFolderName(win?.formFactor),
+      NEW_FOLDER_NAME,
       '📁',
       nextFolderColor(this.state.model, spaceId)
     )
@@ -2482,16 +2372,12 @@ export class Browser {
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
    * member, in that member's container – active, with the new tab page (or the URL bar) as any
-   * new tab. On a SAVED folder the folder opens first – its pages back as its tabs, as Open
-   * Folder brings them – and the new tab joins behind them (open-then-add): the row takes a
-   * tab without losing what the folder kept. Resolves with the tab's id.
+   * new tab. Resolves with the tab's id.
    */
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    this.tabs.restoreSavedFolder(folderId, win)
-    // The group's members are its regular ones – the pages just brought back among them: a
-    // private tab in it lends neither its place nor its container to a tab the group's menu
+    // The group's members are its regular ones: a private tab in it lends neither its place nor its container to a tab the group's menu
     // makes.
     const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
@@ -2538,20 +2424,14 @@ export class Browser {
     this.state.commit()
   }
 
-  /**
-   * Chrome's "Close group" where groups are saved (TAB-16): the tabs close, the group stays as a
-   * saved one with their pages (`Folder.savedTabs`), listed in the Tab groups pane until it is
-   * opened again or deleted.
-   */
+  /** Close Folder: its tabs close (to the recently closed list) and the folder stays, folded. */
   closeFolder(folderId: string, win: ZenWindow = this.focusedWindow()): void {
     this.tabs.closeFolderTabs(folderId, win)
   }
 
   /**
-   * "Open" a saved group (TAB-16): its pages come back as tabs of the group, in the order they
-   * were kept, at the end of the space's regular tabs – unloaded but for the first, which is
-   * made active – and the group is expanded. An open group is expanded and its first member
-   * activated instead. Resolves with the tab made active, or null with nothing to open.
+   * Open a folder: it unfolds and its first member is activated. Resolves with that tab, or
+   * null for a folder with no tab to show.
    */
   openFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string | null {
     const m = this.state.model
@@ -2560,20 +2440,12 @@ export class Browser {
     // The group's live members are its regular ones: a private tab in it is not what a regular
     // surface's row opens (`regularFolderTabs`).
     const live = regularFolderTabs(m, folderId)
-    if (live.length > 0) {
-      folder.collapsed = false
-      folder.lastUsedAt = Date.now()
-      this.tabs.activateTab(live[0].id, win)
-      this.state.commit()
-      return live[0].id
-    }
-    // The pages back as the group's tabs, at the end of the space's tabs as Chrome reopens a
-    // saved group, in their order; the group unfolded and used now (`restoreSavedFolder`).
-    const restored = this.tabs.restoreSavedFolder(folderId, win)
-    if (restored.length === 0) return null
-    this.tabs.activateTab(restored[0].id, win)
+    if (live.length === 0) return null
+    folder.collapsed = false
+    folder.lastUsedAt = Date.now()
+    this.tabs.activateTab(live[0].id, win)
     this.state.commit()
-    return restored[0].id
+    return live[0].id
   }
 
   /** Delete a space without asking (sync applied a deletion made elsewhere). */
@@ -3028,7 +2900,6 @@ export class Browser {
     this.protection.stop()
     this.contentRules.stop()
     this.blocking.stop()
-    this.inactiveTabs.stop()
     this.unusedPermissions.stop()
     this.background.stop()
     this.translate.stop()
@@ -3347,9 +3218,6 @@ export class Browser {
       case 'folder': {
         const folder = m.folders[drop.folderId]
         if (!folder) return
-        // A SAVED folder opens first, as it does for a tab dropped on it (`moveToFolder`): its
-        // pages back as its tabs, the dropped addresses behind them.
-        tabs.restoreSavedFolder(folder.id, win)
         placement = {
           spaceId: folder.spaceId,
           section: 'regular',
@@ -4077,13 +3945,6 @@ export class Browser {
         void this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
-      'inactiveTabs.list': () => this.inactiveTabs.list(),
-      'inactiveTabs.restore': ({ id }, win) => void this.inactiveTabs.restore(id, win),
-      'inactiveTabs.restoreAll': (_args, win) => this.inactiveTabs.restoreAll(win),
-      'inactiveTabs.close': ({ id }) => this.inactiveTabs.close(id),
-      'inactiveTabs.closeAll': () => this.inactiveTabs.closeAll(),
-      'inactiveTabs.runPasses': ({ now }) => this.inactiveTabs.runPasses(now),
-
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
         if (sensitive)
           this.passwords.clipboard.copy(text, state.settings.passwords.clipboardClearSeconds)
@@ -4147,19 +4008,6 @@ export class Browser {
       'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
-
-      'readingList.add': ({ tabId }, win) => {
-        const id = tabId ?? tabs.activeTabFor(win)?.id
-        return id ? this.addTabToReadingList(id, win) : null
-      },
-      'readingList.removeTab': ({ tabId }, win) => this.removeTabFromReadingList(tabId, win),
-      'readingList.remove': ({ id }) => this.readingList.remove(id),
-      'readingList.setRead': ({ id, read }) => this.readingList.setRead(id, read),
-      'readingList.markAllRead': () => this.readingList.markAllRead(),
-      'readingList.open': ({ id, tabId, newTab, background }, win) =>
-        this.openReadingEntry(id, tabId, win, { newTab, background }),
-      'readingList.contextMenu': ({ id, ...anchor }, win) =>
-        this.menus.showReadingListContextMenu(id, anchor, win),
 
       'import.sources': () => this.imports.sources(),
       'import.run': ({ source, kinds, primaryPassword }, win) =>
@@ -4673,7 +4521,6 @@ export class Browser {
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
-      inactiveTabs: `${s.inactiveTabsArchiveDays}:${s.inactiveTabsAutoClose}`,
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
@@ -4837,8 +4684,6 @@ export class Browser {
     // `MigrateHoverCardMemoryPref`; anything but `true` reads off, as `BrowserState.load` reads it.
     s.hoverCardMemoryUsage = s.hoverCardMemoryUsage === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
-    s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
-    s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     // A default the profile no longer has an engine for (removed, or named by a peer's build that
     // knows more engines), or an extension's engine (the default only through the extension's
@@ -4876,8 +4721,6 @@ export class Browser {
     ) {
       this.governor.onSettingsChanged()
     }
-    if (before.inactiveTabs !== `${s.inactiveTabsArchiveDays}:${s.inactiveTabsAutoClose}`)
-      this.inactiveTabs.onSettingsChanged()
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)

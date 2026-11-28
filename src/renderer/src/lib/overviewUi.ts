@@ -1,4 +1,3 @@
-import type { ArchivedTabSummary } from '@shared/types'
 import { pushBackSurface } from './back'
 import type { ClosedEntrySummary } from './historyAdapter'
 import { NO_SELECTION, type OverviewSelection } from './overviewSelection'
@@ -40,7 +39,6 @@ export type OverviewSheet =
   | { kind: 'group'; folderId: string }
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
-  | { kind: 'inactive-tabs'; entries: ArchivedTabSummary[] }
   | { kind: 'group-picker' }
   | { kind: 'group-row'; folderId: string }
   | { kind: 'delete-group'; folderId: string }
