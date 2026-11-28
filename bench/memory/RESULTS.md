@@ -141,6 +141,76 @@ works from the real command line (Chromium reads it before the main script runs;
 script it left 33 processes), so Zenium restarts itself once at launch when the setting asks
 for one.
 
+## Auto sleeping tabs (simulated people, then the real app)
+
+Auto (the new default) decides when hidden tabs freeze and unload from the machine's free
+memory and from how this person comes back to tabs, learned on the device; it starts generous
+and tightens as it learns. Custom keeps the old fixed timers (freeze 5 min, unload 20 min, 24
+live pages, 35 % of RAM).
+
+**Simulated people** (`src/core/resources/sim.ts`, `__tests__/autoSim.test.ts`; 2–3 simulated
+days each, seed 1). "Reloads" are switches to a tab that had been unloaded; in brackets, those
+left under an hour before. "Minutes short" is time the machine had less free memory than its
+reserve. Print it with `ZEN_SIM_REPORT=1 npx vitest run src/core/resources/__tests__/autoSim.test.ts --silent=false`.
+
+| Person              | Policy                     | MB in use | MB while away | Peak MB | Reloads (under 1 h) | Wakes | Minutes short | Audio stopped |
+| ------------------- | -------------------------- | --------- | ------------- | ------- | ------------------- | ----- | ------------- | ------------- |
+| focused-worker      | never sleep                | 3,352     | 3,092         | 5,388   | 0 (0)               | 0     | 0             | 0             |
+| focused-worker      | fixed timers (old default) | 976       | 451           | 1,566   | 138 (70)            | 105   | 0             | 0             |
+| focused-worker      | auto, not learning         | 2,252     | 1,871         | 3,731   | 25 (0)              | 51    | 0             | 0             |
+| focused-worker      | auto                       | 1,779     | 701           | 3,038   | 35 (0)              | 56    | 0             | 0             |
+| tab-hoarder         | never sleep                | 9,468     | 7,677         | 16,431  | 0 (0)               | 0     | 1894          | 0             |
+| tab-hoarder         | fixed timers (old default) | 968       | 430           | 1,740   | 275 (70)            | 60    | 0             | 0             |
+| tab-hoarder         | auto, not learning         | 3,841     | 2,877         | 4,911   | 92 (0)              | 151   | 0             | 0             |
+| tab-hoarder         | auto                       | 2,449     | 838           | 4,242   | 146 (0)             | 124   | 0             | 0             |
+| researcher          | never sleep                | 18,251    | 15,992        | 35,629  | 0 (0)               | 0     | 2114          | 0             |
+| researcher          | fixed timers (old default) | 1,349     | 410           | 2,665   | 86 (58)             | 34    | 0             | 0             |
+| researcher          | auto, not learning         | 4,161     | 2,493         | 4,915   | 12 (0)              | 18    | 0             | 0             |
+| researcher          | auto                       | 2,875     | 494           | 4,856   | 9 (0)               | 40    | 0             | 0             |
+| music-while-working | never sleep                | 3,712     | 2,893         | 4,028   | 0 (0)               | 0     | 0             | 0             |
+| music-while-working | fixed timers (old default) | 1,294     | 642           | 2,202   | 149 (64)            | 56    | 0             | 0             |
+| music-while-working | auto, not learning         | 3,045     | 2,056         | 3,853   | 21 (0)              | 94    | 0             | 0             |
+| music-while-working | auto                       | 2,805     | 1,252         | 3,651   | 32 (0)              | 97    | 0             | 0             |
+| gamer               | never sleep                | 2,956     | 2,226         | 3,367   | 0 (0)               | 0     | 480           | 0             |
+| gamer               | fixed timers (old default) | 1,051     | 580           | 1,658   | 62 (22)             | 23    | 0             | 0             |
+| gamer               | auto, not learning         | 2,242     | 576           | 3,011   | 13 (0)              | 48    | 0             | 0             |
+| gamer               | auto                       | 2,092     | 584           | 2,753   | 18 (0)              | 45    | 0             | 0             |
+| away-for-hours      | never sleep                | 2,916     | 2,665         | 4,472   | 0 (0)               | 0     | 0             | 0             |
+| away-for-hours      | fixed timers (old default) | 874       | 447           | 1,369   | 49 (23)             | 46    | 0             | 0             |
+| away-for-hours      | auto, not learning         | 1,685     | 1,392         | 2,541   | 13 (0)              | 23    | 0             | 0             |
+| away-for-hours      | auto                       | 1,186     | 602           | 1,760   | 26 (1)              | 10    | 0             | 0             |
+| low-ram-laptop      | never sleep                | 3,615     | 2,840         | 4,654   | 0 (0)               | 0     | 2148          | 0             |
+| low-ram-laptop      | fixed timers (old default) | 1,033     | 453           | 1,799   | 145 (60)            | 62    | 0             | 0             |
+| low-ram-laptop      | auto, not learning         | 2,104     | 1,276         | 2,454   | 56 (0)              | 56    | 0             | 0             |
+| low-ram-laptop      | auto                       | 1,910     | 813           | 2,336   | 61 (1)              | 75    | 0             | 0             |
+| big-desktop         | never sleep                | 7,655     | 5,714         | 8,918   | 0 (0)               | 0     | 0             | 0             |
+| big-desktop         | fixed timers (old default) | 1,515     | 395           | 2,530   | 369 (128)           | 116   | 0             | 0             |
+| big-desktop         | auto, not learning         | 6,016     | 3,772         | 8,120   | 54 (0)              | 102   | 0             | 0             |
+| big-desktop         | auto                       | 5,274     | 1,776         | 7,205   | 75 (0)              | 182   | 0             | 0             |
+| dozens-active       | never sleep                | 4,547     | 3,271         | 4,654   | 0 (0)               | 0     | 0             | 0             |
+| dozens-active       | fixed timers (old default) | 2,344     | 450           | 3,247   | 551 (393)           | 363   | 0             | 0             |
+| dozens-active       | auto, not learning         | 4,459     | 2,568         | 4,654   | 29 (0)              | 11    | 0             | 0             |
+| dozens-active       | auto                       | 4,434     | 1,289         | 4,654   | 32 (0)              | 8     | 0             | 0             |
+| dashboards          | never sleep                | 3,783     | 3,010         | 4,180   | 0 (0)               | 0     | 0             | 0             |
+| dashboards          | fixed timers (old default) | 1,407     | 462           | 2,405   | 387 (286)           | 55    | 0             | 0             |
+| dashboards          | auto, not learning         | 3,330     | 2,168         | 3,951   | 25 (0)              | 136   | 0             | 0             |
+| dashboards          | auto                       | 2,987     | 1,090         | 3,568   | 33 (0)              | 206   | 0             | 0             |
+
+**Real app** (`bench/memory`, one run each unless noted):
+
+| Run                                                      | Custom (old default)   | Auto                   |
+| -------------------------------------------------------- | ---------------------- | ---------------------- |
+| 24 live tabs, all kept loaded (3 runs each, interleaved) | 2,704 MB, 24 live      | 2,696 MB, 24 live      |
+| 200 tabs, 20 active, 16 GB machine                       | 1,809 MB               | 1,903 MB               |
+| 200 tabs, 20 active, 3 GB limit                          | 845 MB, 0 pages killed | 942 MB, 0 pages killed |
+| 100 tabs, 10 active, 1.5 GB limit                        | 883 MB, 0 pages killed | 754 MB, 0 pages killed |
+
+Two problems the real app showed and the simulation did not, both fixed before these numbers:
+on the 1.5 GB limit the first version let background loads outrun it (71 pages killed by the
+kernel), so background loads now wait while memory is short; and with plenty free it let 200
+background tabs load to 10 GB, so the browser now takes at most 30 % of RAM for tabs that are not
+in use (`SHARE_CEILING`).
+
 ### Merged
 
 - #828: smaller main bundle (minified, ASCII): main process 185 → 169 MB settled, first-run peak

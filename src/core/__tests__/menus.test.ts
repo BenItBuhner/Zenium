@@ -6456,13 +6456,13 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Zen's skeleton for a regular row: five groups, four separators, seventeen rows. */
+    /** Zen's skeleton for a regular row: five groups, four separators, seventeen rows; Unload and Freeze are one Sleep row. */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
       'Reload Tab',
       'Mute Tab',
-      'Unload Tab',
+      'Sleep',
       'Duplicate Tab',
       'Pin Tab',
       'Add to Essentials',
@@ -6488,18 +6488,25 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
       expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(17)
       expect(separators(shown)).toBe(4)
-      // The state group in Firefox's order – Reload, Mute, Unload, Duplicate, Pin: the unload is
-      // the tab's state, as its mute is, not its place. No site mute, no freeze, no proxy.
+      // The state group in Firefox's order – Reload, Mute, Sleep, Duplicate, Pin: sleep is the
+      // tab's state, as its mute is, not its place. No site mute, no proxy.
       const top = topLabels(shown)
       expect(top.slice(top.indexOf('Reload Tab'), top.indexOf('Pin Tab') + 1)).toEqual([
         'Reload Tab',
         'Mute Tab',
-        'Unload Tab',
+        'Sleep',
         'Duplicate Tab',
         'Pin Tab'
       ])
-      for (const gone of ['Mute Site', 'Freeze Tab', 'Proxy', 'Bookmark All Tabs…'])
+      for (const gone of ['Mute Site', 'Proxy', 'Bookmark All Tabs…'])
         expect(top).not.toContain(gone)
+      expect(topLabels(item(h, 'Sleep').submenu!)).toEqual([
+        'Put Tab to Sleep',
+        'Freeze Tab',
+        '-',
+        'Keep This Tab Awake',
+        'Always Keep example.com Awake'
+      ])
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
         'Move Tab'
@@ -6522,6 +6529,29 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Copy Link as Markdown',
         'Email Link…'
       ])
+    })
+
+    it('Sleep keeps the tab, or its whole site, awake and back again', () => {
+      const h = pageHarness()
+      const open = (): void => {
+        h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      }
+      open()
+      item(h, 'Keep This Tab Awake').click?.()
+      expect(h.browser.tabs.tab(h.tabId)?.keepAwake).toBe(true)
+      open()
+      expect(item(h, 'Keep This Tab Awake').checked).toBe(true)
+      expect(enabled(h, 'Put Tab to Sleep')).toBe(false)
+      item(h, 'Keep This Tab Awake').click?.()
+      expect(h.browser.tabs.tab(h.tabId)?.keepAwake).toBeUndefined()
+
+      open()
+      item(h, 'Always Keep example.com Awake').click?.()
+      expect(h.browser.state.settings.unloadExcludedDomains).toContain('example.com')
+      open()
+      expect(item(h, 'Always Keep example.com Awake').checked).toBe(true)
+      item(h, 'Always Keep example.com Awake').click?.()
+      expect(h.browser.state.settings.unloadExcludedDomains).not.toContain('example.com')
     })
 
     it("every one of Zen's rows is in the regrouped menu, at the top or in a submenu", () => {
@@ -6551,7 +6581,8 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         'Copy Link',
         'Copy Link as Markdown',
         'Email Link…',
-        'Unload Tab',
+        'Freeze Tab',
+        'Put Tab to Sleep',
         'Close Tabs Above',
         'Close Tabs Below',
         'Close Other Tabs',

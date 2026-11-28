@@ -30,6 +30,7 @@ import type {
   PinnedCloseBehavior,
   Platform,
   ResourceEnforcement,
+  ResourceMode,
   ResourceProcessProfile,
   ResourceSettings,
   SearchEngine,
@@ -2855,6 +2856,19 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           checked: r.enabled,
           onChange: (v) => setR({ enabled: v })
         },
+        choice<ResourceMode>({
+          id: 'governor-mode',
+          label: 'Sleeping tabs',
+          value: r.mode,
+          sheetDescription:
+            'Automatic keeps tabs awake while the computer has memory to spare and puts the ones you are least likely to come back to to sleep as it runs short, learning on this device how you use your tabs. Custom uses the fixed budget, timer and cap below.',
+          keywords: ['auto', 'automatic', 'memory', 'sleep', 'hibernate'],
+          options: [
+            { value: 'auto', label: 'Automatic' },
+            { value: 'custom', label: 'Custom' }
+          ],
+          onChange: (v) => setR({ mode: v })
+        }),
         choice<ResourceEnforcement>({
           id: 'governor-enforcement',
           label: 'Enforcement',
@@ -2878,9 +2892,10 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           id: 'memory-mb',
           label: 'Memory budget',
           description:
-            r.memoryMb > 0
+            (r.mode === 'auto' ? 'Custom mode only. ' : '') +
+            (r.memoryMb > 0
               ? 'Every Chromium process together. Set to 0 to use a share of installed RAM instead.'
-              : `Using ${r.memoryPercent}% of installed RAM${totalMb ? ` = ${fmtMb(percentBudget)}` : ''}.`,
+              : `Using ${r.memoryPercent}% of installed RAM${totalMb ? ` = ${fmtMb(percentBudget)}` : ''}.`),
           keywords: ['ram'],
           value: r.memoryMb,
           min: 0,
@@ -2892,7 +2907,7 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
           kind: 'slider',
           id: 'memory-percent',
           label: 'Share of installed RAM',
-          description: 'Used when the memory budget above is 0.',
+          description: `${r.mode === 'auto' ? 'Custom mode only. ' : ''}Used when the memory budget above is 0.`,
           value: r.memoryPercent,
           min: 5,
           max: 100,
@@ -2947,8 +2962,7 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
         numberRow({
           id: 'freeze-after',
           label: 'Freeze hidden pages after',
-          description:
-            'A frozen page keeps its state but runs no script or timers, like Chrome’s tab freezing. 0 freezes as soon as a page is hidden.',
+          description: `${r.mode === 'auto' ? 'Custom mode only. ' : ''}A frozen page keeps its state but runs no script or timers, like Chrome’s tab freezing. 0 freezes as soon as a page is hidden.`,
           value: r.freezeAfterMinutes,
           min: 0,
           max: 1440,
@@ -2969,8 +2983,7 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
         numberRow({
           id: 'max-loaded',
           label: 'Maximum live pages',
-          description:
-            'Hard cap on pages kept in memory; the oldest hidden page is unloaded to make room. 0 = unlimited.',
+          description: `${r.mode === 'auto' ? 'Custom mode only. ' : ''}Hard cap on pages kept in memory; the oldest hidden page is unloaded to make room. 0 = unlimited.`,
           value: r.maxLoadedTabs,
           min: 0,
           max: 500,
