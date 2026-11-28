@@ -202,12 +202,12 @@ export const PERSONAS: Persona[] = [
   },
   {
     name: 'gamer',
-    description: 'light browsing by day; in the evening a game takes 11 GB of 16 for hours',
+    description: 'light browsing by day; in the evening a game takes 8 GB more of the 16 for hours',
     days: 2,
     totalMemoryMb: 16_384,
     otherMb: (t) => {
       const h = (t % DAY) / HOUR
-      return h >= 19 && h < 23 ? 14_500 : 5_000
+      return h >= 19 && h < 23 ? 13_000 : 5_000
     },
     script: (rng) => {
       const tabs = makeTabs('g', 25, rng)
@@ -396,7 +396,8 @@ export function autoPolicy(learn: boolean): SimPolicy & { habits: TabHabits } {
         {
           totalMemoryMb: ctx.totalMemoryMb,
           availableMemoryMb: ctx.availableMemoryMb,
-          energySaver: false
+          energySaver: false,
+          browserMb: ctx.browserMb
         },
         habits
       )

@@ -25,6 +25,7 @@ import { JsonStore } from '../../../core/store/JsonStore'
 import { FileStoreIO } from '../storeIo'
 import { HabitsTracker } from '../../../core/resources/habitsTracker'
 import type { TabHabits } from '../../../core/resources/habits'
+import { holdLoads } from '../../../core/resources/auto'
 import { OomPriority } from './oomPriority'
 import { BatteryLevel, forceDeviceHasBatteryRequested } from './battery'
 import { energySaverActive } from '../../../core/resources/energySaver'
@@ -47,6 +48,8 @@ import {
 import { appliedStartupProfile } from './startup'
 import { deriveStartupProfile, pendingStartupSwitches } from '../../../core/resources/switches'
 
+/** Auto mode: from this memory pressure on, sampling quickens. */
+const AUTO_HOLD_LOADS = 0.5
 /** Learned tab habits are written at most this often. */
 const HABITS_SAVE_MS = 5 * 60_000
 const BASE_INTERVAL_MS = 5_000
@@ -127,6 +130,8 @@ export class ResourceGovernor implements Governor {
   readonly habits: HabitsTracker
   private readonly habitsStore: JsonStore<TabHabits> | null
   private habitsSavedAt = Date.now()
+  /** Auto mode's memory pressure at the last sample (0–1). */
+  private lastAutoPressure = 0
 
   /** Windows whose minimise / restore events already feed the governor. */
   private readonly watched = new WeakSet<ZenWindow>()
@@ -155,8 +160,18 @@ export class ResourceGovernor implements Governor {
       tabExists: (tabId) => Boolean(this.browser.tabs.tab(tabId)),
       liveCount: () => this.browser.tabs.loadedCount(),
       maxConcurrent: () => this.settings.maxConcurrentLoads,
-      maxLive: () => (this.settings.enabled ? this.settings.maxLoadedTabs : 0),
-      makeRoom: () => this.evictOne('over the live pages cap'),
+      // Auto has no cap: while the machine is short of memory, background loads wait (the live
+      // count may not grow) instead of a cold page being unloaded for a page nobody has seen.
+      maxLive: () =>
+        !this.settings.enabled
+          ? 0
+          : this.settings.mode === 'auto'
+            ? this.autoHoldLoads()
+              ? Math.max(1, this.browser.tabs.loadedCount())
+              : 0
+            : this.settings.maxLoadedTabs,
+      makeRoom: () =>
+        this.settings.mode === 'auto' ? false : this.evictOne('over the live pages cap'),
       onDeferred: (tabId) => this.record('defer', tabId, 'waiting for a free load slot'),
       onChange: () => this.publishCounts()
     })
@@ -303,6 +318,7 @@ export class ResourceGovernor implements Governor {
       const input = this.collect(force)
       const result = plan(input)
       this.memory = result.memory
+      this.lastAutoPressure = result.autoPressure ?? 0
       const changedModel = await this.execute(result.actions)
       this.saveHabits()
       // After the plan: a page it froze or discarded is already in its new state.
@@ -316,13 +332,15 @@ export class ResourceGovernor implements Governor {
           }))
       )
       this.publish(result, input, changedModel)
+      // Background loads held back while memory was short go once it is not.
+      if (this.settings.mode === 'auto' && !this.autoHoldLoads()) this.scheduler.pump()
     } catch (error) {
       console.error('[zen] resource governor sample failed:', error)
     } finally {
       this.sampling = false
       const quiet = this.snapshot.system.idle || this.windowMinimized()
       this.schedule(
-        this.snapshot.pressure.length
+        this.snapshot.pressure.length || this.lastAutoPressure >= AUTO_HOLD_LOADS
           ? PRESSURE_INTERVAL_MS
           : quiet
             ? IDLE_INTERVAL_MS
@@ -419,10 +437,34 @@ export class ResourceGovernor implements Governor {
   /** Make room for one more live page when the cap is reached (visible loads must never wait). */
   makeRoomFor(tabId: string): void {
     const s = this.settings
-    if (!s.enabled || s.maxLoadedTabs <= 0) return
+    if (!s.enabled) return
+    if (s.mode === 'auto') {
+      // A page the person opens loads at once; on a machine short of memory a cold one makes
+      // room for it first.
+      if (this.autoHoldLoads(false) && !this.browser.tabs.pageView(tabId))
+        this.evictOne('memory: making room')
+      return
+    }
+    if (s.maxLoadedTabs <= 0) return
     if (this.browser.tabs.loadedCount() < s.maxLoadedTabs) return
     if (this.browser.tabs.pageView(tabId)) return
     this.evictOne('over the live pages cap')
+  }
+
+  /**
+   * Auto mode: a page loading now would take the machine below its reserve, or (`share`, for
+   * background loads only) the browser past its share of the machine (`holdLoads`).
+   */
+  private autoHoldLoads(share = true): boolean {
+    if (this.settings.mode !== 'auto') return false
+    const available = safe(() => availableMemoryMb(), null)
+    if (available === null) return false
+    return holdLoads({
+      totalMemoryMb: effectiveTotalMemoryMb(),
+      availableMemoryMb: available,
+      energySaver: false,
+      browserMb: share ? this.snapshot.memory.used || undefined : undefined
+    })
   }
 
   /** Something outside the planner acted on a tab (e.g. a renderer died of OOM). */

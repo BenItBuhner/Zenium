@@ -23,8 +23,10 @@ export const RELAXED_FREE = 0.25
 /** Free memory share at and below which pressure is full. */
 export const TIGHT_FREE = 0.07
 /** What Auto keeps free for the rest of the machine: this share of RAM, at least `RESERVE_MIN_MB`. */
-export const RESERVE_SHARE = 0.05
-export const RESERVE_MIN_MB = 400
+export const RESERVE_SHARE = 0.1
+export const RESERVE_MIN_MB = 768
+/** Below the reserve, free this share of RAM beyond what is missing (pages grow back). */
+export const RESERVE_MARGIN = 0.05
 
 /** The return horizons Auto weighs: "soon" for freezing, "this hour" for unloading. */
 export const SOON_MS = 10 * 60_000
@@ -35,6 +37,8 @@ export interface AutoSystem {
   /** Memory the OS could hand out now (MemAvailable on Linux), all apps counted. */
   availableMemoryMb: number
   energySaver: boolean
+  /** The browser's own memory now, MB (every process); absent → no share limit applies. */
+  browserMb?: number
 }
 
 export interface AutoTab {
@@ -80,6 +84,39 @@ export function reserveMb(sys: AutoSystem): number {
   return Math.max(RESERVE_MIN_MB, sys.totalMemoryMb * RESERVE_SHARE)
 }
 
+/** What a page may take while it loads, at most (a heavy page's peak), MB. */
+export const LOAD_HEADROOM_MB = 600
+
+/**
+ * Whether a page should wait before loading in the background: it would take the machine below
+ * its reserve. Pages the person opens never wait – a cold one makes room for them instead.
+ */
+export function holdLoads(sys: AutoSystem): boolean {
+  return (
+    sys.availableMemoryMb < reserveMb(sys) + LOAD_HEADROOM_MB ||
+    (sys.browserMb !== undefined && sys.browserMb >= shareCeilingMb(sys))
+  )
+}
+
+/**
+ * The most of the machine the browser takes even when the rest is free: memory left free is not
+ * wasted to the person (other apps, the file cache, the next thing they open), so past this the
+ * tabs least likely to be needed sleep however much is free.
+ */
+export const SHARE_CEILING = 0.3
+export const SHARE_CEILING_MIN_MB = 1_024
+
+export function shareCeilingMb(sys: AutoSystem): number {
+  return Math.max(SHARE_CEILING_MIN_MB, sys.totalMemoryMb * SHARE_CEILING)
+}
+
+/**
+ * The share ceiling spares tabs in use: hidden under this long, or likely to be back within the
+ * hour (`CEILING_SPARE_CHANCE`). Only the machine running short sleeps those.
+ */
+export const CEILING_MIN_HIDDEN_MS = 10 * 60_000
+export const CEILING_SPARE_CHANCE = 0.5
+
 /** The thresholds at pressure `p` with habits as sure as `conf` (exported for the tests). */
 export function autoThresholds(
   p: number,
@@ -115,7 +152,8 @@ export function planAuto(tabs: readonly AutoTab[], sys: AutoSystem, habits: TabH
 
   // Below the reserve: free what is missing now, least likely to be needed first (and the
   // biggest first among equals), whatever the timers say.
-  const short = reserveMb(sys) - sys.availableMemoryMb
+  const missing = reserveMb(sys) - sys.availableMemoryMb
+  const short = missing > 0 ? missing + sys.totalMemoryMb * RESERVE_MARGIN : 0
   const taken = new Set<string>()
   if (short > 0) {
     let freed = 0
@@ -125,6 +163,32 @@ export function planAuto(tabs: readonly AutoTab[], sys: AutoSystem, habits: TabH
     for (const c of ranked) {
       if (freed >= short) break
       actions.push({ kind: 'discard', tabId: c.tab.id, reason: 'memory: the machine is low' })
+      taken.add(c.tab.id)
+      freed += c.tab.memoryMb
+    }
+  }
+
+  // Over the browser's share of the machine: the same order, down to under the ceiling, sparing
+  // the tabs just left.
+  const ceiling = shareCeilingMb(sys)
+  if (sys.browserMb !== undefined && sys.browserMb > ceiling) {
+    const over = sys.browserMb - ceiling * 0.9
+    let freed = 0
+    const ranked = candidates
+      .filter(
+        (c) =>
+          !taken.has(c.tab.id) &&
+          c.tab.hiddenMs >= CEILING_MIN_HIDDEN_MS &&
+          c.hour < CEILING_SPARE_CHANCE
+      )
+      .sort((a, b) => a.hour - b.hour || b.tab.memoryMb - a.tab.memoryMb)
+    for (const c of ranked) {
+      if (freed >= over) break
+      actions.push({
+        kind: 'discard',
+        tabId: c.tab.id,
+        reason: `memory: over the browser's share (${Math.round(SHARE_CEILING * 100)} % of RAM)`
+      })
       taken.add(c.tab.id)
       freed += c.tab.memoryMb
     }

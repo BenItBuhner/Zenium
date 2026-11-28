@@ -383,7 +383,8 @@ export function plan(input: PlannerInput): Plan {
         totalMemoryMb: system.totalMemoryMb,
         // Unreadable → as if plenty were free: Auto then only sleeps what habits say to.
         availableMemoryMb: system.availableMemoryMb ?? system.totalMemoryMb,
-        energySaver: system.energySaver
+        energySaver: system.energySaver,
+        browserMb: attribution.totalMemoryMb
       },
       input.habits ?? emptyHabits(now)
     )
