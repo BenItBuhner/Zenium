@@ -1,9 +1,10 @@
 import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Minimize } from 'lucide-react'
-import type { Events, Rect, UIState } from '@shared/types'
+import type { Events, Rect, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
+import { CAPTION_HEIGHT } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { forcesRail, hasTopToolbar, isHorizontalTabs } from '@shared/toolbarLayout'
@@ -23,6 +24,7 @@ import {
   useBrowser
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { CAPTION_BUTTONS_WIDTH, ownCaption } from '@renderer/lib/caption'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useGlobalKeys } from '@renderer/hooks/useGlobalKeys'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
@@ -49,6 +51,7 @@ import { TabHoverCard } from './components/TabHoverCard'
 import { Tooltip } from './components/Tooltip'
 import { TabletShell } from './components/tablet/TabletShell'
 import { Toolbar } from './components/Toolbar'
+import { CaptionButtons } from './components/WindowControls'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
 const REVEAL_ZONE = 14
@@ -180,10 +183,20 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // clear of them, and the content column starts below them when they land on it. The strip
   // holds the band while it is up, keeping their footprint clear at its trailing end itself.
   const overlay = useCaptionOverlay()
+  // A Windows browser window draws its own buttons where the OS's stood (`CaptionButtons`):
+  // pinned in the top corner while a top row shows, and otherwise hidden with no band kept for
+  // them, coming out at the top edge (`CaptionReveal`).
+  const captionOwn = ownCaption(state) && !popupChrome
+  const captionPinned = captionOwn && !fullscreen && (showToolbar || topChrome)
+  // With no top row showing, nothing stands across the top at all: the bookmarks bar and the
+  // buttons come out together, as one row, when the cursor touches the top edge.
+  const captionReveals = captionOwn && !fullscreen && !captionPinned
+  const captionWidth = captionOwn ? CAPTION_BUTTONS_WIDTH : overlay.width
   const captionBand =
     !topChrome &&
+    (!captionOwn || captionPinned) &&
     captionBandInMain({
-      overlayWidth: overlay.width,
+      overlayWidth: captionWidth,
       sidebarSide,
       sidebarWidth: sidebarHidden
         ? null
@@ -191,7 +204,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           ? settings.sidebarWidth
           : COLLAPSED_WIDTH
     })
-  const captionInset = captionBand ? overlay.width : 0
+  const captionInset = captionBand ? captionWidth : 0
   const macPopupInset = popupChrome && state.platform === 'darwin' ? 72 : 0
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
@@ -276,7 +289,17 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
                 : 0
         }}
       >
-        {captionBand && !showToolbar && (
+        {/* A Windows browser window's top gutter drags the window, as the caption band did. */}
+        {captionOwn && !showToolbar && (
+          <div
+            className="zen-drag absolute inset-x-0 top-0"
+            style={{ height: 'var(--zen-padding)' }}
+          />
+        )}
+        {captionReveals && (
+          <CaptionReveal state={state} tab={tab} showBar={showBar && !topChrome} />
+        )}
+        {captionBand && !captionOwn && !showToolbar && (
           <div
             className="zen-drag shrink-0"
             style={{ height: overlay.height, minHeight: 'env(titlebar-area-height, 0px)' }}
@@ -301,7 +324,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             />
           )
         )}
-        {showBar && !topChrome && <BookmarksBar state={state} tab={tab} />}
+        {showBar && !topChrome && !captionReveals && <BookmarksBar state={state} tab={tab} />}
         <main className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
           {/*
@@ -377,10 +400,15 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         <CompactToolbar
           state={state}
           showBar={barWanted}
-          trailingInset={captionInset}
+          trailingInset={captionOwn ? CAPTION_BUTTONS_WIDTH : captionInset}
           fullscreen={fullscreen}
           horizontal={horizontal}
         />
+      )}
+      {captionPinned && (
+        <div className="absolute right-0 top-0 z-30">
+          <CaptionButtons />
+        </div>
       )}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
@@ -538,6 +566,132 @@ function CompactToolbar({
   )
 }
 
+/**
+ * A Windows browser window's top row while no toolbar row shows (the sidebar layouts, or a
+ * toolbar compact mode hides): nothing is kept across the top, so the sidebar and the page run
+ * to it. The cursor on the very top edge slides one row down over the content column: the
+ * bookmarks bar (when the window shows one) with the minimise / maximise / close buttons in the
+ * corner the OS's stood in, looking as those did (`CaptionButtons`), over a picture of the page
+ * (main's `caption` reveal: the edge stays a drag region, so nothing here catches the pointer
+ * until the row is out). It slides back 300 ms after the cursor leaves, unless something it
+ * opened is up – the hidden toolbar's motion (`SlideDown`).
+ */
+function CaptionReveal({
+  state,
+  tab,
+  showBar
+}: {
+  state: UIState
+  tab: Tab | null
+  showBar: boolean
+}): JSX.Element {
+  const tabId = tab?.id ?? null
+  const open = uiStore.use((s) => s.captionHover)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const revealing = useRef(false)
+  const [closing, setClosing] = useState(false)
+  const closingRef = useRef(false)
+  const show = useCallback((): void => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = null
+    closingRef.current = false
+    setClosing(false)
+    if (uiStore.get().captionHover || revealing.current) return
+    revealing.current = true
+    void captureActiveTab(tabId).then(() => {
+      revealing.current = false
+      uiStore.set({ captionHover: true })
+    })
+  }, [tabId])
+  const hide = useCallback((): void => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      // The row stays while something it opened is up (a bookmark folder's menu, an overlay).
+      const ui = uiStore.get()
+      if (ui.overlay !== 'none' || ui.urlbar.open || ui.menu || ui.zoomBubble) return
+      if (!ui.captionHover || closingRef.current) return
+      closingRef.current = true
+      setClosing(true)
+    }, 300)
+  }, [])
+  const closed = useCallback((): void => {
+    closingRef.current = false
+    setClosing(false)
+    uiStore.set({ captionHover: false })
+    invalidateSnapshot()
+  }, [])
+  useEffect(() => {
+    const onReveal = (e: Event): void => {
+      const { revealed, edge } = (e as CustomEvent<ChromeReveal>).detail
+      if (edge !== 'caption') return
+      if (revealed) show()
+      else hide()
+    }
+    window.addEventListener('zen-compact-reveal', onReveal)
+    return () => window.removeEventListener('zen-compact-reveal', onReveal)
+  }, [show, hide])
+  useEffect(() => {
+    run('compact.setRevealed', { revealed: open, edge: 'caption' })
+  }, [open])
+  // The window's size changing under the panel (Maximize, Restore, a snap) leaves the page's
+  // picture at the old size: the panel goes at once and the live page comes back. A press on
+  // one of its buttons has done what the panel was out for, so it goes the same way.
+  useEffect(() => {
+    if (!open) return undefined
+    const drop = (): void => {
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = null
+      closed()
+    }
+    window.addEventListener('resize', drop)
+    return () => window.removeEventListener('resize', drop)
+  }, [open, closed])
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+      if (uiStore.get().captionHover) {
+        uiStore.set({ captionHover: false })
+        invalidateSnapshot()
+      }
+      run('compact.setRevealed', { revealed: false, edge: 'caption' })
+    },
+    []
+  )
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-40" data-testid="caption-reveal">
+      {open && (
+        <SlideDown closing={closing} onClosed={closed} flush>
+          <div
+            className="pointer-events-auto flex items-center"
+            style={{ height: CAPTION_HEIGHT, background: 'var(--zen-bg-solid)' }}
+            data-surface="window"
+            onPointerEnter={show}
+            onPointerLeave={hide}
+          >
+            {showBar ? (
+              <BookmarksBar state={state} tab={tab} className="min-w-0 flex-1 pb-0" />
+            ) : (
+              <div className="zen-drag h-full flex-1" />
+            )}
+            <div
+              // Bubbling, so the button's own click has run: the store's update re-renders at
+              // once and would take the button away before a capture-phase close let it fire.
+              onClick={() => {
+                if (timer.current) clearTimeout(timer.current)
+                timer.current = null
+                closed()
+              }}
+            >
+              <CaptionButtons />
+            </div>
+          </div>
+        </SlideDown>
+      )}
+    </div>
+  )
+}
+
 /** The hidden chrome's way out of the window's fullscreen, at its trailing end. */
 function ExitFullscreenButton({ state }: { state: UIState }): JSX.Element {
   return (
@@ -574,10 +728,13 @@ function slidePose(p: number): string {
 function SlideDown({
   closing,
   onClosed,
+  flush = false,
   children
 }: {
   closing: boolean
   onClosed: () => void
+  /** Flush with the window's edge (the caption buttons), not inset by the window's gutter. */
+  flush?: boolean
   children: ReactNode
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -611,7 +768,7 @@ function SlideDown({
   return (
     <div
       ref={ref}
-      className="zen-toolbar-reveal px-2"
+      className={cn('zen-toolbar-reveal', !flush && 'px-2')}
       data-closing={closing || undefined}
       data-testid="toolbar-reveal"
     >

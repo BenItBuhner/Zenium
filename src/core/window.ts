@@ -173,6 +173,8 @@ export class ZenWindow {
   compactSidebarRevealed = false
   /** The hidden top toolbar is out (compact mode or the window's fullscreen); the chrome's word. */
   compactToolbarRevealed = false
+  /** A Windows browser window's hidden caption buttons are out (`revealsCaption`); the chrome's word. */
+  captionRevealed = false
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null
