@@ -1,0 +1,31 @@
+{
+  // Zenium's hosted MCP endpoint. `npm run dev` runs it on http://localhost:8787 with a local
+  // Durable Object store; `npm run deploy` publishes it (see README.md for the variables).
+  "name": "zenium-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNT", "class_name": "AccountRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountRelay"] }],
+  "vars": {
+    // The Convex deployment's HTTP actions URL: the issuer of browsers' device tokens.
+    // Development by default; production overrides it under `env.production`.
+    "DEVICE_JWT_ISSUER": "https://lovable-butterfly-908.convex.site"
+    // AGENT_JWT_ISSUER: the Clerk Frontend API URL, issuer of agents' OAuth access tokens.
+    // CLERK_SECRET_KEY (secret): verifies opaque OAuth access tokens with Clerk's Backend API.
+    // DEV_AGENT_TOKEN (secret, never in production): an agent presenting it is let in as the
+    //   account of the browser that connected last – for local testing without OAuth.
+  },
+  "env": {
+    "production": {
+      "name": "zenium-relay-production",
+      "durable_objects": {
+        "bindings": [{ "name": "ACCOUNT", "class_name": "AccountRelay" }]
+      },
+      "vars": {
+        "DEVICE_JWT_ISSUER": "https://small-camel-544.convex.site"
+      }
+    }
+  }
+}

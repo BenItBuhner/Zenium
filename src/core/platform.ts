@@ -2552,6 +2552,10 @@ export interface SyncHost {
   cancelAccountLink(): void
   /** Sign out of the Zenium account at the service and here; sync turns off. */
   signOutAccount(): void
+  /** The account's device access token for the hosted agent relay; null when not signed in. */
+  accountAccessToken?(): Promise<string | null>
+  /** The name and kind this browser goes by in the account's device list. */
+  accountDevice?(): { name: string; kind: SyncDeviceKind }
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
   /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */

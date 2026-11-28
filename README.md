@@ -188,6 +188,12 @@ app and the Android WebView host.
   { "mcpServers": { "zenium": { "command": "zenium", "args": ["--mcp"] } } }
   ```
 
+- **From anywhere, through your Zenium account:** Settings → AI Agents → _Agents from your
+  Zenium account_ connects the browser to Zenium's hosted relay (`relay/`). An agent adds the
+  relay's `/mcp` URL, signs in with your account, and can drive any of your browsers that are
+  online: `zen_devices` lists them and every tool takes an optional `device`. Each browser asks
+  you once per agent; the browser still runs every tool. See [relay/README.md](relay/README.md)
+  to run the relay locally.
 - **Tools:** the vocabulary agents already know from Playwright MCP — `browser_navigate`,
   `browser_navigate_back`, `browser_navigate_forward`, `browser_reload`, `browser_snapshot` (an
   accessibility tree whose elements carry `[ref=eN]` handles), `browser_click` and

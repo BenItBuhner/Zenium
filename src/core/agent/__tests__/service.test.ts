@@ -308,7 +308,8 @@ describe.each(hosts)('a bind failure on %s', (_name, makeHost) => {
       url: null,
       lanUrls: [],
       token,
-      error: IN_USE
+      error: IN_USE,
+      remote: { state: 'off', mcpUrl: null, error: null }
     })
     const error: EndpointError = {
       code: 'EADDRINUSE',
